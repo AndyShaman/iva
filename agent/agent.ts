@@ -10,14 +10,16 @@ import {
 } from "./provider.js";
 
 export default defineAgent({
-  // Модель строится на старте сессии, а не при сборке: OpenCode Go требует ID диалога в
+  // Модель строится на каждом шаге хода, а не при сборке: OpenCode Go требует ID диалога в
   // заголовке каждого запроса, а sessionId известен только здесь. Для остальных провайдеров
   // это та же модель, что раньше была статической (см. provider.ts, providerRequestHeaders).
-  // session.started, не turn/step: кэш промпта у провайдера живёт на модель, смена
-  // посреди сессии переваривала бы историю заново по полной цене.
+  // step.started, не session.started: на self-host сессия — durable workflow, и выбор на
+  // session.started eve сохраняет в журнал, а объект модели не сериализуется
+  // (DynamicModelSelectionError). Шаговый резолвер живёт только в памяти. Модель та же на
+  // каждом шаге, поэтому кэш промпта у провайдера не сбрасывается.
   model: defineDynamic({
     events: {
-      "session.started": (_event, ctx) => ({
+      "step.started": (_event, ctx) => ({
         model: withReasoningStripped(
           makeTextModel({ sessionId: ctx.session.id }),
         ),
