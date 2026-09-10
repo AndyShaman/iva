@@ -1,13 +1,13 @@
 // Ядро middleware, который прикладывает картинку Vault к сообщению модели. Файлы сюда
 // приходят инъекцией (readImage), поэтому тест идёт без файловой системы и без сети.
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import fc from "fast-check";
-import { wrapLanguageModel } from "ai";
+import { generateText, wrapLanguageModel } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type {
   LanguageModelV4StreamPart,
@@ -703,4 +703,132 @@ await test("codexFetch refreshes and retries auth failures once", async (t) => {
     assert.equal(await request(null), upstream);
     assert.equal(backendAuthorizations.length, 1);
   });
+});
+
+// --- OpenCode Go: заголовки клиента ----------------------------------------------------------
+// Go принимает запрос только со стабильным ID диалога (x-opencode-session) и своим User-Agent;
+// без них — 4xx MissingSessionID на каждый ход. Остальные провайдеры заголовков не получают.
+// Провайдер выбирается на загрузке модуля, поэтому Go — отдельный экземпляр модуля (query в
+// specifier), с чистым окружением и без сети.
+const SESSION_HEADER_SEED = 20260910;
+
+type ChatModel = ReturnType<typeof makeTextModelOllama>;
+const { makeTextModel: makeTextModelOllama } = await import("./provider.ts");
+
+type ProviderModule = typeof import("./provider.ts");
+
+async function loadOpencodeProvider(): Promise<ProviderModule> {
+  const previous = {
+    MODEL_PROVIDER: process.env.MODEL_PROVIDER,
+    OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
+  };
+  process.env.MODEL_PROVIDER = "opencode";
+  process.env.OPENCODE_API_KEY = "sk-test";
+  try {
+    // Query в specifier даёт отдельный экземпляр модуля; TS такой путь не резолвит,
+    // поэтому specifier — переменная, а форма модуля закреплена типом ниже.
+    const specifier = "./provider.ts?provider=opencode";
+    const loaded: unknown = await import(specifier);
+    return loaded as ProviderModule;
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function chatCompletion(): Response {
+  return Response.json({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 0,
+    model: "test",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: "ok" },
+        finish_reason: "stop",
+      },
+    ],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  });
+}
+
+/** Гонит один запрос через модель и возвращает заголовки, которые ушли бы провайдеру. */
+async function requestHeadersOf(
+  t: TestContext,
+  model: ChatModel,
+): Promise<Headers> {
+  const originalFetch = globalThis.fetch;
+  let captured: Headers | undefined;
+  globalThis.fetch = (input, init) => {
+    captured = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    return Promise.resolve(chatCompletion());
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await generateText({ model, prompt: "ping", maxRetries: 0 });
+  assert.ok(captured, "запрос к провайдеру не ушёл");
+  return captured;
+}
+
+await test("Go: запрос несёт ID диалога сессии и User-Agent Ивы", async (t) => {
+  const go = await loadOpencodeProvider();
+  assert.equal(go.providerName, "opencode");
+  const headers = await requestHeadersOf(
+    t,
+    go.makeTextModel({ sessionId: "sess_01ABC" }),
+  );
+  assert.equal(headers.get("x-opencode-session"), "sess_01ABC");
+  assert.equal(headers.get("user-agent"), go.IVA_USER_AGENT);
+  assert.match(go.IVA_USER_AGENT, /^iva\/\d+\.\d+\.\d+/u);
+  assert.equal(headers.get("authorization"), "Bearer sk-test");
+});
+
+await test("Go без сессии: ID процесса, непустой и один на все вызовы", async (t) => {
+  const go = await loadOpencodeProvider();
+  const first = await requestHeadersOf(t, go.makeTextModel());
+  const second = await requestHeadersOf(
+    t,
+    go.makeTextModel({ sessionId: "  " }),
+  );
+  const id = first.get("x-opencode-session");
+  assert.ok(id && id.length > 0);
+  assert.equal(second.get("x-opencode-session"), id);
+  assert.equal(id, go.opencodeSessionId(undefined));
+});
+
+await test("не-Go провайдер заголовков Go не шлёт", async (t) => {
+  const ollama = await import("./provider.ts");
+  assert.equal(ollama.providerName, "ollama");
+  assert.equal(ollama.providerRequestHeaders("sess_01ABC"), undefined);
+  const headers = await requestHeadersOf(
+    t,
+    makeTextModelOllama({ sessionId: "sess_01ABC" }),
+  );
+  assert.equal(headers.get("x-opencode-session"), null);
+  assert.notEqual(headers.get("user-agent"), ollama.IVA_USER_AGENT);
+});
+
+await test(`ID сессии уходит как есть, пустой заменяется ID процесса (seed ${SESSION_HEADER_SEED})`, async () => {
+  const go = await loadOpencodeProvider();
+  const processId = go.opencodeSessionId(undefined);
+  fc.assert(
+    fc.property(fc.stringMatching(/^[A-Za-z0-9_:.-]{1,64}$/u), (id) => {
+      assert.equal(go.opencodeSessionId(id), id);
+      assert.equal(go.providerRequestHeaders(id)?.["x-opencode-session"], id);
+    }),
+    { seed: SESSION_HEADER_SEED, numRuns: 200 },
+  );
+  fc.assert(
+    fc.property(fc.stringMatching(/^[ \t\r\n\u00a0]{0,8}$/u), (blank) => {
+      assert.equal(go.opencodeSessionId(blank), processId);
+    }),
+    { seed: SESSION_HEADER_SEED, numRuns: 50 },
+  );
+  assert.match(processId, /^iva-[0-9a-f-]{36}$/u);
 });

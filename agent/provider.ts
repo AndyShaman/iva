@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -116,6 +118,61 @@ if (providerName === "custom" && !providerConfig.baseURL)
   throw new Error(
     "MODEL_PROVIDER=custom requires CUSTOM_BASE_URL (OpenAI-compatible base, e.g. https://api.example.com/v1) — run: iva config",
   );
+
+// --- OpenCode Go: что провайдер требует от клиента --------------------------------------------
+// С сентября 2026 Go принимает запрос только от клиента, который (1) называет себя своим
+// User-Agent, а не именем SDK, и (2) шлёт стабильный ID диалога в x-opencode-session. Без них
+// каждый ход падает 4xx MissingSessionID (https://opencode.ai/docs/go/#where-can-i-use-it).
+// ID диалога — sessionId eve: agent.ts получает его на session.started и строит модель под
+// него. Там, где сессии нет (планировщик, vision-пробник, describeImage), идёт один ID на
+// процесс: заголовок обязан быть всегда, пустой не уходит никогда. Остальным провайдерам
+// заголовки не достаются — их провод остаётся ровно таким, каким был.
+function readOwnVersion(): string {
+  // От cwd, не от import.meta.url: authored-модули инлайнятся в кэш eve (см. lib/data-dir.ts).
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(process.cwd(), "package.json"), "utf8"),
+    );
+    if (isRecord(parsed) && typeof parsed.version === "string") {
+      const version = parsed.version.trim();
+      if (version.length > 0) return version;
+    }
+  } catch {
+    /* версия нужна только для User-Agent — без неё ход не падает */
+  }
+  return "0";
+}
+export const IVA_USER_AGENT = `iva/${readOwnVersion()}`;
+const PROCESS_SESSION_ID = `iva-${randomUUID()}`;
+
+/** ID диалога для x-opencode-session: sessionId eve как есть, без него — ID процесса. */
+export function opencodeSessionId(sessionId?: string): string {
+  const id = (sessionId ?? "").trim();
+  return id.length > 0 ? id : PROCESS_SESSION_ID;
+}
+
+/** Заголовки клиента для активного провайдера. Требует их только Go; остальным — ничего. */
+export function providerRequestHeaders(
+  sessionId?: string,
+): Record<string, string> | undefined {
+  if (providerName !== "opencode") return undefined;
+  return {
+    "x-opencode-session": opencodeSessionId(sessionId),
+    "user-agent": IVA_USER_AGENT,
+  };
+}
+
+// AI SDK ставит свой User-Agent (`ai/… ai-sdk/… runtime/node.js`) поверх заголовков
+// провайдера — ровно то «имя SDK», которое Go отказывается принимать. Поэтому у Go свой
+// fetch: имя клиента ставится в самом запросе, после SDK. ID диалога SDK не трогает,
+// он едет обычными заголовками модели.
+export const opencodeFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(
+    init?.headers ?? (input instanceof Request ? input.headers : undefined),
+  );
+  headers.set("user-agent", IVA_USER_AGENT);
+  return fetch(input, { ...init, headers });
+};
 
 // THINKING_EFFORT (.env, пишут /model и /think в Telegram): reasoning-усилие модели.
 // Codex получает его через providerOptions.openai.reasoningEffort ниже. Ollama Cloud
@@ -556,14 +613,14 @@ export const modelFirstChunkDeadlineMiddleware: LanguageModelMiddleware = {
  * Текстовая модель активного провайдера. Общая для КАЖДОГО узла графа: корень и субагенты
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
  */
-export function makeTextModel() {
+export function makeTextModel(options: { sessionId?: string } = {}) {
   return wrapLanguageModel({
-    model: makeBareTextModel(),
+    model: makeBareTextModel(options.sessionId),
     middleware: [attachImagesMiddleware, modelFirstChunkDeadlineMiddleware],
   });
 }
 
-function makeBareTextModel() {
+function makeBareTextModel(sessionId?: string) {
   // Codex-подписка говорит на Responses API — отдельная модель-фабрика (@ai-sdk/openai).
   // Остальные провайдеры — OpenAI-совместимый chat/completions через openai-compatible.
   if (providerName === "codex") return makeCodexModel();
@@ -571,6 +628,9 @@ function makeBareTextModel() {
     name: `iva-${providerName}`,
     baseURL: providerConfig.baseURL,
     apiKey: providerConfig.apiKey,
+    // Go: ID диалога и User-Agent (см. providerRequestHeaders); у остальных — undefined.
+    headers: providerRequestHeaders(sessionId),
+    fetch: providerName === "opencode" ? opencodeFetch : undefined,
     // Без этого стрим OpenAI-совместимых провайдеров НЕ несёт usage (нет stream_options:
     // {include_usage:true}) → событие step.completed приходит без поля usage, и учёт токенов
     // (agent/hooks/usage.ts) пуст. Включаем, чтобы провайдер отдавал расход в финальном чанке.

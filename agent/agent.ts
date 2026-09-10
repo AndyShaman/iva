@@ -1,4 +1,4 @@
-import { defineAgent } from "eve";
+import { defineAgent, defineDynamic } from "eve";
 // Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts
 // и agent/subagents/planner/agent.ts).
 // codex = подписка ChatGPT (Responses API + OAuth); ollama/opencode = OpenAI-совместимый chat.
@@ -10,13 +10,29 @@ import {
 } from "./provider.js";
 
 export default defineAgent({
-  model: withReasoningStripped(makeTextModel()),
+  // Модель строится на старте сессии, а не при сборке: OpenCode Go требует ID диалога в
+  // заголовке каждого запроса, а sessionId известен только здесь. Для остальных провайдеров
+  // это та же модель, что раньше была статической (см. provider.ts, providerRequestHeaders).
+  // session.started, не turn/step: кэш промпта у провайдера живёт на модель, смена
+  // посреди сессии переваривала бы историю заново по полной цене.
+  model: defineDynamic({
+    events: {
+      "session.started": (_event, ctx) => ({
+        model: withReasoningStripped(
+          makeTextModel({ sessionId: ctx.session.id }),
+        ),
+        // Кастомный провайдер не отдаёт метаданные окна через AI Gateway — задаём вручную;
+        // без явного значения eve пошёл бы за ним в Gateway, которого у self-host нет.
+        modelContextWindowTokens: cfg.contextWindow,
+      }),
+    },
+  }),
   // eve maps this provider-agnostic setting to reasoning_effort for the
   // OpenAI-compatible Ollama Cloud and OpenCode Go endpoints.
   reasoning: compatibleThinkingEffort,
-  // Кастомный провайдер не отдаёт метаданные окна через AI Gateway — задаём вручную.
-  // ВАЖНО: значение ОБЯЗАНО быть ≤ реального окна модели, иначе запрос переполнит окно до компактации.
-  modelContextWindowTokens: cfg.contextWindow,
+  // Окно контекста едет вместе с выбором модели выше (у динамической модели место ему
+  // только там). ВАЖНО: значение ОБЯЗАНО быть ≤ реального окна модели, иначе запрос
+  // переполнит окно до компактации.
   // Защита от overflow: компактуем заранее (0.7 вместо дефолтных 0.9), оставляя запас на
   // summary-вызов и следующий ход. eve сам саммаризирует старые ходы, сохраняя todo и read-tracking.
   compaction: { thresholdPercent: 0.7 },
