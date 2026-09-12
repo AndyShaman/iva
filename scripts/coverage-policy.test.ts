@@ -43,18 +43,6 @@ const BLIND_SPOT: ReadonlyArray<{
     path: "agent/instructions/25-persona.ts",
     why: "динамика eve; персона проверена квизом",
   },
-  {
-    path: "agent/sandbox.ts",
-    why: "песочница eve; узлы графа проверяет web-surface-gate",
-  },
-  {
-    path: "agent/subagents/planner/agent.ts",
-    why: "агент планировщика eve; субрантайм вне скоупа",
-  },
-  {
-    path: "agent/subagents/planner/sandbox.ts",
-    why: "песочница планировщика eve",
-  },
   // Тонкие тулы: тривиальные обёртки, поведение держат тесты поверхностей.
   {
     path: "agent/tools/glob.ts",
@@ -63,10 +51,6 @@ const BLIND_SPOT: ReadonlyArray<{
   {
     path: "agent/tools/grep.ts",
     why: "тонкая обёртка; гоняют bash/grep-тесты поверхностей",
-  },
-  {
-    path: "agent/tools/tasks.ts",
-    why: "тонкая обёртка над json-store; стор покрыт",
   },
   // Транзитивно покрыты: свой тест грузит соседа, этот едет прицепом.
   {
