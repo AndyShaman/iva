@@ -280,7 +280,7 @@ function migrateV1Row(
     createdAt: nowMs,
     status: schedule.kind === "at" && alreadyRan ? "fired" : "pending",
     firedAt,
-    delivered: alreadyRan && value.lastStatus === "ok",
+    delivered: alreadyRan ? value.lastStatus === "ok" : null,
     error: typeof value.lastError === "string" ? value.lastError : null,
   };
 }

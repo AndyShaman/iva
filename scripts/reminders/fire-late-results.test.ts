@@ -142,3 +142,51 @@ void test("BLOCKER: a late result from the previous Routine occurrence must not 
   );
   assert.equal(final?.error, null);
 });
+
+void test("T34: агентская ветка отступает, когда строка ушла к новому срабатыванию", async () => {
+  // Находка 2: ветка судит только факт своего срабатывания (тот же фенс firedAt,
+  // что у записи). Пока строка ушла к N+1, поздний резерв N обязан молчать —
+  // иначе владелец получает дубль к свежему уведомлению.
+  const now = 1_800_000_000_000;
+  await add({
+    id: "moved-on",
+    text: "проверить отчёт",
+    schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
+  const [first] = await fireDue(now, 10);
+  assert.ok(first);
+
+  let releaseSend!: (ack: Ack) => void;
+  const gate = new Promise<Ack>((resolve) => {
+    releaseSend = resolve;
+  });
+  const sent: string[] = [];
+  let calls = 0;
+  const send = (_bot: string, _chat: string, text: unknown): Promise<Ack> => {
+    calls += 1;
+    sent.push(String(text));
+    return calls === 1 ? gate : Promise.resolve(success());
+  };
+
+  const firing = runReminderFire(
+    "moved-on",
+    deps({
+      send,
+      runTurn: completed("Агентское резервное сообщение"),
+    }),
+  );
+  await waitFor(() => calls === 1);
+  // Строка уходит к N+1, пока резерв N ещё решает: факт уже не его.
+  const [second] = await fireDue(first.nextRunAtMs, 10);
+  assert.ok(second);
+  assert.notEqual(second.firedAt, first.firedAt);
+  releaseSend(success());
+  await firing;
+
+  assert.deepEqual(
+    sent,
+    ["проверить отчёт"],
+    "резерв старого срабатывания выстрелил в строку нового срока",
+  );
+});

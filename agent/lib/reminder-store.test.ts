@@ -501,3 +501,34 @@ test("жизненный цикл, права файла и remove", async () =>
   await assert.rejects(fireDue(now, 0), /limit/);
   assert.equal(statSync(reminderFile()).mode & 0o777, 0o600);
 });
+
+test("миграция v1: не срабатывавшее мигрирует без факта, не провалом", async () => {
+  const now = Date.now();
+  await seed(
+    [
+      {
+        id: "never-ran",
+        text: "не срабатывало",
+        mode: "verbatim",
+        schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
+        nextRunAtMs: now + 120_000,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+      },
+    ],
+    1,
+  );
+
+  const rows = await list();
+  const found = rows.find((r) => r.id === "never-ran");
+  assert.ok(found);
+  assert.equal(found.status, "pending");
+  assert.equal(found.firedAt, null);
+  assert.equal(
+    found.delivered,
+    null,
+    "несрабатывавшее — нет факта доставки, а не провал",
+  );
+  assert.equal(found.error, null);
+});

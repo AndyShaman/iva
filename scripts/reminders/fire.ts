@@ -167,7 +167,16 @@ export async function runReminderFire(
     // не должно валить ветку агента — ветки независимы.
     await delivered.catch(() => undefined);
     const after = (await read()).find((candidate) => candidate.id === id);
-    if (after?.delivered === true) {
+    // Тот же фенс, что у записи: судим только факт своего срабатывания. Если строка
+    // уже ушла к новому сроку, уведомлением владеет его ветка — поздний резерв сюда
+    // стрелять не должен, иначе владелец получит дубль к свежему сообщению.
+    if (after?.firedAt !== row.firedAt) {
+      log(
+        `reminders: ${id} agent woke, row moved to firedAt=${after?.firedAt} — newer firing owns the message`,
+      );
+      return;
+    }
+    if (after.delivered === true) {
       log(`reminders: ${id} agent woke, text already delivered`);
       return;
     }
