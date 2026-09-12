@@ -1,9 +1,12 @@
 // Срабатывание одного напоминания:
 //   node --env-file-if-exists=.env scripts/reminders/fire.ts <id>
 // Запускает её минутный тик (agent/lib/reminder-tick.ts) на строке, которую уже перевёл в
-// fired. Две ветки идут ОДНОВРЕМЕННО и друг друга не ждут:
+// fired. Две ветки СТАРТУЮТ ОДНОВРЕМЕННО и не зависят друг от друга по провалу:
 //   (а) текст владельцу как есть через sendTelegramHtml — работает без модели и её токенов;
 //   (б) агент просыпается ходом-проверкой: доставлен ли текст, и если нет — говорит сам.
+// Своё сообщение ветка (б) отправляет только после того, как ветка (а) завершилась и факт
+// известен: иначе поздний успех Telegram дал бы владельцу два сообщения. Ожидание
+// ограничено потолком ребёнка (REMINDER_FIRE_TIMEOUT_MS у тика).
 // Обе только дописывают факт в ту же строку (delivered/error), строку не закрывают и ничего
 // не повторяют: повторов у напоминаний нет по решению владельца 12.09. Если процесс упал, не
 // сказав факта, тик запишет delivered=false с причиной по коду выхода.
@@ -30,9 +33,6 @@ import {
 } from "../lib/reminder-turn.ts";
 import { sendTelegramHtml } from "../lib/telegram-send.ts";
 
-/** Сколько ветка агента ждёт факт отправки, прежде чем сказать своё: иначе был бы дубль. */
-export const AGENT_DECISION_GRACE_MS = 10_000;
-
 const USAGE = "usage: fire.ts <reminder id>";
 
 export type ReminderFireDependencies = {
@@ -45,13 +45,7 @@ export type ReminderFireDependencies = {
   readonly chat?: (env: NodeJS.ProcessEnv) => string | null;
   readonly translator?: typeof noticeTranslator;
   readonly log?: (...args: unknown[]) => void;
-  readonly sleep?: (ms: number) => Promise<void>;
 };
-
-const realSleep = (ms: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 function message(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
@@ -76,7 +70,6 @@ export async function runReminderFire(
   const send = dependencies.send ?? sendTelegramHtml;
   const log =
     dependencies.log ?? ((...args: unknown[]) => console.log(...args));
-  const sleep = dependencies.sleep ?? realSleep;
 
   let row: Reminder | undefined;
   try {
@@ -161,8 +154,9 @@ export async function runReminderFire(
       log(`reminders: ${id} ${reason}`);
       return;
     }
-    // Факт отправки может прийти позже хода: ждём его не дольше десяти секунд.
-    await Promise.race([delivered, sleep(AGENT_DECISION_GRACE_MS)]);
+    // Факт отправки может прийти позже хода: ждём завершения ветки отправки. Её падение
+    // не должно валить ветку агента — ветки независимы.
+    await delivered.catch(() => undefined);
     const after = (await read()).find((candidate) => candidate.id === id);
     if (after?.delivered === true) {
       log(`reminders: ${id} agent woke, text already delivered`);
