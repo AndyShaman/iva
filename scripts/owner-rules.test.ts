@@ -7,7 +7,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,39 +14,33 @@ import { join } from "node:path";
 import test, { beforeEach } from "node:test";
 import type { ToolContext } from "eve/tools";
 
-// Тесты тулов живут в scripts/: файл рядом с тулами eve счёл бы ещё одним тулом и сборка
-// упала бы. Хук резолвинга идёт первым — тулы тянут соседей NodeNext-спецификаторами.
+// Тесты источника правил и проводки write_file живут в scripts/: файл рядом с тулами
+// eve счёл бы ещё одним тулом и сборка упала бы. Хук резолвинга идёт первым — тулы
+// тянут соседей NodeNext-спецификаторами.
 import "./lib/ts-esm-hooks.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "iva-owner-rules-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
 
-const { default: addRuleTool } =
-  await import("../agent/tools/instructions_add_rule.ts");
+// Гвард карточек T15 отказывает перезаписи существующего файла, если вольт
+// не резолвится: слоту нужна перезапись, поэтому вольт в стенде настоящий.
+const vaultDir = mkdtempSync(join(tmpdir(), "iva-owner-rules-vault-"));
+mkdirSync(join(vaultDir, "cards"), { recursive: true });
+process.env.ASSISTANT_VAULT_DIR = vaultDir;
+
 const { default: writeFileTool } = await import("../agent/tools/write_file.ts");
 const { default: ownerRulesSource } =
   await import("../agent/instructions/30-owner-rules.ts");
 const { ownerRulesMarkdown } = await import("../agent/lib/owner-rules.ts");
-
-type AddRuleAnswer =
-  | {
-      readonly ok: true;
-      readonly path: string;
-      readonly rules: number;
-      readonly chars: number;
-    }
-  | { readonly ok: false; readonly error: string };
 
 type WriteFileAnswer =
   | { readonly ok: true; readonly path: string; readonly bytes: number }
   | { readonly ok: false; readonly path: string; readonly error: string };
 
 // Второй аргумент execute — контекст хода; тестам тулов он не нужен, а eve типизирует
-// ответ тула как «значение или поток». Оба тула отвечают значением.
+// ответ тула как «значение или поток». Тул отвечает значением.
 const ctx = {} as unknown as ToolContext;
 
-const addRule = (input: { text: string }) =>
-  addRuleTool.execute(input, ctx) as Promise<AddRuleAnswer>;
 const writeFile = (input: { path: string; content: string }) =>
   writeFileTool.execute(input, ctx) as Promise<WriteFileAnswer>;
 
@@ -59,18 +52,20 @@ const HEADER =
 beforeEach(() => {
   rmSync(rulesDir, { recursive: true, force: true });
   rmSync(join(dataDir, "custom/agent/instructions.md"), { force: true });
-  rmSync(join(dataDir, "instructions-link"), { force: true });
 });
 
-test("a rule added by the tool is in the prompt on the next turn", async () => {
-  const first = await addRule({ text: "no emoji" });
+test("a rule written through write_file is in the prompt on the next turn", async () => {
+  mkdirSync(rulesDir, { recursive: true });
+  const first = await writeFile({
+    path: rulesPath,
+    content: `${HEADER}- no emoji\n`,
+  });
   assert.ok(first.ok);
-  assert.equal(first.rules, 1);
-
-  const second = await addRule({ text: "one paragraph per reply" });
+  const second = await writeFile({
+    path: rulesPath,
+    content: `${HEADER}- no emoji\n- one paragraph per reply\n`,
+  });
   assert.ok(second.ok);
-  assert.equal(second.rules, 2);
-  assert.equal(second.path, rulesPath);
   assert.deepEqual(
     readFileSync(rulesPath),
     Buffer.from(`${HEADER}- no emoji\n- one paragraph per reply\n`, "utf8"),
@@ -95,30 +90,6 @@ test("a rule added by the tool is in the prompt on the next turn", async () => {
   assert.match(JSON.stringify(instructions), /dry tone/u);
 });
 
-test("the tool refuses a duplicate, a multi-line rule and a file over the cap", async () => {
-  const added = await addRule({ text: "no emoji" });
-  assert.ok(added.ok);
-
-  const before = readFileSync(rulesPath);
-  const duplicate = await addRule({ text: "no emoji" });
-  assert.ok(!duplicate.ok);
-  assert.match(duplicate.error, /already/u);
-  assert.ok(readFileSync(rulesPath).equals(before));
-
-  const multiline = await addRule({ text: "one\nrule" });
-  assert.ok(!multiline.ok);
-  assert.match(multiline.error, /one rule/u);
-  assert.ok(readFileSync(rulesPath).equals(before));
-
-  // 3 990 + "- " + текст на 20 знаков + перевод строки > 4 000: файл не меняется.
-  writeFileSync(rulesPath, "x".repeat(3990));
-  const oversized = readFileSync(rulesPath);
-  const overCap = await addRule({ text: "y".repeat(20) });
-  assert.ok(!overCap.ok);
-  assert.match(overCap.error, /4000/u);
-  assert.ok(readFileSync(rulesPath).equals(oversized));
-});
-
 test("write_file still writes ordinary files under data", async () => {
   const target = join(dataDir, "custom/agent/skills/x.md");
   const answer = await writeFile({ path: target, content: "skill\n" });
@@ -126,30 +97,14 @@ test("write_file still writes ordinary files under data", async () => {
   assert.equal(readFileSync(target, "utf8"), "skill\n");
 });
 
-test("write_file refuses the owner instruction files", async () => {
+test("write_file writes the owner instruction files", async () => {
   mkdirSync(rulesDir, { recursive: true });
-  const targets = [
-    rulesPath,
-    join(dataDir, "custom/agent/instructions.md"),
-    join(rulesDir, "10-tone.md"),
-  ];
-  for (const target of targets) {
-    const answer = await writeFile({ path: target, content: "- nope\n" });
-    assert.ok(!answer.ok);
-    assert.match(answer.error, /instructions_add_rule/u);
-    assert.equal(existsSync(target), false);
+  for (const target of [rulesPath, join(rulesDir, "10-tone.md")]) {
+    const answer = await writeFile({ path: target, content: "- mine\n" });
+    assert.ok(answer.ok);
+    assert.equal(readFileSync(target, "utf8"), "- mine\n");
   }
-
-  // Симлинк на каталог правил — тот же отказ: сравнение идёт по realpath.
-  const link = join(dataDir, "instructions-link");
-  symlinkSync(rulesDir, link, "dir");
-  const viaLink = await writeFile({
-    path: join(link, "rules.md"),
-    content: "- nope\n",
-  });
-  assert.ok(!viaLink.ok);
-  assert.match(viaLink.error, /instructions_add_rule/u);
-  assert.equal(existsSync(rulesPath), false);
+  assert.ok(existsSync(rulesPath));
 });
 
 test("the source stays silent without a directory and with an empty file", () => {

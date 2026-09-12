@@ -1,9 +1,8 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../lib/fs-atomic.js";
-import { dataDir } from "../lib/data-dir.ts";
 
 // Host-native запись файла. Переопределяет встроенный write_file eve: пишет реальный
 // файл на VPS через каноническую атомарную запись, создавая родительские директории.
@@ -70,39 +69,11 @@ function cardVerdict(path: string): CardVerdict {
   };
 }
 
-// Правила владельца пишет тул instructions_add_rule. Это foot-gun guard, не граница:
-// bash по-прежнему дотянется до файла, но случайной записи моделью мимо тула не будет.
-function realOrNull(p: string): string | null {
-  try {
-    return realpathSync(p);
-  } catch {
-    return null;
-  }
-}
-
-function isOwnerInstructionsPath(path: string): boolean {
-  const agent = realOrNull(resolve(dataDir(), "custom", "agent"));
-  if (!agent) return false; // слота ещё нет — нечего защищать
-  const abs = resolve(path);
-  const real =
-    realOrNull(abs) ??
-    resolve(
-      realOrNull(dirname(abs)) ?? dirname(abs),
-      abs.split(sep).pop() as string,
-    );
-  return (
-    real === join(agent, "instructions.md") ||
-    real.startsWith(join(agent, "instructions") + sep)
-  );
-}
-
 export default defineTool({
   description:
-    "Записать файл НАПРЯМУЮ на файловую систему хоста VPS (UTF-8). " +
-    "Родительские директории создаются автоматически (mkdir -p). " +
-    "Перезаписывает файл целиком. Возвращает { ok, path, bytes }. " +
-    "ИСКЛЮЧЕНИЕ: существующую карточку в vault/cards/** перезаписывать нельзя — используй write_card. " +
-    "Правила владельца (data/custom/agent/instructions/) пишет instructions_add_rule — write_file их не трогает.",
+    "Записать файл (UTF-8) на хост; директории создаются, файл перезаписывается целиком. " +
+    "Возвращает { ok, path, bytes }. " +
+    "Карточку vault/cards/** нельзя — используй write_card.",
   inputSchema: z.object({
     path: z.string().min(1).describe("Абсолютный путь"),
     content: z.string().describe("Содержимое (UTF-8)"),
@@ -121,16 +92,6 @@ export default defineTool({
         error:
           "Карточка уже существует — write_file затёр бы её целиком (поля вне схемы и старый текст). " +
           "Используй write_card: он сливает новое содержимое со старым.",
-      };
-    }
-    if (isOwnerInstructionsPath(path)) {
-      return {
-        ok: false,
-        path,
-        error:
-          "owner instructions are written by instructions_add_rule; write_file их не пишет. " +
-          "Замена персоны data/custom/agent/instructions.md устарела (deprecated): " +
-          "перенеси свои правила в data/custom/agent/instructions/rules.md и удали файл.",
       };
     }
     await writeFileAtomic(path, content);

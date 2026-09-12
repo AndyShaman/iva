@@ -1,14 +1,14 @@
 // Правила владельца — markdown-файлы в data/custom/agent/instructions/, рядом со встроенной
-// персоной. Их читает с диска agent/instructions/30-owner-rules.ts на каждый ход, пишет тул
-// instructions_add_rule, а сборка в дерево не копирует (scripts/lib/authored-paths.ts:
-// isLiveInstructionPath). Правила always-on и платятся каждым ходом, отсюда общий предел:
-// тул отказывает, доктор предупреждает, источник не режет текст молча.
+// персоной. Их читает с диска agent/instructions/30-owner-rules.ts на каждый ход, пишет
+// write_file (прочитать файл, дописать строку, записать целиком), а сборка в дерево
+// не копирует (scripts/lib/authored-paths.ts: isLiveInstructionPath). Правила always-on
+// и платятся каждым ходом, отсюда общий предел: доктор предупреждает о переборе,
+// источник не режет текст молча.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";
 
 export const OWNER_RULES_CAP = 4000;
-export const RULES_FILE = "rules.md";
 
 export type OwnerRulesFile = { readonly name: string; readonly body: string };
 
