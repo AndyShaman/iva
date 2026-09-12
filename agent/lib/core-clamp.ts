@@ -184,13 +184,18 @@ export function clampCore(text: string): string {
   classifySections(lines);
   enforceGoalLimit(lines);
 
-  let current = render(lines);
+  const current = render(lines);
   if (current.length <= CORE_CAP) return current;
 
+  // Длину ведём вычитанием: render() на каждую вытесняемую строку делал сжатие
+  // квадратичным (4× вход ≈ 15× времени), а clampCore зовётся на каждом ходу,
+  // пока CORE больше потолка.
+  let length = current.length;
   for (const item of preferenceEvictionOrder(lines)) {
+    if (item.line.removed) continue;
     item.line.removed = true;
-    current = render(lines);
-    if (current.length <= CORE_CAP) return current;
+    length -= item.line.content.length + item.line.ending.length;
+    if (length <= CORE_CAP) return render(lines);
   }
 
   return truncateToCap(lines);
