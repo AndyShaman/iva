@@ -8,6 +8,7 @@
 // КАК ВОСПРОИЗВЕСТИ ПАДЕНИЕ: seed в имени теста; при провале подставь ещё и path:
 // fc.assert(prop, { seed: SEED, path }).
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -22,6 +23,7 @@ import test, { type TestContext } from "node:test";
 import { REDACTED, createDiagnoseCommand } from "./diagnose.ts";
 import { createCliRuntime } from "./runtime.ts";
 import { createCliSystemd } from "./systemd.ts";
+import { createSystemdControl } from "../lib/systemd-control.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 type SystemdLifecycle = ReturnType<typeof createCliSystemd>;
@@ -120,60 +122,52 @@ await test("пакет на фикстуре данных: все разделы
   writeFileSync(
     join(data, "reminders.json"),
     `${JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rows: [
         {
           id: "rem-run-failed",
           text: REMINDER_TEXT,
-          mode: "verbatim",
           schedule: { kind: "at", atMs: old },
           nextRunAtMs: old + 60_000,
-          lastRunAtMs: old,
-          lastStatus: "failed",
-          lastError: `sendMessage 400: Bad Request: ${REMINDER_TEXT}`,
-          deliver: { chatId: OWNER_ID },
-          leaseUntilMs: null,
-          deliveredKey: null,
+          createdAt: old - 60_000,
+          status: "fired",
+          firedAt: old,
+          delivered: false,
+          error: `sendMessage 400: Bad Request: ${REMINDER_TEXT}`,
         },
         {
           id: "rem-run-ok",
           text: REMINDER_TEXT,
-          mode: "agent",
           schedule: { kind: "cron", expr: "0 9 * * *", tz: "Asia/Almaty" },
           nextRunAtMs: NOW.getTime() + 60 * 60 * 1000,
-          lastRunAtMs: old + 60_000,
-          lastStatus: "ok",
-          lastError: null,
-          deliver: { chatId: OWNER_ID },
-          leaseUntilMs: null,
-          deliveredKey: "tg:1",
+          createdAt: old - 60_000,
+          status: "pending",
+          firedAt: old + 60_000,
+          delivered: true,
+          error: null,
         },
         {
           // id задаёт владелец: текстовый слаг не имеет права уехать в issue.
           id: "напомни-про-подарок-IDMARK",
           text: REMINDER_TEXT,
-          mode: "verbatim",
           schedule: { kind: "at", atMs: old },
           nextRunAtMs: old,
-          lastRunAtMs: null,
-          lastStatus: null,
-          lastError: null,
-          deliver: { chatId: OWNER_ID },
-          leaseUntilMs: null,
-          deliveredKey: null,
+          createdAt: old - 60_000,
+          status: "pending",
+          firedAt: null,
+          delivered: null,
+          error: null,
         },
         {
           id: "rem-future-only",
           text: REMINDER_TEXT,
-          mode: "verbatim",
           schedule: { kind: "at", atMs: old },
           nextRunAtMs: NOW.getTime() + 2 * 60 * 60 * 1000,
-          lastRunAtMs: null,
-          lastStatus: null,
-          lastError: null,
-          deliver: { chatId: OWNER_ID },
-          leaseUntilMs: null,
-          deliveredKey: null,
+          createdAt: old - 60_000,
+          status: "pending",
+          firedAt: null,
+          delivered: null,
+          error: null,
         },
       ],
     })}\n`,
@@ -341,6 +335,118 @@ await test("пакет на фикстуре данных: все разделы
   );
 });
 
+await test("пакет не несёт id и текст провала напоминания, когда доктор их видит", async (t) => {
+  const { root, data, env } = await sandbox(t);
+  const slug = "напомни-про-подарок-IDMARK";
+  const phrase = "секретная фраза для Ани";
+  const hash8 = (value: string) =>
+    createHash("sha256").update(value).digest("hex").slice(0, 8);
+  // Живая ветка доктора (она есть только с systemd): строка провала уезжает в раздел
+  // «## iva doctor» пакета как есть, поэтому её текст — половина контракта утечки.
+  const now = Date.now();
+  writeFileSync(
+    join(data, "reminders.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      rows: [
+        {
+          id: slug,
+          text: REMINDER_TEXT,
+          schedule: { kind: "at", atMs: now - 120_000 },
+          nextRunAtMs: now - 120_000,
+          createdAt: now - 180_000,
+          status: "fired",
+          firedAt: now - 60_000,
+          delivered: false,
+          error: `sendMessage 400: Bad Request: ${phrase}`,
+        },
+      ],
+    })}\n`,
+  );
+  writeFileSync(join(data, "reminders.tick"), `${now}\n`);
+  const units = join(root, "units");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "iva.service"), "[Service]\n");
+  const printed: string[] = [];
+  const doctorRuntime = {
+    ...runtimeFor(root, data, env, printed, { code: 1, out: "", err: "" }),
+    SERVICES: [],
+    TIMERS: [],
+    UNIT_DIR: units,
+    hasSystemd: () => true,
+    systemd: createSystemdControl({
+      run: (args) => {
+        if (args[0] === "is-enabled") return { code: 0, out: "enabled" };
+        if (args[0] === "is-active") return { code: 0, out: "active" };
+        return { code: 1, out: "" };
+      },
+    }),
+  };
+  // Доктор читает стор от cwd + ASSISTANT_DATA_DIR; каталог данных теста надо свести с runtime.
+  const previousDataDir = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = data;
+  try {
+    await createDiagnoseCommand(doctorRuntime, lifecycle(), {
+      now: () => NOW,
+    })();
+    // Битый стор: причина отказа несёт JSON строки (у него в id и text — слова владельца),
+    // поэтому в пакет идёт только класс ошибки, а не `error.message`.
+    writeFileSync(
+      join(data, "reminders.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        rows: [
+          {
+            id: slug,
+            text: phrase,
+            schedule: { kind: "at", atMs: now },
+            nextRunAtMs: now,
+            createdAt: now,
+            status: "fired",
+            firedAt: now,
+            delivered: "yes",
+            error: null,
+          },
+        ],
+      })}\n`,
+    );
+    await createDiagnoseCommand(doctorRuntime, lifecycle(), {
+      now: () => new Date(NOW.getTime() + 1_000),
+    })();
+  } finally {
+    if (previousDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previousDataDir;
+  }
+  const text = readFileSync(
+    join(data, "diagnose", "2026-09-12T15-04-07-000Z.md"),
+    "utf8",
+  );
+  assert.match(text, /## iva doctor/u);
+  assert.match(
+    text,
+    new RegExp(`reminders: #${hash8(slug)} .*sendMessage 400`, "u"),
+    "строка доктора в пакете — хеш id и код ошибки",
+  );
+  for (const leak of [slug, "IDMARK", phrase])
+    assert.ok(
+      !text.includes(leak),
+      `в пакете остался текст владельца: ${leak}`,
+    );
+
+  const brokenTable = readFileSync(
+    join(data, "diagnose", "2026-09-12T15-04-08-000Z.md"),
+    "utf8",
+  );
+  assert.match(
+    brokenTable,
+    /reminders: table unreadable \(ReminderStoreError\)/u,
+  );
+  assert.ok(
+    !brokenTable.includes("IDMARK") && !brokenTable.includes(phrase),
+    "причина отказа стора унесла слова владельца в пакет",
+  );
+});
+
 await test("секрет, записанный .env доктором во время прогона, тоже вырезается", async (t) => {
   const { root, data, env } = await sandbox(t);
   const printed: string[] = [];
@@ -437,7 +543,11 @@ await test("битые данные не мешают пакету: раздел
   const path = join(data, "diagnose", "2026-09-12T15-04-07-000Z.md");
   assert.deepEqual(printed, [`Diagnose package: ${path}`]);
   const text = readFileSync(path, "utf8");
-  assert.match(text, /- reminders\.json unreadable: /);
+  assert.match(text, /- reminders\.json is not valid JSON/);
+  assert.ok(
+    existsSync(join(data, "reminders.json")),
+    "диагностика читает битый reminders.json, а не переносит его",
+  );
   assert.match(text, /- no data\/trace — the turn journal has nothing/);
   assert.match(text, /journalctl unavailable \(no journalctl on this host\)/);
   assert.match(text, /## Custom layer \(file names only\)\n- \(none\)/);

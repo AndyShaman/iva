@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statfsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -57,6 +58,32 @@ type RollupStatus = Record<string, RollupEntry | null | undefined>;
 /** Сколько ждём `/health` прокси: он на loopback, и медленный ответ — уже симптом. */
 const HEALTH_TIMEOUT_MS = 1500;
 const WORKFLOW_RUNNING_LIMIT = 5;
+
+/**
+ * id строки напоминания в выводе доктора и в пакете diagnose — короткий хеш, а не id. Имя
+ * строки задаёт владелец, и текстовый слаг («напомни-про-подарок») увёз бы его слова в
+ * issue; сверить же строку можно и по хешу: sha256 от id, первые восемь знаков.
+ */
+export function reminderIdHash(id: string): string {
+  return createHash("sha256").update(id).digest("hex").slice(0, 8);
+}
+
+/**
+ * Код ошибки вместо её текста. В `error` строки напоминания апстрим кладёт тело ответа
+ * Telegram (`scripts/lib/telegram-send.ts`), а в теле может лежать текст самого напоминания
+ * — владельческий. Кода хватает, чтобы отличить отказ доступа от лимита и от 5xx; имени
+ * операции и статуса достаточно, всё остальное в вывод доктора и пакет не едет.
+ */
+export function errorCode(raw: string): string {
+  const status = /\b[1-5]\d{2}\b/u.exec(raw)?.[0] ?? "";
+  const name = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}/u.exec(raw.trim())?.[0] ?? "";
+  const code = [name, status].filter(Boolean).join(" ");
+  return code.length > 0 ? code : "error text omitted";
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : "unknown error";
+}
 
 type WorkflowStoreReport = {
   readonly runs: Readonly<Record<string, number>>;
@@ -617,8 +644,10 @@ export function createDoctorCommand(
             now() - row.firedAt <= dayMs,
         );
         for (const row of failed.slice(0, 5)) {
+          const code =
+            row.error === null ? "error text omitted" : errorCode(row.error);
           warn(
-            `reminders: #${row.id} fired ${Math.round((now() - (row.firedAt ?? 0)) / 60_000)}m ago and did not go out: ${row.error}`,
+            `reminders: #${reminderIdHash(row.id)} fired ${Math.round((now() - (row.firedAt ?? 0)) / 60_000)}m ago and did not go out: ${code}`,
           );
         }
         if (failed.length > 5)
@@ -631,9 +660,9 @@ export function createDoctorCommand(
           okN++;
         }
       } catch (error) {
-        warn(
-          `reminders: table unreadable: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        // Причина отказа стора несёт JSON строки, то есть текст владельца: в вывод
+        // доктора, а он же — раздел пакета diagnose, идёт только класс ошибки.
+        warn(`reminders: table unreadable (${errorName(error)})`);
         warnN++;
       }
     }

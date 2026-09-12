@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -294,13 +295,23 @@ async function remindersEvents(
 test("doctor показывает провалы напоминаний за сутки и пульс тика", async (t) => {
   const root = await sandbox(t);
   const now = Date.now();
+  // id задаёт владелец, а текст ошибки несёт тело ответа Telegram: строке доктора — а она
+  // же уезжает в пакет diagnose — остаются только хеш id и код ошибки.
+  const slug = "напомни-про-подарок";
+  const phrase = "private phrase for Anya";
+  const hash8 = (value: string) =>
+    createHash("sha256").update(value).digest("hex").slice(0, 8);
 
   // Свежий пульс и один провал за сутки.
   const fresh = await remindersEvents(root, {
     now,
     pulseAgoMs: 30_000,
     rows: [
-      { id: "r1", firedAt: now - 3_600_000, error: "400 chat not found" },
+      {
+        id: slug,
+        firedAt: now - 3_600_000,
+        error: `sendMessage 400: ${phrase}`,
+      },
       {
         id: "r2",
         firedAt: now - 30 * 3_600_000,
@@ -318,17 +329,25 @@ test("doctor показывает провалы напоминаний за с�
   assert.ok(
     fresh.some(
       ([kind, message]) =>
-        kind === "warn" && /#r1 .*400 chat not found/u.test(message),
+        kind === "warn" &&
+        message.includes(`#${hash8(slug)}`) &&
+        /sendMessage 400/u.test(message),
     ),
     JSON.stringify(fresh),
   );
+  for (const leak of [slug, phrase, "напомни"])
+    assert.equal(
+      fresh.some(([, message]) => message.includes(leak)),
+      false,
+      `в строке доктора остался текст владельца: ${leak}`,
+    );
   assert.equal(
-    fresh.some(([, message]) => message.includes("#r2")),
+    fresh.some(([, message]) => message.includes(hash8("r2"))),
     false,
     "провал старше суток не показываем",
   );
   assert.equal(
-    fresh.some(([, message]) => message.includes("#r3")),
+    fresh.some(([, message]) => message.includes(hash8("r3"))),
     false,
     "успешную строку не показываем",
   );

@@ -295,7 +295,19 @@ async function loadTable(file: string): Promise<Reminder[]> {
     schemaVersion: REMINDER_SCHEMA_VERSION,
     rows: [],
   });
+  return parseReminderTable(file, raw, Date.now());
+}
 
+/**
+ * Разбор таблицы без файла — тот же, что у `list()`: `iva diagnose` читает файл сам (клиент
+ * грузится без authored tree и не имеет права на побочный эффект читателя: порченый JSON
+ * стор откладывает в сторону), но полей строки и перевода v1 второй копией не держит.
+ */
+export function parseReminderTable(
+  file: string,
+  raw: unknown,
+  nowMs: number,
+): Reminder[] {
   if (!isPlainObject(raw) || typeof raw.schemaVersion !== "number")
     fail(file, "no schemaVersion");
   const version = raw.schemaVersion;
@@ -316,7 +328,7 @@ async function loadTable(file: string): Promise<Reminder[]> {
   for (const value of raw.rows) {
     const reminder =
       version === 1
-        ? assertReminder(file, migrateV1Row(file, value, Date.now()))
+        ? assertReminder(file, migrateV1Row(file, value, nowMs))
         : assertReminder(file, value);
     if (seen.has(reminder.id))
       fail(file, `duplicate reminder id ${JSON.stringify(reminder.id)}`);

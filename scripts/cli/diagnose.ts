@@ -6,8 +6,8 @@
 // Only `scripts/` is imported statically: the CLI has to start on an installation whose
 // `agent/` is missing (ADR-0003, scripts/authored-tree-guard.test.ts). The turn journal is
 // therefore read where it lies — `data/trace/*.jsonl`, the contract of docs/trace.md — and
-// the reminders table as `data/reminders.json`; neither authored module is loaded.
-import { createHash } from "node:crypto";
+// the reminders table as `data/reminders.json`; its rows are parsed by the store's own
+// reader, imported at run time, so a missing authored tree costs only that section.
 import {
   existsSync,
   mkdirSync,
@@ -17,7 +17,8 @@ import {
 } from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
-import { createDoctorCommand } from "./doctor.ts";
+import type { Reminder } from "../../agent/lib/reminder-store.ts";
+import { createDoctorCommand, errorCode, reminderIdHash } from "./doctor.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -33,16 +34,6 @@ export const REDACTED = "<redacted>";
 export const JOURNAL_LINES = 200;
 /** Потолок списка на раздел: пакет должен читаться, а не весить мегабайт. */
 export const SECTION_ITEM_LIMIT = 100;
-/** Потолок текста ошибки: в тело ответа апстрим кладёт что угодно, а нужен только код. */
-const ERROR_CHARS = 200;
-/**
- * id строки напоминания в пакете — короткий хеш, а не id. Имя строки задаёт владелец, и
- * текстовый слаг («напомни-про-подарок») увёз бы его слова в issue; сверить же строку
- * можно и по хешу: sha256 от id, первые восемь знаков.
- */
-export function reminderIdHash(id: string): string {
-  return createHash("sha256").update(id).digest("hex").slice(0, 8);
-}
 
 /** Потолок кода ошибки хода: код — короткое слово, а не текст. */
 const TRACE_CODE_CHARS = 60;
@@ -207,24 +198,6 @@ function readJsonObject(path: string): Record<string, unknown> | null {
   }
 }
 
-function errorText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.length > ERROR_CHARS ? message.slice(0, ERROR_CHARS) : message;
-}
-
-/**
- * Код ошибки вместо её текста. В `lastError` строки напоминания апстрим кладёт тело ответа
- * Telegram (`scripts/lib/telegram-send.ts`), а в теле может лежать текст самого напоминания
- * — владельческий. Кода хватает, чтобы отличить отказ доступа от лимита и от 5xx; имени
- * операции и статуса достаточно, всё остальное в пакет не едет.
- */
-function errorCode(raw: string): string {
-  const status = /\b[1-5]\d{2}\b/u.exec(raw)?.[0] ?? "";
-  const name = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}/u.exec(raw.trim())?.[0] ?? "";
-  const code = [name, status].filter(Boolean).join(" ");
-  return code.length > 0 ? code : "error text omitted";
-}
-
 function capText(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit)}…` : value;
 }
@@ -275,45 +248,60 @@ function hostSection(): string {
   ].join("\n");
 }
 
-function remindersSection(dataDir: string, nowMs: number): string {
+/**
+ * Факты строк напоминаний. Разбор тела отдан стору (`parseReminderTable`): схема строки —
+ * его собственность, второй копии полей здесь нет; разбор подгружается на исполнении, потому
+ * что CLI грузится и без authored tree (ADR-0003). В пакет едут хеш id и код ошибки, не текст:
+ * текст ошибки несёт тело ответа Telegram, а его слова — владельца.
+ */
+async function remindersSection(
+  dataDir: string,
+  nowMs: number,
+): Promise<string> {
   const file = join(dataDir, "reminders.json");
   if (!existsSync(file)) return "- no reminders.json on this install";
-  let parsed: Record<string, unknown> | null;
+  let raw: unknown;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
-  } catch (error) {
-    return `- reminders.json unreadable: ${errorText(error)}`;
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return "- reminders.json is not valid JSON";
   }
-  const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+  let parseReminderTable: (
+    file: string,
+    raw: unknown,
+    nowMs: number,
+  ) => Reminder[];
+  try {
+    parseReminderTable = (await import("../../agent/lib/reminder-store.ts"))
+      .parseReminderTable;
+  } catch {
+    return "- reminders.json present, but the authored tree that reads it is missing";
+  }
+  let rows: Reminder[];
+  try {
+    rows = parseReminderTable(file, raw, nowMs);
+  } catch (error) {
+    // Причина отказа несёт JSON строки: в пакет идёт только класс ошибки.
+    const name = error instanceof Error ? error.constructor.name : "unknown";
+    return `- reminders.json unreadable (${name})`;
+  }
   const facts: string[] = [];
-  let unreadable = 0;
   for (const row of rows) {
-    if (typeof row !== "object" || row === null) {
-      unreadable++;
-      continue;
-    }
-    const record = row as Record<string, unknown>;
-    const last =
-      typeof record.lastRunAtMs === "number" ? record.lastRunAtMs : null;
-    const due =
-      typeof record.nextRunAtMs === "number" ? record.nextRunAtMs : null;
+    const last = row.firedAt;
+    const due = row.nextRunAtMs;
     // Факт за сутки — то, что сработало за последние сутки, и то, что висит просроченным
     // прямо сейчас: молчащий диспетчер виден именно по второму.
     const recent = last !== null && nowMs - last <= DAY_MS;
-    const overdue = due !== null && due <= nowMs;
+    const overdue = due <= nowMs;
     if (!recent && !overdue) continue;
     const status =
-      record.lastStatus === "ok"
-        ? "yes"
-        : record.lastStatus === "failed"
-          ? "no"
-          : "never";
+      row.delivered === true ? "yes" : row.delivered === false ? "no" : "never";
     const error =
-      typeof record.lastError === "string" && record.lastError.length > 0
-        ? errorCode(record.lastError)
+      row.error !== null && row.error.length > 0
+        ? errorCode(row.error)
         : "none";
     facts.push(
-      `${reminderIdHash(String(record.id))} · due ${due === null ? "-" : new Date(due).toISOString()} · ` +
+      `${reminderIdHash(row.id)} · due ${new Date(due).toISOString()} · ` +
         `last ${last === null ? "-" : new Date(last).toISOString()} · delivered ${status} · ` +
         `error ${error}`,
     );
@@ -322,7 +310,6 @@ function remindersSection(dataDir: string, nowMs: number): string {
   const lines = shown.map((fact) => `- ${fact}`);
   if (rest > 0)
     lines.push(`- … ${rest} more (list cut at ${SECTION_ITEM_LIMIT})`);
-  if (unreadable > 0) lines.push(`- ${unreadable} unreadable rows skipped`);
   return lines.length > 0
     ? lines.join("\n")
     : "- no reminder facts in the last day";
@@ -505,7 +492,7 @@ function redactionLine(envFound: boolean, secretCount: number): string {
   return `- redaction: ${secretCount} values from .env, pattern rules always on`;
 }
 
-function packageMarkdown(input: {
+async function packageMarkdown(input: {
   readonly root: string;
   readonly dataDir: string;
   readonly gitHead: string;
@@ -513,8 +500,9 @@ function packageMarkdown(input: {
   readonly doctor: string;
   readonly journal: string;
   readonly redaction: string;
-}): string {
+}): Promise<string> {
   const nowMs = input.now.getTime();
+  const reminders = await remindersSection(input.dataDir, nowMs);
   return [
     "# Iva diagnose package",
     "",
@@ -539,7 +527,7 @@ function packageMarkdown(input: {
     "```",
     "",
     "## Reminders (last 24h and overdue; id = sha256/8)",
-    remindersSection(input.dataDir, nowMs),
+    reminders,
     "",
     "## Failed turns (last 24h)",
     turnsSection(input.dataDir, nowMs),
@@ -609,7 +597,7 @@ export function createDiagnoseCommand(
         ...secretValuesFromEnv(readEnv()),
       ]),
     ];
-    const text = packageMarkdown({
+    const text = await packageMarkdown({
       root: ROOT,
       dataDir: dataDirectory,
       gitHead: gitHead(),
