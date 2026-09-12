@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { parseEnv } from "node:util";
 import fc from "fast-check";
 import { REDACTED, redact, secretValuesFromEnv } from "./diagnose.ts";
 
@@ -333,10 +334,18 @@ await test("каждый ключ .env.example либо назван настр�
     keys.length > 30,
     `ключи .env.example не прочитаны: ${keys.length}`,
   );
+  // Значения — настоящие из файла (тем же парсером, что читает живой `.env`):
+  // синтетическая проба слепа к классам вроде `ASSISTANT_HOST=http://…` (T26).
+  // Пустое/отсутствующее значение — проба: нейтральна к правилу по построению.
+  const real = parseEnv(example);
+  const valueOf = (key: string): string => {
+    const raw = (real[key] ?? "").trim();
+    return raw.length > 0 ? raw : PROBE;
+  };
 
   const fell = keys.filter(
     (key) =>
-      secretValuesFromEnv({ [key]: PROBE }).includes(PROBE) ===
+      secretValuesFromEnv({ [key]: valueOf(key) }).includes(valueOf(key)) ===
       CONFIG_KEYS_IN_EXAMPLE.has(key),
   );
 
@@ -345,4 +354,40 @@ await test("каждый ключ .env.example либо назван настр�
     [],
     `ключ .env.example выпал из правила (режется, хотя назван настройкой, либо наоборот): ${fell.join(", ")}`,
   );
+});
+
+await test("*_HOST со схемой и без userinfo — настройка, с userinfo — секрет", () => {
+  const values = secretValuesFromEnv({
+    ASSISTANT_HOST: "http://127.0.0.1:8723",
+    SECURE_HOST: "https://example.com:8443",
+    BARE_HOST: "example.com:8080",
+    CREDS_HOST: "https://user:pass@example.com",
+  });
+
+  for (const setting of [
+    "http://127.0.0.1:8723",
+    "https://example.com:8443",
+    "example.com:8080",
+  ])
+    assert.ok(
+      !values.includes(setting),
+      `настройка вырезается как секрет: ${setting}`,
+    );
+  assert.ok(
+    values.includes("https://user:pass@example.com"),
+    "userinfo в хосте не режется",
+  );
+  assert.ok(values.includes("pass"), "пароль из userinfo не вырезан отдельно");
+});
+
+await test("короткая форма режется только на границе слова", () => {
+  const out = redact(
+    "password p end and :p@ pair, but package and output stay",
+    ["p"],
+  );
+
+  assert.match(out, /password <redacted> end/u);
+  assert.match(out, /:<redacted>@/u);
+  assert.ok(out.includes("package"), `слово разорвано: ${out}`);
+  assert.ok(out.includes("output"), `слово разорвано: ${out}`);
 });

@@ -61,9 +61,10 @@ const TRACE_CODE_CHARS = 60;
  */
 const CONFIG_KEY =
   /(?:^|_)(?:DIR|MODEL|PROVIDER|TIMEZONE|LANGUAGE|LANG|PORT|WINDOW|EFFORT|MODE|USERNAME|REASONING|MAX_OUTPUT)$|^(?:NODE_ENV|TZ)$/iu;
-/** `*_HOST`: настройка, только пока в значении нет ни владельца (`@`), ни пароля после `:`. */
+/** `*_HOST`: настройка, только пока в значении нет ни владельца (`@`), ни пароля после `:`. Со схемой — тоже настройка (`http://host[:port]`), но не с путём и не с userinfo. */
 const HOST_KEY = /(?:^|_)HOST$/iu;
 const PLAIN_HOST = /^[^\s@:]+(?::\d+)?$/u;
+const SCHEME_HOST = /^https?:\/\/[^\s/@:]+(?::\d+)?$/u;
 /**
  * Пароль внутри значения с владельцем: `https://user:pass@host`, `user:pass@host`. Значение
  * режется целиком, но в журнал пароль попадает и отдельным словом — строкой апстрима или
@@ -126,7 +127,19 @@ function secretForms(secret: string): string[] {
  * e-mail становятся пометкой. Формы режутся ОДНИМ проходом и от длинной к короткой: иначе
  * второй проход резал бы буквы внутри только что вставленной пометки, а короткая форма
  * съедала бы начало длинной (короткий секрет-префикс оставлял хвост длинного — T21).
+ * Форма короче 4 знаков режется только на границе слова: однобуквенный пароль `p` внутри
+ * `https://u:p@host` выделяется и так (`:p@`), а `package` и `output` остаются целыми (T26).
+ * Порог — строго ниже минимальной длины секрета в property-тесте (4): четырёхзначные
+ * формы обязаны резаться везде, даже приклеенными к мусору, иначе тест «ни одна форма
+ * не выживает» краснеет контрпримером вида `0!!!!` (проверено: при пороге 5 он красный).
  */
+const SHORT_FORM = 4;
+function formPattern(form: string): string {
+  const raw = escapeRegExp(form);
+  return form.length < SHORT_FORM
+    ? `(?<![\\p{L}\\p{N}])${raw}(?![\\p{L}\\p{N}])`
+    : raw;
+}
 export function redact(text: string, secrets: readonly string[]): string {
   const forms = new Set<string>();
   for (const secret of secrets)
@@ -136,7 +149,7 @@ export function redact(text: string, secrets: readonly string[]): string {
   let out = text;
   if (ordered.length > 0) {
     out = out.replace(
-      new RegExp(ordered.map(escapeRegExp).join("|"), "gu"),
+      new RegExp(ordered.map(formPattern).join("|"), "gu"),
       REDACTED,
     );
   }
@@ -169,7 +182,11 @@ export function secretValuesFromEnv(env: Record<string, string>): string[] {
       continue;
     }
     if (CONFIG_KEY.test(key)) continue;
-    if (HOST_KEY.test(key) && PLAIN_HOST.test(value)) continue;
+    if (
+      HOST_KEY.test(key) &&
+      (PLAIN_HOST.test(value) || SCHEME_HOST.test(value))
+    )
+      continue;
     values.push(value);
     const password = URL_PASSWORD.exec(value)?.[1];
     if (password) values.push(password);
