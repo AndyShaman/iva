@@ -116,6 +116,42 @@ void test("хвост факта не несёт пароль из окруже�
   assert.ok(written.tail.includes("<redacted>"), written.tail);
 });
 
+void test("провал ребёнка пробуждения виден в журнале и в строке факта", async () => {
+  // Слепая приёмка T20 (F4): ребёнок отвязан (detached, stdio ignore), и раньше его провал
+  // (нет wake.ts, ENOENT, ненулевой код) не попадал никуда — ни строки, ни отметки.
+  const root = await scaffold();
+  await writeFile(join(root, "ok.ts"), "process.exit(0);\n");
+  const factsPath = join(root, "data/jobs.json");
+  await mkdir(join(root, "data"), { recursive: true });
+  const lines: string[] = [];
+
+  await runScheduledJob({
+    name: "memory-daily",
+    argv: ["ok.ts"],
+    root, // в этом корне нет scripts/jobs/wake.ts — ребёнок умрёт сам
+    nodeBin: process.execPath,
+    factsPath,
+    log: (...args) => lines.push(args.map(String).join(" ")),
+  });
+
+  // Ребёнок живёт своей жизнью: ждём его исход, но недолго.
+  let wake = null;
+  for (let attempt = 0; attempt < 60 && wake === null; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    wake = (await readFacts(factsPath))[0]?.wake ?? null;
+  }
+  assert.equal(
+    wake?.status,
+    "failed",
+    `исход пробуждения: ${JSON.stringify(wake)}`,
+  );
+  assert.match(wake?.error ?? "", /.+/u, "причина провала не записана");
+  assert.ok(
+    lines.some((line) => /wake/iu.test(line) && /memory-daily/u.test(line)),
+    `в журнале нет строки про пробуждение: ${lines.join(" | ")}`,
+  );
+});
+
 void test("wake:false пишет факт, но не будит", async () => {
   const root = await scaffold();
   await writeFile(join(root, "ok.ts"), "process.exit(0);\n");

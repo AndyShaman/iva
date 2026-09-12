@@ -15,7 +15,7 @@ import {
 import { resolveDataDir } from "./data-dir.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { jobTail, recordFact } from "./job-facts.ts";
+import { jobTail, recordFact, recordWake } from "./job-facts.ts";
 import {
   acquireFileLock,
   releaseFileLock,
@@ -188,14 +188,19 @@ function factError(outcome: SpawnOutcome, ok: boolean): string | null {
   return null;
 }
 
-// Fire-and-forget: раннер не ждёт хода агента (он идёт до восьми минут) и не падает,
-// если ребёнок не поднялся — провал хода запишет сам wake.ts, а сторожа увидит его в факте.
+// Fire-and-forget: раннер не ждёт хода агента (он идёт до восьми минут) и не падает, если
+// ребёнок не поднялся. Но и молчать о таком провале нельзя: ребёнок отвязан (detached,
+// stdio ignore), поэтому единственный его след — строка журнала и отметка в строке факта,
+// которую раннер ставит только если сам ход ничего записать не успел. Повторов нет: провал
+// пробуждения — факт, а не повод будить снова.
 function spawnWake(
   root: string,
   nodeBin: string,
   env: NodeJS.ProcessEnv,
   name: string,
   startedAt: number,
+  factsFile: string,
+  log: (...args: unknown[]) => void,
 ): void {
   const child = spawn(
     nodeBin,
@@ -217,7 +222,29 @@ function spawnWake(
       stdio: "ignore",
     },
   );
-  child.on("error", () => {});
+  const failed = (reason: string): void => {
+    log(`schedule-runner: ${name} wake failed — ${reason}`);
+    void recordWake(
+      factsFile,
+      name,
+      startedAt,
+      { at: Date.now(), status: "failed", error: reason },
+      true,
+    ).catch((error: unknown) => {
+      log(
+        `schedule-runner: ${name} wake outcome not recorded — ${errorMessage(error)}`,
+      );
+    });
+  };
+  child.on("error", (error) => failed(errorMessage(error)));
+  child.on("exit", (code, signal) => {
+    if (code === 0) return;
+    // Ход сам пишет свой исход и выходит 1 на провале: тогда отметка уже стоит и
+    // onlyIfMissing её не тронет, а строка журнала останется единственным следом.
+    failed(
+      signal ? `wake child killed by ${signal}` : `wake child exited ${code}`,
+    );
+  });
   child.unref();
 }
 
@@ -518,6 +545,8 @@ export async function runScheduledJob(
                 env,
                 wakeName,
                 at,
+                factsFile,
+                log,
               ))
           )(name, startedAt);
         } catch (error) {
