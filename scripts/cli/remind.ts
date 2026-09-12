@@ -33,7 +33,12 @@ type ReminderClient = {
     }>;
   };
 };
-type CreateClient = () => Promise<ReminderClient>;
+type CreateClient = (options: ReminderClientOptions) => Promise<ReminderClient>;
+
+export type ReminderClientOptions = {
+  readonly host: string;
+  readonly auth: { readonly bearer: () => Promise<string> };
+};
 
 export type RemindDependencies = {
   readonly createClient?: CreateClient;
@@ -64,22 +69,27 @@ const deadline: Timeout = (work, timeoutMs) =>
     );
   });
 
-async function defaultCreateClient(): Promise<ReminderClient> {
+async function defaultCreateClient(
+  options: ReminderClientOptions,
+): Promise<ReminderClient> {
   const { Client } = await import("eve/client");
-  const port = process.env.IVA_PORT ?? "8723";
-  const host = process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${port}`;
-  const bearer = process.env.ASSISTANT_BEARER;
-  return new Client({
-    host,
-    ...(bearer ? { auth: { bearer: () => Promise.resolve(bearer) } } : {}),
-  });
+  return new Client(options);
+}
+
+function reminderClientOptions(env: NodeJS.ProcessEnv): ReminderClientOptions {
+  const bearer = String(env.ASSISTANT_BEARER ?? "").trim();
+  if (!bearer) throw new Error("ASSISTANT_BEARER is missing — run: iva doctor");
+  const port = env.IVA_PORT ?? "8723";
+  const host = env.ASSISTANT_HOST ?? `http://127.0.0.1:${port}`;
+  return { host, auth: { bearer: () => Promise.resolve(bearer) } };
 }
 
 async function runAgentTurn(
   prompt: string,
+  options: ReminderClientOptions,
   createClient: CreateClient = defaultCreateClient,
 ): Promise<ReminderTurn> {
-  const client = await createClient();
+  const client = await createClient(options);
   let session:
     Awaited<ReturnType<typeof client.sessions.create>>["session"] | undefined;
   try {
@@ -124,8 +134,10 @@ export function createRemindCommand(
       throw new Error(
         "No target chat — set TELEGRAM_DIGEST_CHAT_ID or TELEGRAM_ALLOWED_USER_IDS in .env",
       );
+    const client = reminderClientOptions(env);
 
     let turn: ReminderTurn | undefined;
+    let failure: string | undefined;
     try {
       const { tr } = await import("#lib/i18n.ts");
       const prompt =
@@ -138,17 +150,26 @@ export function createRemindCommand(
       const timeoutMs = dependencies.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const runner =
         dependencies.runAgentTurn ??
-        ((prompt) => runAgentTurn(prompt, dependencies.createClient));
+        ((prompt) => runAgentTurn(prompt, client, dependencies.createClient));
       turn = await (dependencies.timeout ?? deadline)(
         runner(prompt),
         timeoutMs,
       );
-    } catch {
+    } catch (error) {
       turn = undefined;
+      failure = error instanceof Error ? error.message : String(error);
     }
 
     const agentMessage =
       turn?.status !== "failed" && turn?.message ? turn.message : undefined;
+    if (!agentMessage) {
+      const cause =
+        failure ??
+        (turn?.status === "failed"
+          ? `status "failed"${turn.message ? `: ${turn.message}` : ""}`
+          : `no text (status "${turn?.status}")`);
+      console.error(`remind: agent turn failed: ${cause}`);
+    }
     const message = agentMessage ?? `⏰ ${text}`;
     const send =
       dependencies.send ??
