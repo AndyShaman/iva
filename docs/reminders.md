@@ -13,11 +13,7 @@ Plain words in the chat, the way you would tell a person:
 - «what reminders do I have?» — she lists them
 - «cancel the standup one» — she finds it and removes it
 
-You never write the date arithmetic yourself and neither does she: you say when, Iva turns it into an exact moment and tells you back the time she stored. If the time she repeats is not what you meant, say so right away — that answer is the moment to catch a misunderstanding.
-
-## Saying when
-
-Two kinds of reminder, one way of asking for each. A one-time reminder fires once and disappears; a repeating one keeps its place in the list and moves on to its next occurrence.
+Two kinds: a one-time reminder fires once and is done, a repeating one takes its next time from the calendar and waits for it. You never write the date arithmetic yourself and neither does she: you say when, Iva turns it into an exact moment and tells you back the time she stored.
 
 | You say                                              | What it means                                                      |
 | ---------------------------------------------------- | ------------------------------------------------------------------ |
@@ -29,43 +25,34 @@ Two kinds of reminder, one way of asking for each. A one-time reminder fires onc
 
 Everything is read in your timezone — the one Iva is configured with, not the server's. A date that does not exist on your clock (the hour skipped by a daylight-saving change, 31 February) is refused with that reason instead of being rounded to something nearby. So is a time in the past, and anything more than a year out.
 
-## Two modes
+## What happens at the time
 
-Both kinds of reminder come in two flavours, and this is a separate choice from one-time versus repeating:
+Two things at once, and neither waits for the other:
 
-- **Verbatim** (the default) — your text arrives exactly as you dictated it, with no model involved. Fast, cheap, predictable.
-- **Agent** — at the appointed time Iva takes a short turn first: she checks your tasks, sees whether the thing is still relevant, and writes the message herself. Ask for it in words: «remind me to prepare for the meeting, and look at my tasks first».
+- the code sends your text to the owner chat exactly as you dictated it — no model involved, so it works even when the model provider is down;
+- Iva wakes up, checks the delivery with `remind_list`, and if the text did not go out she writes the message herself and says what broke.
 
-Use verbatim for «buy bread». Use agent when the reminder is about work in flight and a blunt copy of your own sentence would be less useful than a sentence that knows what happened since.
+Nothing repeats. A row fires once: the moment it fires it is marked, and a repeating row moves on to its next time. There is no retry ladder, no window that removes a reminder hours later, and no warning per failure — the fact of the firing stays with the row: `fired_at`, `delivered` and the reason in `error`.
 
 ## Where to see the list
 
-`/menu` → **⏰** shows the nearest reminders — the time each one fires, a repeat marker on recurring ones, and the first words of the text. Above them is one line about the dispatcher: when it last ticked. A fresh tick means the machinery is alive; a stale one, or none at all, is flagged, and that is your signal that reminders are stored but nothing is firing — usually because the service is down.
+`/menu` → **⏰** shows the nearest reminders, what failed to go out, and one line about the dispatcher: when it last ticked (its pulse is the file `data/reminders.tick`, touched every minute). A fresh pulse means the machinery is alive; a stale one, or none at all, is your signal that reminders are stored but nothing will fire until Iva is running again.
 
-You can also just ask in the chat: Iva lists the same rows with their ids, and cancels any of them by id or by description.
+You can also just ask in the chat: `remind_list` lists the same rows with their ids, the next time, and the last firing with the delivery fact. Rows stay in the list for a day after they fire — that is where you see whether the text went out. `remind_remove` cancels any reminder by id.
 
-## When delivery fails
+## When something breaks
 
-Telegram can be unreachable, a chat can be misconfigured, a turn can time out. None of that silently loses the reminder:
-
-- the row stays and is retried, at most once every five minutes;
-- a one-time reminder keeps trying for six hours, then is dropped — one warning arrives with the full original text in it;
-- a repeating one tries for thirty minutes, then gives up on that occurrence and waits for the next one;
-- after the second failure in a row you get one short warning: what broke, until when Iva will keep trying, and how to cancel the reminder. At most one such warning per hour per reminder, so a broken chat cannot turn into a flood.
-
-Failed rows are marked in the `/menu` list, so you can spot a stuck one without waiting for a warning.
+- **The text did not go out.** The row shows `delivered: false` and the reason in `error`, and Iva's own message says the delivery broke and why. Fix the chat settings or the token, then ask again — a one-time reminder has already fired, so put a new one.
+- **The agent turn could not run.** Your text still goes out; the reason is in `error` and in the journal (`journalctl --user -u iva.service | grep reminders`).
+- **The dispatcher is not ticking.** `remind_list` warns that the reminder is stored but will not fire, and `iva doctor` says the same by the pulse file. It also lists every reminder that fired in the last day and did not go out.
 
 ## What Iva no longer does
 
-She used to be able to build her own timer: a transient system unit, a `crontab` line, a `sleep` loop with a `curl` to the Telegram API, a small script of her own. All of that is now refused before it runs, and the refusal names the reminder tool as the replacement.
-
-This is not bureaucracy. Home-made timers failed in exactly three ways: they did not survive a reboot (a transient unit lives in memory), they required converting your local time to the server's by hand and got it wrong by hours, and they were invisible — nothing listed them, nothing showed their status, and a silent failure looked identical to success. A reminder in the table has none of those properties.
-
-Reading is untouched: Iva can still inspect `crontab -l`, service status and the journal. The block is a foot-gun guard, not a security boundary — it stops a wrong habit, not an attacker.
+She used to be able to build her own timer: a transient system unit, a `crontab` line, a `sleep` loop with a `curl` to the Telegram API, a small script of her own. All of that is now refused before it runs, and the refusal names the reminder tool as the replacement. Home-made timers failed in exactly three ways: they did not survive a reboot, they required converting your local time to the server's by hand and got it wrong by hours, and they were invisible — nothing listed them and a silent failure looked identical to success. Reading is untouched: Iva can still inspect `crontab -l`, service status and the journal.
 
 ## Limits
 
-- **Owner chat only.** Reminders arrive in your chat with Iva. Other recipients — a forum topic, another person — are not supported.
-- **No more often than every ten minutes.** A repeating schedule tighter than that is refused: that is a monitoring job, not a reminder, and it would flood the chat.
-- **Your timezone, one of them.** Everything is computed in the timezone Iva is configured with; reminders for someone in another zone would need that zone spelled out, and today there is one.
-- **A reminder is a message, not a task.** It fires and it is done (or, if repeating, moves to the next occurrence). For work you track over time, use tasks — Iva keeps those separately, and an agent-mode reminder can read them.
+- **Owner chat only.** Other recipients — a forum topic, another person — are not supported.
+- **No more often than every ten minutes.** A repeating schedule tighter than that is refused: that is a monitoring job, not a reminder.
+- **Your timezone, one of them.** Everything is computed in the timezone Iva is configured with.
+- **A reminder is a message, not a task.** It fires and it is done (or, if repeating, moves to the next occurrence).
