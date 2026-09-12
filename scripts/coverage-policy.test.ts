@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 239;
+const EXPECTED_PRODUCTION_COUNT = 240;
 const EXPECTED_INVENTORY_SHA256 =
-  "ad728fd43a2c4837f5e087eb37aece88a0fdba11a7bb675d03d4470d0cb0f473";
+  "08b6fefc8481b4dd406f81ba3f4edca40a166e29f535c574d5843ed2b241962e";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -146,6 +146,14 @@ const EXPECTED_INVENTORY_SHA256 =
 // `agent/lib/reminder-time.test.ts` and `agent/lib/reminder-time.property.test.ts` reports
 // it at 98.57% lines, 97.14% branches and 80% functions - the uncovered function is
 // `ownerTimeZone`, which only the coming tools call - so the blind spot stays 26.
+// The reminder turn `scripts/lib/reminder-turn.ts` came last, one path: the session with the
+// idle-window watchdog that `iva remind` now shares with the delivery process. Scoped
+// coverage over `scripts/lib/reminder-turn.test.ts` and `scripts/cli/remind.test.ts` reports
+// it at 89.73% lines, 79.55% branches and 84.62% functions - reported, not a blind spot. What
+// is left is the real eve client no test starts (`defaultCreateClient`) and the boundary
+// branches its own failure tests have not driven yet (`session.completed`, `session.failed`,
+// `turn.failed`, the stream that ends without one) plus `reduceTurnEvents`. The blind spot
+// stays 26, and the inventory counts 240 with both reminder paths in it.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
