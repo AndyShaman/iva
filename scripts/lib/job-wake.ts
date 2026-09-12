@@ -73,7 +73,10 @@ export async function runJobWake(
   let message: string;
   try {
     const turn = await deps.runTurn(jobWakePrompt(fact, deps.tr));
-    if (turn.status !== "completed") throw new Error(`turn ${turn.status}`);
+    // Провал — только `failed`. `waiting` — нормальный конец хода: eve не шлёт
+    // `session.completed`, после хода сессия остаётся ждать следующего сообщения
+    // (прод c1 13.09: каждое пробуждение падало как «turn waiting»).
+    if (turn.status === "failed") throw new Error(`turn ${turn.status}`);
     message = (turn.message ?? "").trim();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

@@ -72,6 +72,46 @@ test("пустой ответ ничего не отправляет, факт �
   assert.equal((await readFacts(factsFile))[0]?.wake?.status, "empty");
 });
 
+test("waiting — нормальный конец хода: сессия ждёт следующего сообщения", async () => {
+  // Прод c1 13.09: eve не шлёт `session.completed` — после хода сессия остаётся ждать, и
+  // `reduceTurnEvents` даёт `waiting`. Пробуждение считало это провалом («turn waiting»)
+  // на каждом ходу.
+  const factsFile = file();
+  await recordFact(factsFile, fact(), NOW);
+  const sent: string[] = [];
+  const status = await runJobWake("memory-daily", NOW - 1000, {
+    factsFile,
+    tr,
+    runTurn: () => Promise.resolve({ status: "waiting", message: "  \n " }),
+    send: (text) => {
+      sent.push(text);
+      return Promise.resolve(true);
+    },
+    now: () => NOW + 5,
+    log: () => {},
+  });
+  assert.equal(status, "empty");
+  assert.deepEqual(sent, []);
+  assert.equal((await readFacts(factsFile))[0]?.wake?.status, "empty");
+});
+
+test("status failed остаётся провалом хода", async () => {
+  const factsFile = file();
+  await recordFact(factsFile, fact(), NOW);
+  const status = await runJobWake("memory-daily", NOW - 1000, {
+    factsFile,
+    tr,
+    runTurn: () => Promise.resolve({ status: "failed", message: "" }),
+    send: () => Promise.resolve(true),
+    now: () => NOW + 5,
+    log: () => {},
+  });
+  assert.equal(status, "failed");
+  const wake = (await readFacts(factsFile))[0]?.wake;
+  assert.equal(wake?.status, "failed");
+  assert.match(wake?.error ?? "", /turn failed/u);
+});
+
 test("непустой ответ уходит владельцу, факт говорит answered", async () => {
   const factsFile = file();
   await recordFact(
