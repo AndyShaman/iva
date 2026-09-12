@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
-  readdirSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -375,6 +374,17 @@ export const RETIRE_MARKER = ".iva-retiring";
 /** Артефакты чекаута без `.git`: сам репозиторий уходит последним. */
 const RETIRE_ARTIFACTS = ARTIFACTS.filter((path) => path !== ".git");
 
+/** Убрать опустевшие родители пути до home; каталог с любым содержимым остаётся. */
+function pruneEmptyParents(home: string, path: string): void {
+  for (let at = dirname(path); at !== home; at = dirname(at)) {
+    try {
+      rmdirSync(at);
+    } catch {
+      return; // Не пусто (или уже нет) - выше содержимое есть точно.
+    }
+  }
+}
+
 /** First path segment, for both `agent/tools/x.ts` and a bare `install.sh`. */
 function topLevel(path: string): string {
   return path.split("/", 1)[0] ?? "";
@@ -467,15 +477,11 @@ export function retireCheckout(home: string): string[] {
     if (!existsSync(full)) continue;
     rmSync(full, { recursive: true, force: true });
     removed.add(name);
-    // Up to the first directory that still holds something, which is never ours:
-    // git listed everything of ours in `tracked`.
-    for (
-      let at = dirname(full);
-      at !== home && readdirSync(at).length === 0;
-      at = dirname(at)
-    )
-      rmdirSync(at);
   }
+  // Пустые каталоги - после файлов: обрыв мог случиться уже после удаления последнего
+  // файла, и тогда подчищать нечего, кроме самих каталогов.
+  for (const path of [...tracked, ...RETIRE_ARTIFACTS, ".git"])
+    pruneEmptyParents(home, join(home, path));
   rmSync(marker, { force: true });
   return [...removed].sort();
 }
