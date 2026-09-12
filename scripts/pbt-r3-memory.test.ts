@@ -58,12 +58,25 @@ await test("НАХОДКА R3-5: гигантский запрос не веша
     " ",
   );
   const started = performance.now();
-  await search({ query });
+  const answer = await search({ query });
   const elapsed = performance.now() - started;
   assert.ok(
     elapsed < 3_000,
     `поиск занял ${Math.round(elapsed)} мс на запросе в ${query.length} знаков`,
   );
+  assert.equal(answer.count, 0);
+  assert.match(answer.note ?? "", /слишком длинный/u, JSON.stringify(answer));
+});
+
+// Потолок не должен резать живые запросы: 60 уникальных слов проходят как раньше.
+await test("зелёное: длинный, но живой запрос ищется, а не отбивается", async () => {
+  const query = Array.from(
+    { length: 60 },
+    (_, index) => `word${index % 40}`,
+  ).join(" ");
+  const answer = await search({ query });
+  assert.equal(typeof answer.count, "number");
+  assert.equal(answer.note, undefined, JSON.stringify(answer));
 });
 
 // Зелёные controls: спецсимволы не инжектятся в FTS, гигантский один токен дешёв,
@@ -83,12 +96,13 @@ await test("зелёное: спецсимволы запроса не лома�
   }
 });
 
-await test("зелёное: один гигантский токен обрабатывается быстро", async () => {
+await test("зелёное: гигантское слово отбивается отказом, а не перебором", async () => {
   const started = performance.now();
   const answer = await search({ query: "a".repeat(1_000_000) });
   const elapsed = performance.now() - started;
-  assert.ok(typeof answer.count === "number");
-  assert.ok(elapsed < 5_000, `${Math.round(elapsed)} мс на одном токене`);
+  assert.equal(answer.count, 0);
+  assert.match(answer.note ?? "", /слишком длинный/u, JSON.stringify(answer));
+  assert.ok(elapsed < 5_000, `${Math.round(elapsed)} мс на одном слове`);
 });
 
 await test("зелёное: мусорный scope не читает файлы вне вольта", async () => {

@@ -435,6 +435,28 @@ function naiveSearch(docs: Doc[], tokens: string[]): string[] {
   return scored.map((x) => x.path);
 }
 
+// Потолок запроса: цена поиска растёт с числом уникальных слов (каждый токен проходит по
+// всем карточкам), и запрос в 100 000 токенов держал ход 14-25 с. Отказ явный — модель
+// разобьёт запрос сама; тихое усечение молча меняло бы ответ на другой вопрос.
+const MAX_QUERY_TOKENS = 64;
+const MAX_QUERY_CHARS = 4000;
+
+function rejectLongQuery(detail: string): {
+  count: number;
+  engine: string;
+  hits: Hit[];
+  note: string;
+} {
+  return {
+    count: 0,
+    engine: "rejected",
+    hits: [],
+    note:
+      `Запрос слишком длинный (${detail}): потолок ${MAX_QUERY_TOKENS} слов и ` +
+      `${MAX_QUERY_CHARS} знаков — разбей запрос на несколько коротких`,
+  };
+}
+
 export async function searchMemory({
   query,
   limit,
@@ -445,8 +467,12 @@ export async function searchMemory({
   scope?: string[];
 }): Promise<{ count: number; engine?: string; hits: Hit[]; note?: string }> {
   {
-    const topN = limit ?? 12;
+    if (query.length > MAX_QUERY_CHARS)
+      return rejectLongQuery(`${query.length} знаков`);
     const tokens = contentTokens(query);
+    if (tokens.length > MAX_QUERY_TOKENS)
+      return rejectLongQuery(`${tokens.length} слов`);
+    const topN = limit ?? 12;
     const { docs, signature } = await loadDocs(
       scope && scope.length ? scope : DEFAULT_DIRS,
     );
@@ -578,7 +604,7 @@ export default defineTool({
     "{ file, score, status, confidence, snippet }; открывай 1–3 лучших через read_file; " +
     "superseded/INFERRED — осторожно.",
   inputSchema: z.object({
-    query: z.string().min(1).describe("Запрос: слова/имена/темы"),
+    query: z.string().min(1).describe("Запрос: слова/имена/темы (до 64 слов)"),
     limit: z
       .number()
       .int()
