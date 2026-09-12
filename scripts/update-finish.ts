@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  readFileSync,
+  lstatSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -365,14 +368,94 @@ const ARTIFACTS =
   ".git .iva-build .iva-update .output .worktrees node_modules".split(" ");
 
 /**
- * Метка незавершённого вывода. Пишется до первого удаления и снимается последним:
- * пока она лежит в home, повтор вправе дочистить артефакты даже без `.git` - иначе
- * обрыв между удалением `.git` и большим `node_modules` оставлял гигабайты навсегда.
+ * Метка незавершённого вывода. Ставится после первого состоявшегося удаления и снимается
+ * в конце удачного прохода: если вывод упал до первого удаления (например, на чужих
+ * правах), метки не остаётся вовсе.
+ *
+ * Метка несёт идентичность выводимого дерева (путь, inode каталога `.git`, HEAD) и
+ * проверяется перед сносом. Без неё и без git вывод не трогает ничего: залипшая метка
+ * на живом дереве не имеет права санкционировать снос.
  */
 export const RETIRE_MARKER = ".iva-retiring";
 
 /** Артефакты чекаута без `.git`: сам репозиторий уходит последним. */
 const RETIRE_ARTIFACTS = ARTIFACTS.filter((path) => path !== ".git");
+
+export interface RetireIdentity {
+  readonly home: string;
+  readonly gitDev: string | null;
+  readonly gitIno: string | null;
+  readonly headSha: string | null;
+  readonly at: number;
+}
+
+/** Идентичность дерева: путь, `.git` (dev+inode) и HEAD, если они читаются. */
+export function retireIdentity(home: string): RetireIdentity | null {
+  let realHome: string;
+  try {
+    realHome = realpathSync(home);
+  } catch {
+    return null;
+  }
+  let gitDev: string | null = null;
+  let gitIno: string | null = null;
+  try {
+    const stat = lstatSync(join(realHome, ".git"), { bigint: true });
+    gitDev = String(stat.dev);
+    gitIno = String(stat.ino);
+  } catch {
+    // `.git` уже нет или не читается - идентичность держится на пути.
+  }
+  let headSha: string | null = null;
+  try {
+    headSha = git(realHome, ["rev-parse", "HEAD"]).trim() || null;
+  } catch {
+    // Покалеченный или недоступный git: HEAD неизвестен.
+  }
+  return { home: realHome, gitDev, gitIno, headSha, at: Date.now() };
+}
+
+/** Метка с диска; нет файла или мусор - null (чужую метку не толкуем как свою). */
+export function readRetireMarker(marker: string): RetireIdentity | null {
+  let raw: string;
+  try {
+    raw = readFileSync(marker, "utf8");
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const value = parsed as Record<string, unknown>;
+  if (typeof value.home !== "string") return null;
+  const optional = (field: unknown): string | null =>
+    typeof field === "string" && field.length > 0 ? field : null;
+  return {
+    home: value.home,
+    gitDev: optional(value.gitDev),
+    gitIno: optional(value.gitIno),
+    headSha: optional(value.headSha),
+    at:
+      typeof value.at === "number" && Number.isFinite(value.at) ? value.at : 0,
+  };
+}
+
+/** Метка принадлежит этому дереву: путь совпал и `.git` тот же самый (dev+inode). */
+export function sameRetireTree(
+  marker: RetireIdentity,
+  current: RetireIdentity,
+): boolean {
+  if (marker.home !== current.home) return false;
+  // Если в метке записан `.git`, он обязан совпасть: пересозданный репозиторий на том же
+  // пути - уже другое дерево.
+  if (marker.gitDev !== null || marker.gitIno !== null)
+    return marker.gitDev === current.gitDev && marker.gitIno === current.gitIno;
+  return true;
+}
 
 /** Убрать опустевшие родители пути до home; каталог с любым содержимым остаётся. */
 function pruneEmptyParents(home: string, path: string): void {
@@ -395,6 +478,10 @@ const KEEP = new Set([
   ...[...STATE_DIRS, ...LEGACY_STATE_DIRS].map(topLevel),
   ...".env current repo versions".split(" "),
 ]);
+
+function errorCode(error: unknown): unknown {
+  return (error as { readonly code?: unknown } | null | undefined)?.code;
+}
 
 function git(home: string, args: string[]): string {
   return execFileSync("git", ["-C", home, ...args], {
@@ -419,8 +506,9 @@ export function writeShim(home: string, log: Say): void {
  * последним, а пустые родители подчищаются отдельным проходом в конце. Поэтому
  * повтор после обрыва на любом шаге доводит вывод до конца.
  */
-export function retireCheckout(home: string): string[] {
+export function retireCheckout(home: string, notify: Say = () => {}): string[] {
   const marker = join(home, RETIRE_MARKER);
+  const previous = readRetireMarker(marker);
   let tracked: string[] | null;
   let dirty: Set<string>;
   try {
@@ -439,14 +527,34 @@ export function retireCheckout(home: string): string[] {
         .filter((entry) => existsSync(join(home, entry.slice(3))))
         .map((entry) => topLevel(entry.slice(3))),
     );
-  } catch {
-    // Без git своё дерево не отличить от чужого; единственное доказательство, что здесь
-    // стояла наша установка, - метка прерванного вывода. С ней повтор дочищает артефакты.
+  } catch (error) {
+    // Git как команда недоступен (нет в PATH): не сносим ничего. Метка санкционирует
+    // снос только покалеченного репозитория (git есть, но не отвечает), и только если
+    // она принадлежит этому дереву.
+    if (errorCode(error) === "ENOENT") {
+      notify(
+        `git is not available - the checkout at ${home} was not retired, nothing was removed`,
+      );
+      return [];
+    }
     tracked = null;
     dirty = new Set();
   }
   if (tracked === null) {
-    if (!existsSync(marker)) return [];
+    // Git есть, но репозиторий не отвечает (покалечен обрывом).
+    if (!previous) {
+      notify(
+        `the checkout at ${home} has a broken .git and no retire marker - nothing was removed, clean it up by hand`,
+      );
+      return [];
+    }
+    const current = retireIdentity(home);
+    if (!current || !sameRetireTree(previous, current)) {
+      notify(
+        `the retire marker at ${marker} does not belong to this tree - nothing was removed`,
+      );
+      return [];
+    }
     const removed = new Set<string>();
     for (const path of [...RETIRE_ARTIFACTS, ".git"]) {
       const full = join(home, path);
@@ -454,17 +562,15 @@ export function retireCheckout(home: string): string[] {
       rmSync(full, { recursive: true, force: true });
       removed.add(path);
     }
+    for (const path of [...RETIRE_ARTIFACTS, ".git"])
+      pruneEmptyParents(home, join(home, path));
     rmSync(marker, { force: true });
     return [...removed].sort();
   }
   if (!tracked.includes("package.json")) return [];
 
-  // Метка до первого удаления: обрыв на любом шаге оставляет повтору право дочистить.
-  try {
-    writeFileSync(marker, "", { mode: 0o600 });
-  } catch {
-    // Не смогли пометить - вывод всё равно продолжится; окно обрыва остаётся прежним.
-  }
+  let identity: RetireIdentity | null = null;
+  let marked = false;
 
   const removed = new Set<string>();
   // Артефакты пересобираются, их не жалко; `.git` последним: обрыв оставляет повтору
@@ -475,8 +581,20 @@ export function retireCheckout(home: string): string[] {
       continue;
     const full = join(home, path);
     if (!existsSync(full)) continue;
+    // Идентичность снимается до удалений (`.git` уходит последним, так что он ещё цел)
+    // и ложится в метку только после первого состоявшегося удаления: упавший на первом
+    // файле вывод не оставляет метки вовсе.
+    identity ??= retireIdentity(home);
     rmSync(full, { recursive: true, force: true });
     removed.add(name);
+    if (!marked && identity) {
+      try {
+        writeFileSync(marker, JSON.stringify(identity), { mode: 0o600 });
+        marked = true;
+      } catch {
+        // Не смогли пометить - вывод всё равно продолжится; окно обрыва остаётся прежним.
+      }
+    }
   }
   // Пустые каталоги - после файлов: обрыв мог случиться уже после удаления последнего
   // файла, и тогда подчищать нечего, кроме самих каталогов.
@@ -766,7 +884,8 @@ export async function main(argv: readonly string[]): Promise<number> {
           notify(
             `a version cannot have a file of Iva's own deleted from it, so ${back.length} you had removed are back: ${back.join(", ")}`,
           );
-        for (const removed of retireCheckout(home)) log(`retired ${removed}`);
+        for (const removed of retireCheckout(home, notify))
+          log(`retired ${removed}`);
       },
     });
   } catch (error) {

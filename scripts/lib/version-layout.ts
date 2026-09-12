@@ -279,17 +279,78 @@ function claimDirectoryName(): string {
   return `.iva-shim-refresh-${process.pid}-${randomUUID()}`;
 }
 
-/**
 /** Час: заявка живёт миллисекунды, поэтому давняя не может принадлежать живому ходу. */
 export const SHIM_CLAIM_TTL_MS = 60 * 60 * 1000;
 
+/** Новый формат заявки: pid, разделитель и uuid. Старый (mkdtemp) разделителя не имеет. */
+const SHIM_CLAIM_NAME =
+  /^\.iva-shim-refresh-(\d+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/** Живой процесс? EPERM тоже значит «жив»: чужой пользователь — не смерть (QA Н3). */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+/** Команда процесса для проверки, что pid не переиспользован чужим. */
+function processCommand(pid: number): string {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ");
+  } catch {
+    // Не Linux или /proc закрыт — спросим ps.
+  }
+  try {
+    return execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+      encoding: "utf8",
+    });
+  } catch {
+    return "";
+  }
+}
+
+/** Наш ли это процесс: шим, CLI установки или вторая половина обновления. */
+function isIvaProcess(command: string): boolean {
+  return /iva/iu.test(command) || /update-finish/u.test(command);
+}
+
 /**
- * Убрать заявки оборванных обновлений шима, чужие для этого процесса. Имя нового
- * формата несёт pid: заявку мёртвого процесса убираем сразу, живого - не трогаем.
- * Имя старого формата pid не несёт, поэтому его судим по возрасту: старше часа -
- * брошено (жёсткий обрыв, kill -9), свежее - оставляем чужому ходу.
+ * Убрать каталог-заявку, не потеряв шим. Если шима на месте нет, а в заявке лежит его
+ * копия (`previous`), она — единственная: сначала возвращаем шим, потом убираем каталог.
  */
-function sweepStaleShimClaims(directory: string): void {
+function discardClaim(claim: string, shimPath: string): void {
+  const previous = join(claim, "previous");
+  try {
+    const copy = lstatSync(previous).isFile();
+    let shimThere = true;
+    try {
+      lstatSync(shimPath);
+    } catch {
+      shimThere = false;
+    }
+    if (copy && !shimThere) {
+      linkSync(previous, shimPath);
+      unlinkSync(previous);
+    }
+  } catch {
+    // Копии нет — убираем каталог как есть.
+  }
+  rmSync(claim, { recursive: true, force: true });
+}
+
+/**
+ * Убрать заявки оборванных обновлений шима, чужие для этого процесса.
+ *
+ * Новый формат (`pid-uuid`) разбирается целиком, а не `parseInt` по префиксу: старые
+ * имена вида `2avFo0` читались как pid 2 и сносились сразу (QA Б2). Для нового формата
+ * заявку живого нашего процесса не трогаем, заявку мёртвого или чужого pid убираем;
+ * заявку старше часа убираем даже при живом pid — столько заявка не живёт, pid
+ * переиспользован. Старый формат без разделителя судим только по возрасту.
+ */
+function sweepStaleShimClaims(directory: string, shimPath: string): void {
   const prefix = ".iva-shim-refresh-";
   let names: string[];
   try {
@@ -300,25 +361,25 @@ function sweepStaleShimClaims(directory: string): void {
   const now = Date.now();
   for (const name of names) {
     if (!name.startsWith(prefix)) continue;
-    const owner = Number.parseInt(name.slice(prefix.length), 10);
-    if (Number.isInteger(owner) && owner > 0) {
-      if (owner === process.pid) continue;
-      try {
-        process.kill(owner, 0);
-        continue; // Хозяин заявки ещё жив.
-      } catch {
-        // Процесса нет - заявка осиротела, её можно убрать сразу.
-      }
-    } else {
-      let age: number;
-      try {
-        age = now - statSync(join(directory, name)).mtimeMs;
-      } catch {
-        continue;
-      }
-      if (age < SHIM_CLAIM_TTL_MS) continue; // Может ещё держать чужой ход.
+    const claim = join(directory, name);
+    let age: number;
+    try {
+      age = now - statSync(claim).mtimeMs;
+    } catch {
+      continue;
     }
-    rmSync(join(directory, name), { recursive: true, force: true });
+    const parsed = SHIM_CLAIM_NAME.exec(name);
+    let remove = false;
+    if (parsed) {
+      const owner = Number(parsed[1]);
+      if (owner === process.pid) continue; // Своя живая заявка: не трогаем.
+      if (age >= SHIM_CLAIM_TTL_MS) remove = true;
+      else if (!processIsAlive(owner)) remove = true;
+      else if (!isIvaProcess(processCommand(owner))) remove = true;
+    } else if (age >= SHIM_CLAIM_TTL_MS) {
+      remove = true; // Старый формат: pid в имени нет, решает только возраст.
+    }
+    if (remove) discardClaim(claim, shimPath);
   }
 }
 
@@ -450,7 +511,7 @@ export function refreshOwnedShim(
   const desired = shimScript(home, node, dataDir);
   // Заявки, оставшиеся от оборванных обновлений, убираем до всего остального: иначе
   // они копятся в ~/.local/bin навсегда.
-  sweepStaleShimClaims(dirname(shimPath));
+  sweepStaleShimClaims(dirname(shimPath), shimPath);
   const opened = openShim(shimPath);
   if (opened.kind === "foreign") return false;
   if (opened.kind === "file") {
