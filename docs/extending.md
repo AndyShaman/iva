@@ -5,7 +5,9 @@ refreshed by releases; your custom layer lives in `data/custom/agent/`. `npm run
 a disposable tree, then `iva restart` activates the result ([cli.md](./cli.md)). The live source checkout
 stays clean, so an update cannot be blocked by a customized skill or HTML file. Local edits you already
 made to `agent/instructions.md`, `agent/connections/`, `agent/tools/` or `agent/subagents/` move into
-the custom layer automatically on the first update. Skills are the exception: they are read straight
+the custom layer automatically on the first update - a `data/custom/agent/instructions.md`
+that arrived that way is the deprecated replacement persona: `iva doctor` names it, and
+"Your rules" below shows the way off it. Skills are the exception: they are read straight
 off disk at run time and never go through a build (see below). Edits anywhere else in
 the tree stay a plain local patch: the updater stashes them and replays them onto the new revision, and
 archives them under `data/update-conflicts/` when they no longer apply.
@@ -91,127 +93,64 @@ outputSchema: z.object({
 
 A subagent runs on the main provider: the planner takes its model straight from `agent/provider.ts`, so `MODEL_PROVIDER` picks the model for every node of the graph at once. Subagents deliberately keep no provider or env of their own — one selection, one identity, one usage line.
 
-## Changing the character
+## Your rules
 
-Iva's voice comes from two places under `data/custom/agent/`:
+Your own rules live next to the bundled persona, in `data/custom/agent/instructions/`.
 
-- `data/custom/agent/instructions.md` **replaces** the bundled `agent/instructions.md` whole: tone,
-  rules, tool preferences and hard limits. Start by copying the bundled file. If an upstream edit
-  overlaps yours, Iva merges the three versions (base, yours, upstream); a full rewrite conflicts.
-  The reply language still comes from `AGENT_LANGUAGE` in `.env`.
-- `data/custom/agent/instructions/<name>.md` (or a dynamic `<name>.ts`, like the bundled
-  `agent/instructions/20-core.ts`: only `eve`, local packages and node `fs`/`path`) **adds** to the
-  bundled blocks. It loads after the bundled persona, next to `agent/instructions/*`. A name already
-  taken by a bundled file is refused by the build with the path — rename the file.
+Every markdown file there is read straight off disk on every turn - no rebuild, no restart, the
+same way skills work. Rules load in file-name order, so prefix a name when the order matters
+(`10-tone.md`). The whole directory shares one cap of 4 000 characters: `iva doctor` prints the
+current count and warns when the sum goes over.
 
-Both paths are code that goes into the bundle: `npm run build`, or `iva update`. On an installation
-that runs built versions, the slot arrives with the first build made by the new CLI — run
-`iva update --force` once after updating to the release that ships it. The bundled files in
-`agent/instructions/` stay upstream and are refreshed by releases; the slot only adds next to them.
+In the chat, "remember a rule: answer with a one-line summary first" is enough. Iva confirms
+what she heard and, after your yes, writes it into `rules.md` there through `write_file` -
+she asks first because the rule loads on the very next turn, and she does not edit files
+behind your back.
 
-If an upstream edit overlaps yours, Iva activates the new authored tree and saves all three versions
-(base, yours, upstream) under `data/update-conflicts/`. Tell Iva "restore my update changes" or «верни
-мои изменения после обновления» to load the recovery skill and merge them from chat.
+A rule of behaviour is not CORE: CORE holds standing facts and goals, the reply style comes
+from the `/menu` quiz, and rules live here.
 
-What Iva knows about _you_ is memory, not code — that's `CORE.md` in the vault ([memory.md](./memory.md)).
+`.ts` files in the same directory are dynamic instruction sources, like the bundled
+`agent/instructions/20-core.ts`: only `eve`, local packages, `agent/lib` and node
+`fs`/`path` may be imported there, and they go through `npm run build` - unlike the markdown files beside them.
+A name already taken by a bundled file in `agent/instructions/` is refused by the build with
+the path - rename the file.
 
-### Moving a replaced persona into the slot
+### The replaced persona
 
-`data/custom/agent/instructions.md` replaces the bundled persona whole. That was the only way to
-add a rule of your own, and it has a cost: your copy froze on the day you made it, and every rule
-shipped since then — reminders, delivery, the tool policy — never reaches the model. The slot
-(`data/custom/agent/instructions/<name>.md`) adds instead of replacing, so the bundled persona
-keeps arriving with each release and your rules ride next to it.
+`data/custom/agent/instructions.md` is the old way: it **replaces** the bundled
+`agent/instructions.md` whole. Your copy froze on the day you wrote it, and every rule shipped
+since - delivery, reminders, the tool policy - never reaches the model. `iva doctor` warns when
+the file exists. On a Version install the file is copied as is; on a checkout the updater
+merges the three versions (base, yours, upstream) and a full rewrite conflicts.
 
-**The symptom.** Iva ignores something the release notes say she now does: she offers a shell timer
-instead of the reminder tool, or sends a report with her own script instead of answering. Check in
-one line — the first grep reads the persona that is actually in the build, the second reads the file
-you wrote:
+Moving off it:
 
-```bash
-grep -c "Reminders and schedules" ~/iva/current/agent/instructions.md   # Version install
-grep -c "Reminders and schedules" data/custom/agent/instructions.md
-```
+1. See what is actually yours. Iva keeps the base your file replaced; the manifest records
+   which blob it was built from, and the blob sits next to it:
 
-If the bundled heading is missing from both, your replacement is what the model sees, and it predates
-that block. (On a checkout install read `agent/instructions.md` in the checkout instead of
-`~/iva/current/...`.)
+   ```bash
+   cd ~/iva            # or your checkout
+   base=$(node -e 'const m=require("./data/custom/manifest.json");console.log(m.entries["agent/instructions.md"].baseBlob)')
+   diff -u "data/custom/bases/$base" data/custom/agent/instructions.md
+   ```
 
-**1. Diff your file against the base it replaced.** Iva keeps that base: the manifest records which
-blob your file was built from, and the blob sits next to it. This is the same pair the merge machinery
-uses, so it is the honest "before":
+2. Keep the red lines no release can know - tone, report shape, hosts and paths of your
+   machine, personal integrations. Drop everything the bundled persona already says and every
+   recipe that has since become wrong (a script that sends to Telegram itself, a shell timer,
+   a removed command).
 
-```bash
-cd ~/iva            # or your checkout
-base=$(node -e 'const m=require("./data/custom/manifest.json");console.log(m.entries["agent/instructions.md"].baseBlob)')
-diff -u "data/custom/bases/$base" data/custom/agent/instructions.md
-```
+3. Write what is left into `data/custom/agent/instructions/rules.md` and remove the
+   replacement: `rm data/custom/agent/instructions.md`. Then `iva update --force` on a Version
+   install, or `npm run build` and `/restart` in the chat on a checkout. The bundled persona
+   comes back and your rules ride next to it.
 
-Everything that diff prints as added is yours; everything it prints as context is the bundled persona
-of that day. If the manifest has no entry yet (you created the file but never built), diff against the
-bundled file of the release you run instead.
+4. Check the result: `grep -c "Owner rules" ~/iva/current/agent/instructions.md` prints 1, and
+   asking Iva "what are your rules for reports?" returns what you wrote.
 
-**2. Keep only what the diff calls yours.** Sort the additions into three piles:
+5. `iva rollback` flips back to the version that ran before if something is off.
 
-- **Keep** — red lines and preferences no release can know: how a report must look, tone, which tool
-  you want reached for first, hosts and paths peculiar to your machine, personal integrations
-  (a proxy of yours, a CLI of yours) with their exact command.
-- **Drop** — anything the bundled persona already says. It is the whole point of the move: blocks
-  like tone-of-voice boilerplate, "what you can do", background-process rules come back for free and
-  stay current.
-- **Drop** — recipes that have since become wrong: a script that sends to Telegram itself, a shell
-  timer, a command that was removed, a hard-coded list of commands. If a rule of yours names a tool,
-  check the tool still exists before carrying it over.
-
-Write what is left into `data/custom/agent/instructions/rules.md` (any name that is not already taken
-by a bundled file in `agent/instructions/`; a collision is refused by the build with the path). Open
-it with one sentence saying it adds to the bundled persona — the model reads the file without any
-context about where it came from.
-
-**3. Remove the replacement and rebuild.** The slot only works once the replacement is gone;
-otherwise the frozen copy still wins for the base file:
-
-```bash
-cp data/custom/agent/instructions.md ~/instructions.md.backup   # keep an exit
-rm data/custom/agent/instructions.md
-```
-
-On an installation that runs built versions (`~/iva/versions/` with a `current` symlink):
-
-```bash
-iva update --force     # a plain `iva update` with no new commits would do nothing
-```
-
-On a checkout installation:
-
-```bash
-npm run build
-```
-
-then `/restart` in the chat.
-
-**4. Check the result.** Two greps and one question. The greps prove the bundled persona came back
-and your file is in the build:
-
-```bash
-grep -c "Reminders and schedules" ~/iva/current/agent/instructions.md   # 1
-grep -c "" ~/iva/current/agent/instructions/rules.md                    # your file, line count
-```
-
-Then ask Iva, in the chat, one question that only the bundled rules answer ("how do you set a
-reminder for tomorrow at nine?" — she must name the reminder tool, not a shell timer) and one that
-only your file answers ("what are your rules for reports?"). Both answers right means the two halves
-are live at once.
-
-**5. Roll back if something is off.** On a version install `iva rollback` flips back to the version
-that ran before — no build, no network. To go back to the replacement instead, restore your backup
-and rebuild:
-
-```bash
-cp ~/instructions.md.backup data/custom/agent/instructions.md
-rm data/custom/agent/instructions/rules.md
-iva update --force      # or npm run build + /restart on a checkout
-```
+What Iva knows about _you_ is memory, not code - that's `CORE.md` in the vault ([memory.md](./memory.md)).
 
 ## Local development
 
