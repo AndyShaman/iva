@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -700,5 +701,72 @@ test("a slot file that takes a bundled name is refused, not merged", (t) => {
       name.startsWith(".pending-"),
     ),
     [],
+  );
+});
+
+test("a slot file renamed out of a collision leaves nothing under the taken name", (t) => {
+  const { root, dataDir, base } = fixture(t);
+  write(dataDir, "custom/agent/instructions/rules.md", "rules: mine\n");
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  write(root, "agent/instructions/rules.md", "rules: upstream\n");
+  assert.throws(
+    () =>
+      materializeCustomLayer({
+        root,
+        dataDir,
+        targetRevision: "8".repeat(40),
+      }),
+    /agent\/instructions\/rules\.md/u,
+  );
+
+  // Владелец делает ровно то, что просит текст отказа: переименовывает свой файл.
+  renameSync(
+    join(dataDir, "custom/agent/instructions/rules.md"),
+    join(dataDir, "custom/agent/instructions/my-rules.md"),
+  );
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  commitCustomLayer(
+    materializeCustomLayer({
+      root,
+      dataDir,
+      targetRevision: "8".repeat(40),
+    }),
+  );
+
+  assert.equal(
+    existsSync(join(dataDir, "custom/agent/instructions/rules.md")),
+    false,
+  );
+  assert.equal(
+    readFileSync(
+      join(dataDir, "custom/agent/instructions/my-rules.md"),
+      "utf8",
+    ),
+    "rules: mine\n",
+  );
+  assert.equal(
+    readCustomManifest(dataDir).entries["agent/instructions/rules.md"],
+    undefined,
+  );
+  assert.equal(
+    readFileSync(join(root, "agent/instructions/rules.md"), "utf8"),
+    "rules: upstream\n",
+  );
+
+  // Живая сборка начинает с чистой копии ревизии (scripts/build.ts), поэтому файл,
+  // который слой положил в дерево, к следующему проходу там не лежит.
+  rmSync(join(root, "agent/instructions/my-rules.md"));
+  // Следующая сборка без единой правки владельца обязана пройти.
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  commitCustomLayer(
+    materializeCustomLayer({
+      root,
+      dataDir,
+      targetRevision: "8".repeat(40),
+    }),
+  );
+  assert.equal(
+    existsSync(join(dataDir, "custom/agent/instructions/rules.md")),
+    false,
   );
 });

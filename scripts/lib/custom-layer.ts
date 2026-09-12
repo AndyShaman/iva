@@ -469,6 +469,22 @@ export function materializeCustomLayer({
       throw new Error(`manifest contains a non-authored path: ${path}`);
     const entry = manifest.entries[path];
     if (!entry) continue;
+    // У файла слота нет апстрим-предка: он целиком принадлежит владельцу. Убрал или
+    // переименовал - хранить нечего, запись уходит из манифеста. Иначе одноимённый файл
+    // апстрима материализовался бы как «файл владельца» и следующая сборка упала бы на
+    // коллизии, которую владелец уже разрешил.
+    if (
+      isInstructionSlotPath(path) &&
+      entry.tombstone &&
+      entry.baseBlob === null
+    ) {
+      delete manifest.entries[path];
+      continue;
+    }
+    // У файла слота нет апстрим-предка: он целиком принадлежит владельцу. Убрал или
+    // переименовал - хранить нечего, запись уходит из манифеста. Иначе одноимённый файл
+    // апстрима материализовался бы как «файл владельца» и следующая сборка упала бы на
+    // коллизии, которую владелец уже разрешил.
     const base = entry.baseBlob
       ? readOptional(join(custom, "bases", entry.baseBlob))
       : null;
