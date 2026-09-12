@@ -263,6 +263,18 @@ maint("cleanup", [`${SCRIPTS}/cleanup.py`, ".", "--apply"]);
 // system fields. Runs FIRST (before graph) so the graph is built on canonical frontmatter.
 // This is the deterministic guarantee that cards written outside write_card stay in-schema.
 maint("enforce", [`${SCRIPTS}/enforce.py`, ".", SCHEMA, "--apply"]);
+// graph.fix rewrites Cards whose wikilinks resolve to exactly one target (path, stem or H1
+// title); ambiguous ones are left as they are. Runs before graph.health so the score is
+// measured after the repair.
+maint("graph.fix", [
+  `${SCRIPTS}/graph.py`,
+  "fix",
+  ".",
+  SCHEMA,
+  "--apply",
+  "--as-of",
+  today,
+]);
 // graph.health rebuilds the graph and writes health-history.json (for drop detection).
 maint("graph.health", [
   `${SCRIPTS}/graph.py`,

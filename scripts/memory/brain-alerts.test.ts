@@ -285,6 +285,75 @@ exit 0
   );
 });
 
+test("nightly brain repairs title links before measuring health", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iva-brain-graph-fix-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const vault = join(home, "vault");
+  const dataDir = join(home, "data");
+  const bin = join(home, "bin");
+  mkdirSync(join(vault, "cards"), { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(vault, "CORE.md"), "# CORE\n");
+  writeFileSync(
+    join(vault, "cards", "dev-tools.md"),
+    "# Рубрика инструментов\n",
+  );
+  // Схема именно в vault: тогда шаг получает предсказуемый путь схемы.
+  writeFileSync(join(vault, "schema.json"), JSON.stringify({ node_types: {} }));
+
+  const callLog = join(home, "uv-calls.log");
+  const uv = join(bin, "uv");
+  writeFileSync(
+    uv,
+    `#!/bin/sh
+printf '%s\\n' "$*" >> '${callLog}'
+/bin/mkdir -p .graph
+printf '%s\\n' '${JSON.stringify({ skipped: [] })}' > .graph/supersede-report.json
+exit 0
+`,
+  );
+  chmodSync(uv, 0o755);
+
+  const result = spawnSync(process.execPath, ["scripts/memory/brain.ts"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      PATH: bin,
+      ASSISTANT_VAULT_DIR: vault,
+      ASSISTANT_DATA_DIR: dataDir,
+      ASSISTANT_TIMEZONE: "UTC",
+      AGENT_LANGUAGE: "en",
+    },
+  });
+
+  const calls = readFileSync(callLog, "utf8").split("\n").filter(Boolean);
+  const enforce = calls.findIndex((call) => call.includes("enforce.py"));
+  const fix = calls.findIndex((call) => call.includes("graph.py fix"));
+  const health = calls.findIndex((call) => call.includes("graph.py health"));
+  const detail = `${result.stdout}${result.stderr}`;
+  assert.notEqual(enforce, -1, detail);
+  assert.ok(fix !== -1, detail);
+  assert.notEqual(health, -1, detail);
+  assert.equal(
+    calls.filter((call) => call.includes("graph.py fix")).length,
+    1,
+    "graph.fix runs exactly once",
+  );
+  const fixCall = calls[fix];
+  assert.ok(fixCall, detail);
+  assert.match(fixCall, /--apply/u);
+  assert.match(fixCall, /--as-of \d{4}-\d{2}-\d{2}/u);
+  assert.ok(
+    fixCall.includes(join(vault, "schema.json")),
+    `graph.fix must carry the schema path, got: ${fixCall}`,
+  );
+  assert.ok(
+    enforce < fix && fix < health,
+    `expected enforce < graph.fix < graph.health, got: ${calls.join(" | ")}`,
+  );
+});
+
 // ── Установка со сломанным agent/ ────────────────────────────────────────────────────────
 // Brain копируется на «остров»: свой package.json без алиаса #lib и без каталога agent/.
 // loadCardTools() там падает, cards === null — то есть проверить размер ядра и просканировать
