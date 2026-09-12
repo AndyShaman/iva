@@ -85,10 +85,11 @@ void test("хвост факта не несёт пароль из окруже�
   const root = await scaffold();
   await writeFile(
     join(root, "leak.ts"),
-    'process.stdout.write("provider " + process.env.CUSTOM_BASE_URL + " rejected\\n");\n' +
+    'process.stderr.write("provider " + process.env.CUSTOM_BASE_URL + " rejected\\n");\n' +
       // Пароль отдельным словом, без `@`: так его не спасёт ни одна форма, кроме правила
-      // «значение ключа .env — секрет» (иначе пароль вырезал бы шаблон e-mail).
-      'process.stdout.write("upstream says bpass1111 is wrong\\n"); process.exit(3);\n',
+      // «значение ключа .env — секрет» (иначе пароль вырезал бы шаблон e-mail). Печать в
+      // stderr: в факт идёт причина, а не отчёт скрипта (спека T20 п.1).
+      'process.stderr.write("upstream says bpass1111 is wrong\\n"); process.exit(3);\n',
   );
   const factsPath = join(root, "data/jobs.json");
   await mkdir(join(root, "data"), { recursive: true });
@@ -149,6 +150,69 @@ void test("провал ребёнка пробуждения виден в жу
   assert.ok(
     lines.some((line) => /wake/iu.test(line) && /memory-daily/u.test(line)),
     `в журнале нет строки про пробуждение: ${lines.join(" | ")}`,
+  );
+});
+
+void test("секрет на границе обрезки хвоста не доезжает до таблицы", async () => {
+  // Проверка T20 (раунд 3): хвост резался по 4000 знаков ДО вырезания, граница рассекала
+  // значение, и суффикс секрета лежал в jobs.json (а оттуда ехал в текст пробуждения).
+  const root = await scaffold();
+  await writeFile(
+    join(root, "loud.ts"),
+    'process.stderr.write(process.env.CUSTOM_API_KEY + "y".repeat(3990) + "\\n"); process.exit(4);\n',
+  );
+  const factsPath = join(root, "data/jobs.json");
+  await mkdir(join(root, "data"), { recursive: true });
+
+  await runScheduledJob({
+    name: "digest",
+    argv: ["loud.ts"],
+    root,
+    nodeBin: process.execPath,
+    factsPath,
+    env: { ...process.env, CUSTOM_API_KEY: "sk-live-VERY-SECRET-1234" },
+    wakeImpl: () => {},
+    log: () => {},
+  });
+
+  const [written] = await readFacts(factsPath);
+  assert.ok(written, "факт записан");
+  assert.ok(
+    !/ECRET-1234/u.test(written.tail),
+    `суффикс секрета в хвосте: ${written.tail.slice(0, 80)}`,
+  );
+  assert.match(written.tail, /<redacted>/u);
+});
+
+void test("хвост факта — причина из stderr, а не отчёт из stdout", async () => {
+  // Спека T20 п.1: в факте «последние 20 строк stderr». Отчёт скрипта в stdout вытеснял
+  // причину провала из хвоста и стоил токенов на пробуждении (проверка T20, раунд 3).
+  const root = await scaffold();
+  await writeFile(
+    join(root, "mixed.ts"),
+    'process.stderr.write("REAL-REASON: disk full\\n");\n' +
+      'process.stdout.write("STDOUT-REPORT " + "z".repeat(5000) + "\\n");\n' +
+      "process.exit(5);\n",
+  );
+  const factsPath = join(root, "data/jobs.json");
+  await mkdir(join(root, "data"), { recursive: true });
+
+  await runScheduledJob({
+    name: "memory-daily",
+    argv: ["mixed.ts"],
+    root,
+    nodeBin: process.execPath,
+    factsPath,
+    wakeImpl: () => {},
+    log: () => {},
+  });
+
+  const [written] = await readFacts(factsPath);
+  assert.ok(written, "факт записан");
+  assert.match(written.tail, /REAL-REASON: disk full/u);
+  assert.ok(
+    !written.tail.includes("STDOUT-REPORT"),
+    `отчёт stdout в хвосте факта: ${written.tail.slice(0, 80)}`,
   );
 });
 

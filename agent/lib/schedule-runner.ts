@@ -96,6 +96,8 @@ interface SpawnOutcome {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly tail: string;
+  /** Хвост для факта: только stderr и уже без секретов (см. onErrData ниже). */
+  readonly errTail: string;
   readonly error?: unknown;
 }
 
@@ -425,7 +427,7 @@ export async function runScheduledJob(
           detached: true,
         });
       } catch (error) {
-        resolve({ code: null, signal: null, tail: "", error });
+        resolve({ code: null, signal: null, tail: "", errTail: "", error });
         return;
       }
 
@@ -433,8 +435,21 @@ export async function runScheduledJob(
       const onData = (chunk: { toString(): string }) => {
         tail = (tail + chunk.toString()).slice(-TAIL_MAX);
       };
+      // Хвост для факта отдельный, и он копится иначе, чем хвост для журнала сервиса:
+      //  • только stderr — спека T20 просит в факте причину, а отчёт скрипта в stdout
+      //    вытеснял её из хвоста и ехал в текст пробуждения (лишние токены);
+      //  • вырезание секретов идёт ДО обрезки, поэтому граница буфера не может рассечь
+      //    значение и оставить в jobs.json его суффикс (jobTail сам держит 20 строк
+      //    и потолок знаков, так что буфер остаётся ограниченным).
+      let errTail = "";
+      const onErrData = (chunk: { toString(): string }) => {
+        errTail = jobTail(errTail + chunk.toString(), env);
+      };
       child.stdout?.on("data", onData);
-      child.stderr?.on("data", onData);
+      child.stderr?.on("data", (chunk: { toString(): string }) => {
+        onData(chunk);
+        onErrData(chunk);
+      });
 
       // Signal the process GROUP (negative pid), not just this one pid — see the
       // detached:true comment above. Falls back to a direct child.kill if the group
@@ -490,9 +505,11 @@ export async function runScheduledJob(
       if (killTimer.unref) killTimer.unref();
 
       child.on("error", (error) =>
-        settle({ code: null, signal: null, tail, error }),
+        settle({ code: null, signal: null, tail, errTail, error }),
       );
-      child.on("exit", (code, signal) => settle({ code, signal, tail }));
+      child.on("exit", (code, signal) =>
+        settle({ code, signal, tail, errTail }),
+      );
     });
 
     const finishedAt = now();
@@ -522,7 +539,7 @@ export async function runScheduledJob(
             ok,
             error: factError(outcome, ok),
             exitCode: outcome.code,
-            tail: jobTail(outcome.tail, env),
+            tail: outcome.errTail,
             acked: false,
             wake: null,
           },

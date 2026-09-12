@@ -9,8 +9,9 @@ minute. Each scheduled job is a thin spawner — the work itself lives in
 ## Every run leaves a fact
 
 One row per run, in `data/jobs.json`: name, started/finished time, ok, the reason
-of a failure, the exit code, and the tail of the run's log (last 20 lines, with
-secret values and Telegram tokens redacted). Rows older than seven days are
+of a failure, the exit code, and the tail of the run's error output (last 20 lines
+of `stderr`, cut by the same rule the evidence package uses — the report a script
+prints to `stdout` stays out of the row and out of the agent's turn). Rows older than seven days are
 dropped on the next write. `data/rollup-status.json` keeps only "in progress" and
 "last success" for the double-run guards — the history is `jobs.json`.
 
