@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 238;
+const EXPECTED_PRODUCTION_COUNT = 239;
 const EXPECTED_INVENTORY_SHA256 =
-  "9cc460411c2e9ac18042a9d51b4887f31753318669a4784a16cd8befc9c45ee2";
+  "ad728fd43a2c4837f5e087eb37aece88a0fdba11a7bb675d03d4470d0cb0f473";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -141,6 +141,11 @@ const EXPECTED_INVENTORY_SHA256 =
 // at 100% lines, 90.91% branches and 100% functions - the branch the roundtrip property
 // never takes is the loop break on an exact-minute match, not an unloaded module - so the
 // blind spot stays 26.
+// The reminder time resolver `agent/lib/reminder-time.ts` came next, one path: the croner
+// boundary and the owner-zone forms the reminder tools will share. Scoped coverage over
+// `agent/lib/reminder-time.test.ts` and `agent/lib/reminder-time.property.test.ts` reports
+// it at 98.57% lines, 97.14% branches and 80% functions - the uncovered function is
+// `ownerTimeZone`, which only the coming tools call - so the blind spot stays 26.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
