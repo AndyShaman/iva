@@ -513,13 +513,33 @@ test("killing an update leaves the running version alone and the next run cleans
     },
     stdio: "ignore",
   });
-  const exited = new Promise((resolve) => child.on("close", resolve));
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("close", (code) => resolve(code)),
+  );
   // Kill once the new version's directory exists: mid-flight, before any flip.
-  const deadline = Date.now() + 30_000;
+  // Ждём признак прогресса, а не стенные часы: под нагрузкой fetch и распаковка идут
+  // минутами, и 30 секунд отмеряли случайный исход. Ребёнок, вышедший раньше второго
+  // каталога, — провал запуска: сообщение несёт код выхода, и тест не виснет.
   const versions = join(iva.home, "versions");
-  while (readdirSync(versions).length < 2 && Date.now() < deadline)
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(readdirSync(versions).length, 2, "the update never got started");
+  let watching = true;
+  const started = (async (): Promise<boolean> => {
+    while (watching) {
+      if (readdirSync(versions).length >= 2) return true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return false;
+  })();
+  const outcome = await Promise.race([
+    started,
+    exited.then((code) => {
+      watching = false;
+      return code;
+    }),
+  ]);
+  if (outcome !== true)
+    assert.fail(
+      `the update never got started: child exited (code ${String(outcome)}) before a second version appeared`,
+    );
   child.kill("SIGKILL");
   await exited;
 
