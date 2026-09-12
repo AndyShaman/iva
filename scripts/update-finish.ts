@@ -365,6 +365,16 @@ export function restoreWriterOwnership(
 const ARTIFACTS =
   ".git .iva-build .iva-update .output .worktrees node_modules".split(" ");
 
+/**
+ * Метка незавершённого вывода. Пишется до первого удаления и снимается последним:
+ * пока она лежит в home, повтор вправе дочистить артефакты даже без `.git` - иначе
+ * обрыв между удалением `.git` и большим `node_modules` оставлял гигабайты навсегда.
+ */
+export const RETIRE_MARKER = ".iva-retiring";
+
+/** Артефакты чекаута без `.git`: сам репозиторий уходит последним. */
+const RETIRE_ARTIFACTS = ARTIFACTS.filter((path) => path !== ".git");
+
 /** First path segment, for both `agent/tools/x.ts` and a bare `install.sh`. */
 function topLevel(path: string): string {
   return path.split("/", 1)[0] ?? "";
@@ -394,9 +404,14 @@ export function writeShim(home: string, log: Say): void {
  * instead. Only files git accounts for, only where unedited, one at a time: what
  * git ignores inside a tracked directory - the userbot's venv, a skill's
  * credentials - is the user's, and a layout change is no right to it.
+ *
+ * Прерываемость: до первого удаления ставится метка (RETIRE_MARKER), `.git` идёт
+ * последним, а пустые родители подчищаются отдельным проходом в конце. Поэтому
+ * повтор после обрыва на любом шаге доводит вывод до конца.
  */
 export function retireCheckout(home: string): string[] {
-  let tracked: string[];
+  const marker = join(home, RETIRE_MARKER);
+  let tracked: string[] | null;
   let dirty: Set<string>;
   try {
     // -z on both: without it git escapes and quotes every path outside ASCII,
@@ -408,17 +423,43 @@ export function retireCheckout(home: string): string[] {
       git(home, ["status", "--porcelain=v1", "--untracked-files=all", "-z"])
         .split("\0")
         .filter(Boolean)
+        // Защищать имеет смысл только то, что лежит на диске: файл, уже удалённый
+        // (нашим же оборванным выводом или самим владельцем), не помечает весь
+        // верхний каталог как чужой - иначе повтор не дочищал бы соседей.
+        .filter((entry) => existsSync(join(home, entry.slice(3))))
         .map((entry) => topLevel(entry.slice(3))),
     );
   } catch {
-    // Without git there is no telling the user's files from ours: keep everything.
-    return [];
+    // Без git своё дерево не отличить от чужого; единственное доказательство, что здесь
+    // стояла наша установка, - метка прерванного вывода. С ней повтор дочищает артефакты.
+    tracked = null;
+    dirty = new Set();
+  }
+  if (tracked === null) {
+    if (!existsSync(marker)) return [];
+    const removed = new Set<string>();
+    for (const path of [...RETIRE_ARTIFACTS, ".git"]) {
+      const full = join(home, path);
+      if (!existsSync(full)) continue;
+      rmSync(full, { recursive: true, force: true });
+      removed.add(path);
+    }
+    rmSync(marker, { force: true });
+    return [...removed].sort();
   }
   if (!tracked.includes("package.json")) return [];
 
+  // Метка до первого удаления: обрыв на любом шаге оставляет повтору право дочистить.
+  try {
+    writeFileSync(marker, "", { mode: 0o600 });
+  } catch {
+    // Не смогли пометить - вывод всё равно продолжится; окно обрыва остаётся прежним.
+  }
+
   const removed = new Set<string>();
-  // Artifacts however edited: rebuilt, never authored, and .git is mirrored.
-  for (const path of [...tracked, ...ARTIFACTS]) {
+  // Артефакты пересобираются, их не жалко; `.git` последним: обрыв оставляет повтору
+  // работающий git, а не дерево без истории.
+  for (const path of [...tracked, ...RETIRE_ARTIFACTS, ".git"]) {
     const name = topLevel(path);
     if (KEEP.has(name) || (dirty.has(name) && !ARTIFACTS.includes(path)))
       continue;
@@ -435,6 +476,7 @@ export function retireCheckout(home: string): string[] {
     )
       rmdirSync(at);
   }
+  rmSync(marker, { force: true });
   return [...removed].sort();
 }
 
@@ -707,7 +749,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       },
       adopt: () => {
         writeShim(home, log);
-        if (!existsSync(join(home, ".git"))) return;
+        // Метка прерванного вывода - тот же повод дочистить, что и живого `.git`.
+        if (
+          !existsSync(join(home, ".git")) &&
+          !existsSync(join(home, RETIRE_MARKER))
+        )
+          return;
         const back = tombstoned(home, layout.data);
         if (back.length > 0)
           notify(
