@@ -126,7 +126,9 @@ export function toAuth(
     : { accountId: prev.accountId, planType: prev.planType };
   return {
     id_token: idToken,
-    access_token: tokens.access_token,
+    // Пустой ответ не смеет стереть уже записанный токен: файл входа обновляется только
+    // на непустое значение (PBT-DS1-P F2).
+    access_token: tokens.access_token || prev.access_token || "",
     refresh_token: tokens.refresh_token || prev.refresh_token,
     accountId: accountId as string | null,
     planType: planType as string | null,
@@ -149,7 +151,18 @@ async function refresh(
     throw new Error(
       `token refresh failed: ${res.status} ${(await res.text()).slice(0, 300)}`,
     );
-  return (await res.json()) as TokenResponse; // { id_token?, access_token, refresh_token? }
+  const body = (await res.json()) as TokenResponse; // { id_token?, access_token, refresh_token? }
+  // Ответ без access_token — ОТКАЗ обновления, а не новый вход: записать его значит
+  // стереть рабочий файл входа, потребовать `iva login` на следующем вызове и отправить
+  // провайдеру заголовок "Bearer undefined" (PBT-DS1-P F2). Пустая строка — такой же
+  // отказ: заголовок без токена не работает.
+  const accessToken =
+    typeof body?.access_token === "string" ? body.access_token.trim() : "";
+  if (!accessToken)
+    throw new Error(
+      "token refresh returned no access_token; the stored login was kept — run `iva login` if this repeats",
+    );
+  return { ...body, access_token: accessToken };
 }
 
 // ── getAccessToken: свежий токен для каждого запроса ────────────────────────

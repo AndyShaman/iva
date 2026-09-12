@@ -94,16 +94,32 @@ await test("любой ответ токен-эндпоинта либо даё�
   );
 });
 
-await test("минимальный контрпример: 200 с пустым JSON вытирает вход навсегда (seed 20260916)", async () => {
+await test("минимальный контрпример: 200 с пустым JSON сохраняет вход и не пускает пустой токен (seed 20260916)", async () => {
   const { dir, file } = install();
   stubTokenEndpoint("{}", 200);
   try {
-    // Первый вызов и есть поломка: провайдеру уезжает пустой токен, а файл теряет вход.
-    const first = await getAccessToken(dir);
+    // Пустой ответ — отказ обновления: либо явная ошибка, либо живой токен, но никогда
+    // не пустая строка в заголовке Authorization.
+    let token: { accessToken: string } | null = null;
+    try {
+      token = await getAccessToken(dir);
+    } catch {
+      /* отказ — честный исход */
+    }
+    if (token)
+      assert.ok(
+        typeof token.accessToken === "string" && token.accessToken.length > 0,
+        `провайдеру уехал пустой токен: ${JSON.stringify(token.accessToken)}`,
+      );
+
+    // Файл входа обязан уцелеть: и токен, и refresh_token на месте.
+    const stored = readAuth(dir);
     assert.ok(
-      typeof first.accessToken === "string" && first.accessToken.length > 0,
-      `провайдеру уехал пустой токен: ${JSON.stringify(first.accessToken)}`,
+      typeof stored?.access_token === "string" &&
+        stored.access_token.length > 0,
+      "пустой ответ вытер access_token из файла входа",
     );
+    assert.equal(stored?.refresh_token, "rt-original");
 
     // Эндпоинт ожил: следующий вызов обязан войти заново из живого refresh_token.
     stubTokenEndpoint(JSON.stringify({ access_token: jwt(NOW_S + 3600) }), 200);
