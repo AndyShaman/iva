@@ -118,6 +118,12 @@ await test("нижний регистр percent-escape режется так ж�
   const out = redact(`q=${lowered} end`, [secret]);
   assert.ok(!out.includes(lowered), `нижняя percent-форма выжила: ${out}`);
   assert.ok(!out.includes(secret), `сырая форма выжила: ${out}`);
+
+  // Вторая половина контракта: регистр значим вне escape. Строчная форма чужого секрета
+  // не имеет права резаться — иначе регистронезависимый флаг на всю форму (мутация
+  // критика) проходил бы все тесты.
+  const foreign = "h: alpha%2fbeta";
+  assert.equal(redact(foreign, ["Alpha%2FBeta"]), foreign);
 });
 
 await test("строка без @ не тормозит: 100 КБ режутся быстрее 100 мс", () => {
