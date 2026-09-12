@@ -301,6 +301,29 @@ await test("режется значение любого ключа, кроме 
     );
 });
 
+await test("служебные переменные systemd не режутся как секреты", () => {
+  // Их нет в `.env`, но systemd кладёт их в окружение сервиса всегда: значение — не
+  // секрет, а провал запуска расписания печатает pid и stream в хвост факта.
+  const env = {
+    MANAGERPID: "1234",
+    SYSTEMD_EXEC_PID: "5678",
+    JOURNAL_STREAM: "8:24680",
+    INVOCATION_ID: "abcd0123456789abcd0123456789ab",
+  } as const;
+  const values = secretValuesFromEnv(env);
+  for (const [name, value] of Object.entries(env))
+    assert.ok(
+      !values.includes(value),
+      `служебная переменная вырезается как секрет: ${name}=${value}`,
+    );
+  const line = "rollup daily: 1234 cards written in 5678 ms, stream 8:24680";
+  assert.equal(
+    redact(line, values),
+    line,
+    "хвост запуска порезан служебными pid",
+  );
+});
+
 /** Значение-проба: ни одного знака, по которому правило могло бы решить само. */
 const PROBE = "ProbeValueQ9876";
 
