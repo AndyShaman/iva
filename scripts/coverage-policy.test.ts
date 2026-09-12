@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 240;
+const EXPECTED_PRODUCTION_COUNT = 242;
 const EXPECTED_INVENTORY_SHA256 =
-  "08b6fefc8481b4dd406f81ba3f4edca40a166e29f535c574d5843ed2b241962e";
+  "16dfb23989a8c627b2d88b165a6d04e3d04114af8147660f77668b9df8a4a2e1";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -154,6 +154,13 @@ const EXPECTED_INVENTORY_SHA256 =
 // branches its own failure tests have not driven yet (`session.completed`, `session.failed`,
 // `turn.failed`, the stream that ends without one) plus `reduceTurnEvents`. The blind spot
 // stays 26, and the inventory counts 240 with both reminder paths in it.
+// The reminders dispatcher came last, two paths: `agent/lib/reminder-tick.ts`, which claims
+// the due rows, and `agent/schedules/reminders.ts`, the minute schedule that calls it.
+// Scoped coverage over the tick tests, the schedule test, the menu screen test and the
+// schedule-migration test reports them at 96.08% / 100% lines, 78.57% / 100% branches and
+// 92.86% / 100% functions - the lines the tick never takes are the "killed by signal" and
+// "failed to start" wording of a child that did not report a plain exit code, not an
+// unloaded file - so the blind spot stays 26.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
