@@ -22,8 +22,11 @@ export function scanUnclosedFenceCards(vaultPath: string): string[] {
   try {
     entries = readdirSync(root, { recursive: true, encoding: "utf8" });
   } catch (error) {
+    // Причина без префикса "Error:" и без стека: ночь проверяет свой вывод на
+    // необработанный ENOENT, а текст ошибки в журнале по-прежнему есть.
+    const detail = error instanceof Error ? error.message : String(error);
     console.error(
-      `card-fences: не смог прочитать каталог карточек (${root}): ${String(error)}`,
+      `card-fences: не смог прочитать каталог карточек (${root}): ${detail}`,
     );
     return [];
   }

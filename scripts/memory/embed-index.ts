@@ -48,9 +48,10 @@ function walk(dir: string, out: string[]): void {
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (error) {
-    console.error(
-      `embed-index: не смог прочитать каталог (${dir}): ${String(error)}`,
-    );
+    // Как card-fences: ночь проверяет свой вывод на необработанный ENOENT, поэтому
+    // причина идёт без префикса "Error:" и без стека.
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`embed-index: не смог прочитать каталог (${dir}): ${detail}`);
     return;
   }
   for (const e of entries) {
