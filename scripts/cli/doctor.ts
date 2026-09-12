@@ -557,6 +557,73 @@ export function createDoctorCommand(
       }
     }
 
+    // Напоминания: пульс минутного диспетчера (mtime data/reminders.tick) и строки,
+    // которые сработали за сутки, но не доехали. Модули authored tree грузятся
+    // динамически: на урезанной установке их может не быть, и тогда проверка честно
+    // пропускается (как очередь моста ниже).
+    let remindersModule: {
+      list: typeof import("../../agent/lib/reminder-store.ts").list;
+    } | null = null;
+    let tickModule: {
+      readTickPulse: typeof import("../../agent/lib/reminder-tick.ts").readTickPulse;
+      REMINDER_TICK_STALE_MS: number;
+    } | null = null;
+    try {
+      const [store, tick] = await Promise.all([
+        import("../../agent/lib/reminder-store.ts"),
+        import("../../agent/lib/reminder-tick.ts"),
+      ]);
+      remindersModule = store;
+      tickModule = tick;
+    } catch {
+      // Без authored tree напоминаний на установке нет вовсе.
+    }
+    if (remindersModule !== null && tickModule !== null) {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const pulse = tickModule.readTickPulse();
+      if (pulse === null) {
+        warn(
+          "reminders: the dispatcher has not ticked yet — stored reminders will not fire (journalctl --user -u iva.service | grep reminders)",
+        );
+        warnN++;
+      } else if (now() - pulse > tickModule.REMINDER_TICK_STALE_MS) {
+        warn(
+          `reminders: the dispatcher has not ticked for ${Math.round((now() - pulse) / 60_000)}m — stored reminders will not fire`,
+        );
+        warnN++;
+      } else {
+        ok("reminders dispatcher ticked recently");
+        okN++;
+      }
+      try {
+        const failed = (await remindersModule.list()).filter(
+          (row) =>
+            row.error !== null &&
+            row.firedAt !== null &&
+            now() - row.firedAt <= dayMs,
+        );
+        for (const row of failed.slice(0, 5)) {
+          warn(
+            `reminders: #${row.id} fired ${Math.round((now() - (row.firedAt ?? 0)) / 60_000)}m ago and did not go out: ${row.error}`,
+          );
+        }
+        if (failed.length > 5)
+          warn(
+            `reminders: ${failed.length - 5} more failed rows in the last day`,
+          );
+        if (failed.length > 0) warnN++;
+        else {
+          ok("reminders: nothing failed in the last day");
+          okN++;
+        }
+      } catch (error) {
+        warn(
+          `reminders: table unreadable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        warnN++;
+      }
+    }
+
     // The queue loader normally repairs pending/corrupt files. Doctor only observes them,
     // so its injected file operations suppress recovery and quarantine writes.
     let queueModule: typeof import("../lib/telegram-queue.ts") | null = null;

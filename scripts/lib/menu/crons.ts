@@ -15,11 +15,7 @@ import { readSettings } from "#lib/settings.ts";
 // Names double as status-file keys — the `name` each schedule passes to runScheduledJob
 // (see scripts/lib/schedule-runner.ts), not the bare period. Display order is table order.
 import { SCHEDULE_CRON } from "#lib/schedule-table.ts";
-import {
-  REMINDER_TICK_STALE_MS,
-  ReminderTickError,
-  readTickHeartbeat,
-} from "#lib/reminder-tick.ts";
+import { REMINDER_TICK_STALE_MS, readTickPulse } from "#lib/reminder-tick.ts";
 import { list } from "#lib/reminder-store.ts";
 import { resolveTimeZone } from "#lib/timezone.ts";
 import { formatZoned } from "#lib/zoned-time.ts";
@@ -100,37 +96,27 @@ function shortText(text: string): string {
   return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 }
 
-// Ближайшие напоминания и свежесть минутного тика. Ошибки чтения не подменяются пустотой:
-// экран говорит, что именно не читается, а причина уезжает в журнал — runtime-текст ошибки
-// в чат не несём, экраны идут мимо Outbox (agent/lib/outbox.ts).
+// Ближайшие напоминания и свежесть минутного тика (пульс — mtime data/reminders.tick).
+// Ошибки чтения не подменяются пустотой: экран говорит, что именно не читается, а причина
+// уезжает в журнал — runtime-текст ошибки в чат не несём, экраны идут мимо Outbox
+// (agent/lib/outbox.ts).
 async function remindersBlock(T: Translate): Promise<string> {
   const head = T("⏰ Reminders", "⏰ Напоминания");
   const tz = resolveTimeZone(process.env.ASSISTANT_TIMEZONE);
   const stamp = (at: number) => formatZoned(at, tz);
-  let tick: string;
-  try {
-    const heartbeat = readTickHeartbeat();
-    if (heartbeat === null) {
-      tick = T("dispatcher: no tick yet", "диспетчер: тиков ещё не было");
-    } else if (Date.now() - heartbeat.lastTickAtMs <= REMINDER_TICK_STALE_MS) {
-      tick = T(
-        `dispatcher: last tick ${stamp(heartbeat.lastTickAtMs).slice(11)}`,
-        `диспетчер: последний тик ${stamp(heartbeat.lastTickAtMs).slice(11)}`,
-      );
-    } else {
-      tick = `⚠️ ${T(
-        `dispatcher: no tick since ${stamp(heartbeat.lastTickAtMs)}`,
-        `диспетчер: тиков нет с ${stamp(heartbeat.lastTickAtMs)}`,
-      )}`;
-    }
-  } catch (error) {
-    if (!(error instanceof ReminderTickError)) throw error;
-    console.error("menu: reminders tick heartbeat unreadable:", error);
-    tick = `⚠️ ${T(
-      "dispatcher: heartbeat unreadable, see the journal",
-      "диспетчер: отметка тика не читается, см. журнал",
-    )}`;
-  }
+  const pulse = readTickPulse();
+  const tick =
+    pulse === null
+      ? T("dispatcher: no tick yet", "диспетчер: тиков ещё не было")
+      : Date.now() - pulse <= REMINDER_TICK_STALE_MS
+        ? T(
+            `dispatcher: last tick ${stamp(pulse).slice(11)}`,
+            `диспетчер: последний тик ${stamp(pulse).slice(11)}`,
+          )
+        : `⚠️ ${T(
+            `dispatcher: no tick since ${stamp(pulse)}`,
+            `диспетчер: тиков нет с ${stamp(pulse)}`,
+          )}`;
 
   const lines: string[] = [head, tick];
   let rows: Awaited<ReturnType<typeof list>>;
@@ -153,9 +139,9 @@ async function remindersBlock(T: Translate): Promise<string> {
   for (const row of rows.slice(0, 5)) {
     const repeats =
       row.schedule.kind === "cron" ? T("(repeats) ", "(повтор) ") : "";
-    const failed = row.lastStatus === "failed" ? "⚠️ " : "";
+    const problem = row.error !== null ? "⚠️ " : "";
     lines.push(
-      `• ${stamp(row.nextRunAtMs)} ${repeats}${failed}${shortText(row.text)}`,
+      `• ${stamp(row.nextRunAtMs)} ${repeats}${problem}${shortText(row.text)}`,
     );
   }
   if (rows.length > 5)

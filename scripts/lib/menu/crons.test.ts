@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registration promises. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,38 +57,27 @@ test("the ⏰ screen lists the nearest reminders and the dispatcher tick", async
     const { add } = await import("#lib/reminder-store.ts");
     const { formatZoned } = await import("#lib/zoned-time.ts");
     const { resolveTimeZone } = await import("#lib/timezone.ts");
-    const { tickHeartbeatFile } = await import("#lib/reminder-tick.ts");
+    const { tickPulseFile } = await import("#lib/reminder-tick.ts");
     const now = Date.now();
     const later = await add({
       id: "later",
       text: "позже",
-      mode: "verbatim",
       schedule: { kind: "at", atMs: now + 3_600_000 },
-      deliver: { chatId: "555" },
     });
     const soon = await add({
       id: "soon",
       text: "скоро",
-      mode: "agent",
       schedule: { kind: "at", atMs: now + 60_000 },
-      deliver: { chatId: "555" },
     });
     const daily = await add({
       id: "daily",
       text: "каждый день",
-      mode: "agent",
       schedule: { kind: "cron", expr: "0 9 * * *", tz: "Asia/Tashkent" },
       nextRunAtMs: now + 7_200_000,
-      deliver: { chatId: "555" },
     });
-    writeFileSync(
-      tickHeartbeatFile(),
-      JSON.stringify({
-        schemaVersion: 1,
-        lastTickAtMs: now - 60_000,
-        claimed: 2,
-      }),
-    );
+    writeFileSync(tickPulseFile(), `${now - 60_000}\n`);
+    const pulseAt = new Date(now - 60_000);
+    utimesSync(tickPulseFile(), pulseAt, pulseAt);
 
     const screen = (await import("./crons.ts")) as {
       readonly default: {
@@ -130,14 +119,9 @@ test("the ⏰ screen lists the nearest reminders and the dispatcher tick", async
       text,
     );
 
-    writeFileSync(
-      tickHeartbeatFile(),
-      JSON.stringify({
-        schemaVersion: 1,
-        lastTickAtMs: now - 10 * 60_000,
-        claimed: 0,
-      }),
-    );
+    writeFileSync(tickPulseFile(), `${now - 10 * 60_000}\n`);
+    const staleAt = new Date(now - 10 * 60_000);
+    utimesSync(tickPulseFile(), staleAt, staleAt);
     const stale = await screen.default.render({ page: 0 }, context);
     assert.ok(stale.text.includes("dispatcher: no tick since"), stale.text);
     assert.ok(stale.text.includes("⚠️"), stale.text);

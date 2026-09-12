@@ -74,6 +74,36 @@ export function reminderPrompt(
   );
 }
 
+/**
+ * Промпт пробуждения после срабатывания: агент узнаёт, что код уже отправил текст, и
+ * своим ходом закрывает единственный оставшийся случай - текст не дошёл. Решение покоится
+ * на факте из строки (delivered/error), поэтому промпт велит сперва посмотреть remind_list.
+ */
+export function firePrompt(
+  fire: {
+    readonly id: string;
+    readonly text: string;
+    readonly scheduledAt: string;
+  },
+  tr: (en: string, ru: string) => string,
+): string {
+  return tr(
+    `Reminder #${fire.id} fired (text: ${JSON.stringify(fire.text)}, due: ${fire.scheduledAt}). ` +
+      "The code is already sending that text to the owner. Check with remind_list whether it was delivered. " +
+      "If delivered - do nothing and return an empty answer. " +
+      "If it was not delivered, or there is still no fact after ten seconds - remind the owner yourself: " +
+      "write a short message from your own context (look at tasks if that helps) and say that delivery broke and why it did (error from the row). " +
+      "Return that message as the final text of this turn; the code will send it. " +
+      "Do not send anything yourself: no rich messages and no Telegram tools.",
+    `Сработало напоминание #${fire.id} (текст: ${JSON.stringify(fire.text)}, срок: ${fire.scheduledAt}). ` +
+      "Код уже отправляет этот текст владельцу. Проверь через remind_list, доставлен ли он. " +
+      "Доставлен - ничего не делай и верни пустой ответ. " +
+      "Не доставлен или факта нет и через десять секунд - напомни владельцу сама: напиши короткое сообщение по контексту " +
+      "(загляни в задачи, если это уместно) и скажи, что доставка сломалась и почему (error из строки). " +
+      "Верни это сообщение финальным текстом хода; код отправит его. Сам ничего не отправляй.",
+  );
+}
+
 type TurnState = {
   readonly status: "completed" | "failed" | "waiting" | undefined;
   readonly message: string | undefined;

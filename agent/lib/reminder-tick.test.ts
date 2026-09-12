@@ -1,15 +1,9 @@
-/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
-// Контракт минутного тика: что забрано, что закрыто дочерним процессом, что тик пометил
-// сам, и что осталось в аренде. Путь к данным считается на каждом вызове, поэтому
-// ASSISTANT_DATA_DIR меняется до импорта модулей (образец reminder-store.test.ts).
+// Контракт минутного тика: что забрано в fired, что ребёнок сказал сам, что тик дописал за
+// него, когда пульс обновляется — и что второго захода у строки нет. Путь к данным считается
+// на каждом вызове, поэтому ASSISTANT_DATA_DIR меняется до импорта модулей (образец
+// reminder-store.test.ts).
 import assert from "node:assert/strict";
-import {
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { beforeEach } from "node:test";
@@ -22,14 +16,15 @@ const root = mkdtempSync(join(tmpdir(), "iva-reminder-tick-"));
 process.env.ASSISTANT_DATA_DIR = join(root, "data");
 mkdirSync(process.env.ASSISTANT_DATA_DIR, { recursive: true });
 
-const { REMINDER_LEASE_MS, add, complete, list, reminderFile } =
+const { add, list, recordDelivery, reminderFile, sweepFired } =
   await import("./reminder-store.ts");
 const {
-  ReminderTickError,
-  readTickHeartbeat,
+  REMINDER_FIRE_TIMEOUT_MS,
+  readTickPulse,
   runReminderTick,
-  tickHeartbeatFile,
+  tickPulseFile,
 } = await import("./reminder-tick.ts");
+const { schedulerStatus } = await import("./reminder-tool.ts");
 
 let caseDir = "";
 beforeEach(() => {
@@ -38,30 +33,29 @@ beforeEach(() => {
 });
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
-/** Просроченная строка с точным сроком; поля по умолчанию не нужны ни одному сценарию. */
+/** Просроченное разовое напоминание. */
 const at = (id: string, atMs: number) =>
-  add({
-    id,
-    text: `напоминание ${id}`,
-    mode: "verbatim",
-    schedule: { kind: "at", atMs },
-    deliver: { chatId: "555" },
-  });
+  add({ id, text: `напоминание ${id}`, schedule: { kind: "at", atMs } });
 
-const ok = (id: string, nowMs: number) =>
-  complete(id, { nowMs, status: "ok", deliveredKey: `key-${id}` }).then(
-    (): RunScheduledJobResult => ({
-      skipped: false,
-      ok: true,
-      code: 0,
-      signal: null,
-    }),
-  );
+const ok = (): RunScheduledJobResult => ({
+  skipped: false,
+  ok: true,
+  code: 0,
+  signal: null,
+});
+
+const exited = (code: number): RunScheduledJobResult => ({
+  skipped: false,
+  ok: false,
+  code,
+  signal: null,
+});
 
 /** Двойник runScheduledJob: помнит вызовы и отвечает по сценарию теста. */
 function jobStub(
   handler: (
     id: string,
+    options: RunScheduledJobOptions,
   ) => RunScheduledJobResult | Promise<RunScheduledJobResult>,
 ) {
   const calls: RunScheduledJobOptions[] = [];
@@ -69,7 +63,7 @@ function jobStub(
     options: RunScheduledJobOptions,
   ): Promise<RunScheduledJobResult> => {
     calls.push(options);
-    return Promise.resolve(handler(String(options.argv[1])));
+    return Promise.resolve(handler(String(options.argv[1]), options));
   };
   return { calls, runJob };
 }
@@ -82,12 +76,14 @@ function logLines() {
   return { lines, log };
 }
 
-void test("два просроченных напоминания уходят по одному разу, отметка тика записана", async () => {
+void test("созревшая строка уходит в fired, ребёнок запускается, пульс бьётся", async () => {
   const now = Date.now();
   await at("a", now - 60_000);
-  await at("b", now - 60_000);
   const { lines, log } = logLines();
-  const stub = jobStub((id) => ok(id, now));
+  const stub = jobStub(async (id) => {
+    await recordDelivery(id, { delivered: true, error: null });
+    return ok();
+  });
 
   const result = await runReminderTick({
     nowMs: now,
@@ -95,91 +91,132 @@ void test("два просроченных напоминания уходят �
     log,
   });
 
-  assert.deepEqual(result, { claimed: 2, settledByChild: 2, failedByTick: 0 });
+  assert.deepEqual(result, { claimed: 1, spawned: 1, filled: 0, swept: 0 });
   assert.deepEqual(
     stub.calls.map((call) => [...call.argv]),
-    [
-      ["scripts/reminders/deliver.ts", "a"],
-      ["scripts/reminders/deliver.ts", "b"],
-    ],
+    [["scripts/reminders/fire.ts", "a"]],
   );
-  for (const call of stub.calls) {
-    assert.equal(call.timeoutMs, REMINDER_LEASE_MS - 60_000);
-    // Без statusPath двухчасовой гвард расписаний не задействован, а лок не нужен:
-    // строки уже разведены арендой таблицы.
-    assert.equal(call.statusPath, undefined);
-    assert.equal(call.lockPath, undefined);
-  }
-  assert.deepEqual(await list(), []);
-  assert.deepEqual(readTickHeartbeat(), { lastTickAtMs: now, claimed: 2 });
-  assert.equal(statSync(tickHeartbeatFile()).mode & 0o777, 0o600);
+  assert.equal(stub.calls[0].timeoutMs, REMINDER_FIRE_TIMEOUT_MS);
+  assert.equal(stub.calls[0].statusPath, undefined);
+
+  const [row] = await list();
+  assert.ok(row);
+  assert.equal(row.status, "fired");
+  assert.equal(row.firedAt, now);
+  assert.equal(row.delivered, true);
+  assert.equal(row.error, null);
+
+  // Пульс: файл есть, mtime свежий, права закрытые.
+  const pulse = readTickPulse();
+  assert.ok(pulse !== null);
+  assert.ok(Math.abs(pulse - Date.now()) < 60_000, "пульс не обновился");
+  assert.equal(statSync(tickPulseFile()).mode & 0o777, 0o600);
   assert.ok(
-    lines.some((line) => line.includes("reminders: tick claimed 2: a, b")),
+    lines.some((line) => line.includes("reminders: tick claimed 1: a")),
+  );
+  assert.ok(
+    lines.some((line) => line.includes("reminders: a fired (delivered=true)")),
   );
 
-  const second = jobStub((id) => ok(id, now + 60_000));
+  // У разовой строки второго срока нет: следующий тик не будит никого.
+  const second = jobStub(() => ok());
   const again = await runReminderTick({
     nowMs: now + 60_000,
     runJob: second.runJob,
     log,
   });
-  assert.deepEqual(again, { claimed: 0, settledByChild: 0, failedByTick: 0 });
+  assert.deepEqual(again, { claimed: 0, spawned: 0, filled: 0, swept: 0 });
   assert.equal(second.calls.length, 0);
-
-  // Предел строк за тик: три просроченных, limit 1 — берётся только ближайшая.
-  await at("c", now - 30_000);
-  await at("d", now - 30_000);
-  await at("e", now - 30_000);
-  const limited = jobStub((id) => ok(id, now));
-  const one = await runReminderTick({
-    nowMs: now,
-    limit: 1,
-    runJob: limited.runJob,
-    log,
-  });
-  assert.deepEqual(one, { claimed: 1, settledByChild: 1, failedByTick: 0 });
-  assert.deepEqual(
-    limited.calls.map((call) => [...call.argv]),
-    [["scripts/reminders/deliver.ts", "c"]],
-  );
-  assert.deepEqual(
-    (await list()).map((row) => row.id),
-    ["d", "e"],
-  );
 });
 
-void test("после суток простоя просроченное уходит, будущее ждёт", async () => {
-  const now = Date.now();
-  await at("a", now - 86_400_000);
-  const waiting = await at("b", now + 3_600_000);
-  const stub = jobStub((id) => ok(id, now));
-
-  await runReminderTick({ nowMs: now, runJob: stub.runJob, log: () => {} });
-
-  assert.deepEqual(
-    stub.calls.map((call) => call.argv[1]),
-    ["a"],
-  );
-  const rows = await list();
-  assert.deepEqual(
-    rows.map((row) => row.id),
-    ["b"],
-  );
-  assert.equal(rows[0]?.leaseUntilMs, null);
-  assert.equal(rows[0]?.lastStatus, null);
-  assert.equal(rows[0]?.nextRunAtMs, waiting.nextRunAtMs);
-});
-
-void test("провал одной строки не мешает другой, незакрытая строка помечается", async () => {
+void test("ребёнок не запустился: строка fired с причиной, второго захода нет", async () => {
   const now = Date.now();
   await at("a", now - 60_000);
-  await at("b", now - 60_000);
-  await at("c", now - 60_000);
   const { lines, log } = logLines();
-  const stub = jobStub((id) => {
-    if (id === "a") return Promise.reject(new Error("spawn boom"));
-    if (id === "b") return ok(id, now);
-    return { skipped: false, ok: false, code: 1, signal: null };
+  const stub = jobStub(() => exited(9));
+
+  const result = await runReminderTick({
+    nowMs: now,
+    runJob: stub.runJob,
+    log,
+  });
+
+  assert.deepEqual(result, { claimed: 1, spawned: 0, filled: 1, swept: 0 });
+  const [row] = await list();
+  assert.ok(row);
+  assert.equal(row.status, "fired");
+  assert.equal(row.delivered, false);
+  assert.match(String(row.error), /^fire process exited 9/u);
+  assert.ok(lines.some((line) => line.includes("reminders: a not delivered:")));
+
+  // Больше за эту строку не берёмся: ни сейчас, ни через час.
+  const second = jobStub(() => exited(9));
+  assert.deepEqual(
+    await runReminderTick({ nowMs: now + 60_000, runJob: second.runJob, log }),
+    { claimed: 0, spawned: 0, filled: 0, swept: 0 },
+  );
+  assert.deepEqual(
+    await runReminderTick({
+      nowMs: now + 3_600_000,
+      runJob: second.runJob,
+      log,
+    }),
+    { claimed: 0, spawned: 0, filled: 0, swept: 0 },
+  );
+  assert.equal(second.calls.length, 0);
+});
+
+void test("повторяющаяся строка будит ребёнка на каждом сроке и не будит раньше", async () => {
+  const now = Date.now();
+  await add({
+    id: "cron",
+    text: "по утрам",
+    schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
+    nextRunAtMs: now - 60_000,
+  });
+  const { log } = logLines();
+  const first = jobStub(async (id) => {
+    await recordDelivery(id, { delivered: true, error: null });
+    return ok();
+  });
+
+  await runReminderTick({ nowMs: now, runJob: first.runJob, log });
+  const [row] = await list();
+  assert.ok(row);
+  assert.equal(row.status, "pending", "повторяющаяся ждёт следующий срок");
+  assert.equal(row.delivered, true);
+  assert.ok(row.nextRunAtMs > now);
+
+  const second = jobStub(async (id) => {
+    await recordDelivery(id, { delivered: true, error: null });
+    return ok();
+  });
+  const before = await runReminderTick({
+    nowMs: row.nextRunAtMs - 1,
+    runJob: second.runJob,
+    log,
+  });
+  assert.equal(before.claimed, 0, "строка сработала раньше срока");
+  assert.equal(second.calls.length, 0);
+
+  const atDeadline = await runReminderTick({
+    nowMs: row.nextRunAtMs,
+    runJob: second.runJob,
+    log,
+  });
+  assert.deepEqual(atDeadline, { claimed: 1, spawned: 1, filled: 0, swept: 0 });
+  assert.deepEqual(
+    second.calls.map((call) => call.argv[1]),
+    ["cron"],
+  );
+});
+
+void test("двойник, который бросил, не роняет тик и дописывает причину", async () => {
+  const now = Date.now();
+  await at("a", now - 60_000);
+  const { lines, log } = logLines();
+  const stub = jobStub(() => {
+    throw new Error("spawn boom");
   });
 
   const result = await runReminderTick({
@@ -188,30 +225,22 @@ void test("провал одной строки не мешает другой, 
     log,
   });
 
-  assert.deepEqual(result, { claimed: 3, settledByChild: 1, failedByTick: 2 });
-  const rows = await list();
-  const first = rows.find((row) => row.id === "a");
-  assert.ok(first);
-  // Сломанный шов тик не угадывает: строку никто не закрыл, аренда истечёт сама.
-  assert.equal(first.leaseUntilMs, now + REMINDER_LEASE_MS);
-  assert.equal(first.lastStatus, null);
-  assert.ok(!rows.some((row) => row.id === "b"));
-  const third = rows.find((row) => row.id === "c");
-  assert.ok(third);
-  assert.equal(third.lastStatus, "failed");
-  assert.match(String(third.lastError), /^delivery process exited 1/);
-  assert.equal(third.leaseUntilMs, null);
-  assert.ok(lines.some((line) => line.includes("tick handler threw")));
-  assert.ok(lines.some((line) => line.includes("reminders: c failed:")));
+  assert.deepEqual(result, { claimed: 1, spawned: 0, filled: 1, swept: 0 });
+  const [row] = await list();
+  assert.equal(row?.delivered, false);
+  assert.match(String(row?.error), /spawn boom/u);
+  assert.ok(lines.some((line) => line.includes("not delivered")));
 });
 
-void test("недоступная таблица не роняет тик и не пишет отметку", async () => {
+void test("битая таблица: тик не падает, пульс не обновляется", async () => {
+  const now = Date.now();
+  const { writeFileSync } = await import("node:fs");
   writeFileSync(reminderFile(), "{broken");
   const { lines, log } = logLines();
-  const stub = jobStub((id) => ok(id, Date.now()));
+  const stub = jobStub(() => ok());
 
   const result = await runReminderTick({
-    nowMs: Date.now(),
+    nowMs: now,
     runJob: stub.runJob,
     log,
   });
@@ -219,34 +248,54 @@ void test("недоступная таблица не роняет тик и н�
   assert.match(String(result.error), /damaged/);
   assert.equal(result.claimed, 0);
   assert.equal(stub.calls.length, 0);
-  assert.equal(readTickHeartbeat(), null);
+  assert.equal(readTickPulse(), null, "пульса нет: тик не подтверждён");
   assert.ok(lines.some((line) => line.includes("reminders: tick failed:")));
-
-  writeFileSync(tickHeartbeatFile(), "nope");
-  assert.throws(
-    () => readTickHeartbeat(),
-    (error: unknown) =>
-      error instanceof ReminderTickError &&
-      error.message.includes(tickHeartbeatFile()),
-  );
 });
 
-void test("гонка: строка закрыта дочерним процессом после проверки", async () => {
+void test("сработавшие разовые строки старше суток убираются тиком", async () => {
   const now = Date.now();
-  await at("a", now - 60_000);
-  const { lines, log } = logLines();
+  const longAgo = now - 25 * 3_600_000;
+  await at("old", longAgo);
+  const { log } = logLines();
   const stub = jobStub(async (id) => {
-    await complete(id, { nowMs: now, status: "ok", deliveredKey: "key" });
-    return { skipped: false, ok: false, code: 1, signal: null };
+    await recordDelivery(id, { delivered: true, error: null });
+    return ok();
   });
 
-  const result = await runReminderTick({
+  // Строка сработала сутки с лишним назад.
+  const past = await runReminderTick({
+    nowMs: longAgo,
+    runJob: stub.runJob,
+    log,
+  });
+  assert.deepEqual(past, { claimed: 1, spawned: 1, filled: 0, swept: 0 });
+
+  await at("fresh", now - 60_000);
+  const today = await runReminderTick({
     nowMs: now,
     runJob: stub.runJob,
     log,
   });
+  assert.deepEqual(today, { claimed: 1, spawned: 1, filled: 0, swept: 1 });
+  assert.deepEqual(
+    (await list()).map((row) => row.id),
+    ["fresh"],
+  );
+  assert.equal(await sweepFired(now), 0, "второй проход пуст");
+});
 
-  assert.deepEqual(result, { claimed: 1, settledByChild: 1, failedByTick: 0 });
-  assert.deepEqual(await list(), []);
-  assert.ok(!lines.some((line) => line.includes("failed:")));
+void test("отметка пульса обновляется на каждом проходе и видна потребителю", async () => {
+  const now = Date.now();
+  const { log } = logLines();
+  const stub = jobStub(() => ok());
+
+  await runReminderTick({ nowMs: now, runJob: stub.runJob, log });
+  const first = readTickPulse();
+  assert.ok(first !== null);
+  // Тот же пульс читает тул: без него он честно говорит, что диспетчер не бился.
+  assert.equal(schedulerStatus(now, "UTC").alive, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runReminderTick({ nowMs: now + 60_000, runJob: stub.runJob, log });
+  const second = readTickPulse();
+  assert.ok(second !== null && second > first, "mtime пульса не сдвинулся");
 });

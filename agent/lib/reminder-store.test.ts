@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
-// Якоря контракта таблицы напоминаний: аренда, версия схемы, границы сроков и права файла.
-// Путь к файлу считается на каждом вызове, поэтому ASSISTANT_DATA_DIR меняется до импорта
-// модуля и ещё раз перед каждым тестом (образец trace.property.test.ts:23-26).
+// Якоря контракта таблицы напоминаний: один переход pending → fired, факт в той же строке,
+// версия схемы, границы сроков и права файла. Путь к файлу считается на каждом вызове,
+// поэтому ASSISTANT_DATA_DIR меняется до импорта модуля и ещё раз перед каждым тестом
+// (образец trace.property.test.ts:23-26).
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -23,17 +24,20 @@ process.env.ASSISTANT_DATA_DIR = join(root, "data");
 mkdirSync(process.env.ASSISTANT_DATA_DIR, { recursive: true });
 
 const {
-  REMINDER_LEASE_MS,
+  REMINDER_FIRED_KEEP_MS,
+  REMINDER_SCHEMA_VERSION,
   ReminderStoreError,
   add,
-  claimDue,
-  complete,
+  fireDue,
   list,
-  release,
+  recordDelivery,
+  recordWakeError,
   reminderFile,
   remove,
+  sweepFired,
 } = await import("./reminder-store.ts");
 const { saveJsonAtomic } = await import("./json-store.ts");
+const { zonedParts } = await import("./zoned-time.ts");
 
 let caseDir = "";
 beforeEach(() => {
@@ -47,23 +51,24 @@ function row(over: Partial<Reminder> & { id: string }): Reminder {
   return {
     id: over.id,
     text: over.text ?? `напоминание ${over.id}`,
-    mode: over.mode ?? "verbatim",
-    schedule: over.schedule ?? { kind: "at", atMs: 1 },
+    schedule: over.schedule ?? { kind: "at", atMs: over.nextRunAtMs ?? 1 },
     nextRunAtMs: over.nextRunAtMs ?? 1,
-    lastRunAtMs: over.lastRunAtMs ?? null,
-    lastStatus: over.lastStatus ?? null,
-    lastError: over.lastError ?? null,
-    deliver: over.deliver ?? { chatId: "42" },
-    leaseUntilMs: over.leaseUntilMs ?? null,
-    deliveredKey: over.deliveredKey ?? null,
+    createdAt: over.createdAt ?? 1,
+    status: over.status ?? "pending",
+    firedAt: over.firedAt ?? null,
+    delivered: over.delivered ?? null,
+    error: over.error ?? null,
   };
 }
 
 /** Кладёт таблицу в файл напрямую: тесту нужны состояния, недостижимые через add. */
-function seed(rows: Reminder[]): Promise<void> {
+function seed(
+  rows: unknown[],
+  version = REMINDER_SCHEMA_VERSION,
+): Promise<void> {
   return saveJsonAtomic(
     reminderFile(),
-    { schemaVersion: 1, rows },
+    { schemaVersion: version, rows },
     { mode: 0o600 },
   );
 }
@@ -79,7 +84,7 @@ function files(): string[] {
   return readdirSync(dirname(reminderFile())).sort();
 }
 
-test("две параллельные аренды не выдают одну строку дважды", async () => {
+test("две параллельные ставки не срабатывают дважды", async () => {
   const now = 1_000_000;
   await seed([
     row({ id: "a", nextRunAtMs: now - 3 }),
@@ -88,14 +93,18 @@ test("две параллельные аренды не выдают одну с
   ]);
 
   const [first, second] = await Promise.all([
-    claimDue(now, 10),
-    claimDue(now, 10),
+    fireDue(now, 10),
+    fireDue(now, 10),
   ]);
 
   assert.equal(first.length + second.length, 3);
   assert.equal(new Set([...first, ...second].map((r) => r.id)).size, 3);
-  for (const claimed of table().rows)
-    assert.equal(claimed.leaseUntilMs, now + REMINDER_LEASE_MS);
+  const rows = table().rows;
+  for (const fired of rows) {
+    assert.equal(fired.status, "fired");
+    assert.equal(fired.firedAt, now);
+    assert.equal(fired.delivered, null);
+  }
 });
 
 test("битый JSON: бэкап и ошибка, не пустой список", async () => {
@@ -114,7 +123,7 @@ test("битый JSON: бэкап и ошибка, не пустой списо�
   );
 });
 
-test("просроченная строка берётся на следующем claim, граница включительно", async () => {
+test("срок берётся по границе включительно, разовая строка срабатывает ровно раз", async () => {
   const now = 5_000_000;
   await seed([
     row({ id: "A", nextRunAtMs: now - 1 }),
@@ -122,75 +131,229 @@ test("просроченная строка берётся на следующе
     row({ id: "C", nextRunAtMs: now + 1 }),
   ]);
 
-  const first = await claimDue(now, 10);
+  const first = await fireDue(now, 10);
   assert.deepEqual(
     first.map((r) => r.id),
     ["A", "B"],
   );
+  assert.equal(first[0].firedAt, now);
 
-  const second = await claimDue(now + 1, 10);
+  // Повторный тик в ту же минуту и через час не берёт разовые снова.
+  assert.deepEqual(await fireDue(now, 10), []);
+  const later = await fireDue(now + 3_600_000, 10);
   assert.deepEqual(
-    second.map((r) => r.id),
+    later.map((r) => r.id),
     ["C"],
   );
 });
 
+test("повторяющаяся строка сама уезжает на следующий срок и остаётся pending", async () => {
+  const now = 7_000_000;
+  await add({
+    id: "cron",
+    text: "по утрам",
+    schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
+
+  const fired = await fireDue(now, 10);
+  assert.deepEqual(
+    fired.map((r) => r.id),
+    ["cron"],
+  );
+  const [stored] = await list();
+  assert.equal(stored.status, "pending", "повторяющаяся ждёт следующий срок");
+  assert.equal(stored.firedAt, now, "факт срабатывания при строке");
+  assert.ok(stored.nextRunAtMs > now, "срок уехал в будущее");
+  const next = zonedParts(stored.nextRunAtMs, "UTC");
+  assert.equal(next.hh, 8, "расписание 0 8 * * * даёт 08:00 UTC");
+  assert.equal(next.mm, 0);
+
+  // Тот же срок второй раз не берётся: следующий тик пуст.
+  assert.deepEqual(await fireDue(stored.nextRunAtMs - 1, 10), []);
+  const nextFire = await fireDue(stored.nextRunAtMs, 10);
+  assert.deepEqual(
+    nextFire.map((r) => r.id),
+    ["cron"],
+  );
+});
+
+test("факт доставки и сбой пробуждения живут в одной строке и не стирают друг друга", async () => {
+  const now = 9_000_000;
+  await add({
+    id: "one",
+    text: "разовое",
+    schedule: { kind: "at", atMs: now },
+  });
+  await fireDue(now, 10);
+
+  await recordWakeError("one", "agent wake failed: no bearer");
+  let [stored] = await list();
+  assert.equal(stored.error, "agent wake failed: no bearer");
+  assert.equal(stored.delivered, null, "пробуждение не трогает факт доставки");
+
+  await recordDelivery("one", { delivered: true, error: null });
+  [stored] = await list();
+  assert.equal(stored.delivered, true);
+  assert.equal(
+    stored.error,
+    "agent wake failed: no bearer",
+    "успешная отправка не стирает чужую причину",
+  );
+
+  await recordDelivery("one", {
+    delivered: false,
+    error: "400 chat not found",
+  });
+  [stored] = await list();
+  assert.equal(stored.delivered, false);
+  assert.equal(stored.error, "400 chat not found");
+  assert.equal(stored.status, "fired");
+  assert.equal(stored.firedAt, now);
+
+  // Провал доставки — главная причина: сбой пробуждения её не перекрывает.
+  await recordWakeError("one", "agent wake failed: no bearer");
+  [stored] = await list();
+  assert.equal(
+    stored.error,
+    "400 chat not found",
+    "в строке остаётся причина, по которой не дошёл текст",
+  );
+
+  await assert.rejects(
+    recordDelivery("nope", { delivered: true, error: null }),
+    /nope/,
+  );
+  await assert.rejects(recordWakeError("nope", "boom"), /nope/);
+});
+
+test("сработавшая разовая строка живёт сутки и убирается тиком", async () => {
+  const now = Date.now();
+  await seed([
+    row({ id: "old", status: "fired", firedAt: now - REMINDER_FIRED_KEEP_MS }),
+    row({
+      id: "fresh",
+      status: "fired",
+      firedAt: now - REMINDER_FIRED_KEEP_MS + 1,
+    }),
+    row({ id: "cron", nextRunAtMs: now + 1000 }),
+  ]);
+
+  assert.equal(await sweepFired(now), 1);
+  assert.deepEqual(
+    (await list()).map((r) => r.id),
+    ["fresh", "cron"],
+  );
+  assert.equal(await sweepFired(now), 0, "второй проход пуст");
+});
+
 test("schemaVersion новее кода — явная ошибка", async () => {
-  const before = `{\n  "schemaVersion": 2,\n  "rows": []\n}`;
+  const before = `{\n  "schemaVersion": ${REMINDER_SCHEMA_VERSION + 1},\n  "rows": []\n}`;
   writeFileSync(reminderFile(), before);
 
-  await assert.rejects(list(), /schemaVersion 2.*newer/);
+  await assert.rejects(list(), /schemaVersion 3.*newer/);
   assert.equal(readFileSync(reminderFile(), "utf8"), before);
 
   await assert.rejects(
-    add({
-      id: "n1",
-      text: "текст",
-      mode: "verbatim",
-      schedule: { kind: "at", atMs: 1 },
-      deliver: { chatId: "42" },
-    }),
+    add({ id: "n1", text: "текст", schedule: { kind: "at", atMs: 1 } }),
     ReminderStoreError,
   );
   assert.equal(readFileSync(reminderFile(), "utf8"), before);
   assert.deepEqual(files(), ["reminders.json"]);
 });
 
-test("истёкшая аренда свободна, живая — нет, повторный claim пуст", async () => {
-  const now = 7_000_000;
-  await seed([row({ id: "expired", nextRunAtMs: now - 5, leaseUntilMs: now })]);
-
-  const first = await claimDue(now, 10);
-  assert.deepEqual(
-    first.map((r) => r.id),
-    ["expired"],
+test("файл версии 1 переводится: срок и текст живут, режимы и аренда отброшены", async () => {
+  const now = Date.now();
+  await seed(
+    [
+      {
+        id: "old-one-shot",
+        text: "старое разовое",
+        mode: "agent",
+        schedule: { kind: "at", atMs: now + 60_000 },
+        nextRunAtMs: now + 60_000,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        deliver: { chatId: "42" },
+        leaseUntilMs: null,
+        deliveredKey: null,
+      },
+      {
+        id: "old-cron",
+        text: "старое повторяющееся",
+        mode: "verbatim",
+        schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
+        nextRunAtMs: now + 120_000,
+        lastRunAtMs: now - 60_000,
+        lastStatus: "failed",
+        lastError: "400 chat not found",
+        deliver: { chatId: "42" },
+        leaseUntilMs: null,
+        deliveredKey: "k",
+      },
+      {
+        id: "old-fired",
+        text: "уже пыталось сработать",
+        mode: "verbatim",
+        schedule: { kind: "at", atMs: now - 60_000 },
+        nextRunAtMs: now - 60_000,
+        lastRunAtMs: now - 60_000,
+        lastStatus: "failed",
+        lastError: "boom",
+        deliver: { chatId: "42" },
+        leaseUntilMs: null,
+        deliveredKey: null,
+      },
+    ],
+    1,
   );
-  assert.deepEqual(await claimDue(now, 10), []);
 
-  await seed([
-    row({ id: "live", nextRunAtMs: now - 5, leaseUntilMs: now + 1 }),
-  ]);
-  assert.deepEqual(await claimDue(now, 10), []);
+  const rows = await list();
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["old-fired", "old-one-shot", "old-cron"],
+  );
+  const fired = rows.find((r) => r.id === "old-fired");
+  assert.ok(fired);
+  assert.equal(
+    fired.status,
+    "fired",
+    "разовое уже сработало — второй раз нельзя",
+  );
+  assert.equal(fired.delivered, false);
+  assert.equal(fired.error, "boom");
+  const cron = rows.find((r) => r.id === "old-cron");
+  assert.ok(cron);
+  assert.equal(cron.status, "pending", "повторяющееся ждёт свой срок");
+  assert.equal(cron.delivered, false);
+  assert.equal(cron.error, "400 chat not found");
+  assert.equal(cron.createdAt > 0, true);
+  // После первой мутации файл уже версии 2.
+  await recordWakeError("old-cron", "wake");
+  assert.equal(table().schemaVersion, REMINDER_SCHEMA_VERSION);
 });
 
 test("add отвергает мусор и не трогает файл", async () => {
-  const now = 9_000_000;
+  const now = 13_000_000;
   await seed([row({ id: "base", nextRunAtMs: now })]);
   const before = readFileSync(reminderFile(), "utf8");
 
   const ok: ReminderInput = {
     id: "n1",
     text: "текст",
-    mode: "verbatim",
     schedule: { kind: "at", atMs: now },
-    deliver: { chatId: "42" },
   };
   const cases: Array<[string, unknown, RegExp]> = [
     ["дубликат id", { ...ok, id: "base" }, /id/],
     ["пустой text", { ...ok, text: "" }, /text/],
     ["пустой text из пробелов", { ...ok, text: "   " }, /text/],
-    ["deliver без chatId", { ...ok, deliver: {} }, /chatId/],
-    ["чужой mode", { ...ok, mode: "loud" as ReminderInput["mode"] }, /mode/],
+    ["чужой mode из старой схемы", { ...ok, mode: "loud" }, /mode/],
+    [
+      "чужое поле deliver из старой схемы",
+      { ...ok, deliver: { chatId: "42" } },
+      /deliver/,
+    ],
     [
       "cron без nextRunAtMs",
       { ...ok, schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" } },
@@ -215,11 +378,6 @@ test("add отвергает мусор и не трогает файл", async 
       },
       /tz/,
     ],
-    [
-      "threadId 0",
-      { ...ok, deliver: { chatId: "42", threadId: 0 } },
-      /threadId/,
-    ],
   ];
 
   for (const [name, input, message] of cases) {
@@ -233,152 +391,51 @@ test("add отвергает мусор и не трогает файл", async 
   }
 });
 
-test("жизненный цикл и права 0600", async () => {
-  const now = 11_000_000;
+test("расписание, которое croner не берёт, не крутит строку: fired с причиной", async () => {
+  const now = 15_000_000;
+  await add({
+    id: "bad",
+    text: "сломанное расписание",
+    schedule: { kind: "cron", expr: "99 * * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
 
+  const fired = await fireDue(now, 10);
+  assert.deepEqual(
+    fired.map((r) => r.id),
+    ["bad"],
+  );
+  const [stored] = await list();
+  assert.equal(stored.status, "fired", "второй раз не сработает");
+  assert.equal(stored.delivered, false);
+  assert.match(String(stored.error), /^cron: /u);
+  assert.deepEqual(await fireDue(now + 3_600_000, 10), []);
+});
+
+test("жизненный цикл, права файла и remove", async () => {
+  const now = 17_000_000;
   const once = await add({
     id: "one-shot",
     text: "разовое",
-    mode: "verbatim",
     schedule: { kind: "at", atMs: now },
-    deliver: { chatId: "42" },
   });
   assert.equal(once.nextRunAtMs, now);
+  assert.equal(once.status, "pending");
+  assert.equal(once.createdAt > 0, true);
   assert.equal(statSync(reminderFile()).mode & 0o777, 0o600);
 
-  const claimedOnce = await claimDue(now, 10);
-  assert.deepEqual(
-    claimedOnce.map((r) => r.id),
-    ["one-shot"],
-  );
-  await complete("one-shot", {
-    nowMs: now,
-    status: "ok",
-    deliveredKey: "k1",
-  });
+  await fireDue(now, 10);
+  const [stored] = await list();
+  assert.equal(stored.status, "fired");
+  await recordDelivery("one-shot", { delivered: true, error: null });
+  assert.equal((await list())[0].delivered, true);
+
+  const removed = await remove("one-shot");
+  assert.equal(removed.id, "one-shot");
   assert.deepEqual(await list(), []);
 
-  const cron = await add({
-    id: "every-morning",
-    text: "повторяющееся",
-    mode: "agent",
-    schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
-    nextRunAtMs: now,
-    deliver: { chatId: "42", threadId: 7 },
-  });
-  assert.equal(cron.nextRunAtMs, now);
-
-  const claimedCron = await claimDue(now, 10);
-  assert.deepEqual(
-    claimedCron.map((r) => r.id),
-    ["every-morning"],
-  );
-  await complete("every-morning", {
-    nowMs: now,
-    status: "ok",
-    deliveredKey: "k2",
-    nextRunAtMs: now + 60_000,
-  });
-
-  let rows = await list();
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].lastStatus, "ok");
-  assert.equal(rows[0].lastError, null);
-  assert.equal(rows[0].leaseUntilMs, null);
-  assert.equal(rows[0].nextRunAtMs, now + 60_000);
-  assert.equal(rows[0].deliveredKey, "k2");
-
-  // Повтор той же доставки (at-least-once) ничего не меняет и не бросает.
-  await complete("every-morning", {
-    nowMs: now + 1,
-    status: "ok",
-    deliveredKey: "k2",
-    nextRunAtMs: now + 60_000,
-  });
-  rows = await list();
-  assert.equal(rows[0].nextRunAtMs, now + 60_000);
-  assert.equal(rows[0].lastRunAtMs, now);
-  assert.equal(rows[0].deliveredKey, "k2");
-
-  const retry = await claimDue(now + 60_000, 10);
-  assert.deepEqual(
-    retry.map((r) => r.id),
-    ["every-morning"],
-  );
-  await complete("every-morning", {
-    nowMs: now + 60_000,
-    status: "failed",
-    error: "boom",
-  });
-  rows = await list();
-  assert.equal(rows[0].lastStatus, "failed");
-  assert.equal(rows[0].lastError, "boom");
-  assert.equal(rows[0].leaseUntilMs, null);
-  assert.equal(rows[0].nextRunAtMs, now + 60_000);
-  assert.equal(rows[0].deliveredKey, "k2");
-
-  const reclaimed = await claimDue(now + 60_000, 10);
-  assert.deepEqual(
-    reclaimed.map((r) => r.id),
-    ["every-morning"],
-  );
-  const released = await release("every-morning");
-  assert.equal(released.leaseUntilMs, null);
-  assert.equal((await list())[0].leaseUntilMs, null);
-
-  await assert.rejects(
-    complete("every-morning", {
-      nowMs: now,
-      status: "ok",
-      deliveredKey: "k3",
-    }),
-    /not leased/,
-  );
-
-  await claimDue(now + 60_000, 10);
-  await assert.rejects(
-    complete("every-morning", {
-      nowMs: now,
-      status: "ok",
-      deliveredKey: "k4",
-    }),
-    /nextRunAtMs/,
-  );
-  // Тот же срок снова отдал бы строку следующему тику: двойная доставка.
-  await assert.rejects(
-    complete("every-morning", {
-      nowMs: now,
-      status: "ok",
-      deliveredKey: "k5",
-      nextRunAtMs: now + 60_000,
-    }),
-    /nextRunAtMs must be a safe integer greater than 11060000/u,
-  );
-
-  // Пропущенный срок повторяющегося напоминания уезжает в будущее тем же вызовом,
-  // которым отмечен провал: иначе следующий тик выдал бы его снова.
-  await assert.rejects(
-    complete("every-morning", {
-      nowMs: now + 60_000,
-      status: "failed",
-      error: "gave up on this occurrence: boom",
-      nextRunAtMs: now + 60_000,
-    }),
-    /nextRunAtMs must be a safe integer greater than 11060000/u,
-  );
-  await complete("every-morning", {
-    nowMs: now + 60_000,
-    status: "failed",
-    error: "gave up on this occurrence: boom",
-    nextRunAtMs: now + 120_000,
-  });
-  rows = await list();
-  assert.equal(rows[0].lastStatus, "failed");
-  assert.equal(rows[0].lastError, "gave up on this occurrence: boom");
-  assert.equal(rows[0].nextRunAtMs, now + 120_000);
-  assert.equal(rows[0].deliveredKey, "k2", "провал не трогает ключ доставки");
-  assert.equal(rows[0].leaseUntilMs, null);
-
   await assert.rejects(remove("nope"), /nope/);
+  await assert.rejects(fireDue(-1, 10), /nowMs/);
+  await assert.rejects(fireDue(now, 0), /limit/);
   assert.equal(statSync(reminderFile()).mode & 0o777, 0o600);
 });

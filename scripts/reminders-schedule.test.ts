@@ -27,7 +27,7 @@ if (typeof loaded !== "object" || loaded === null || !("default" in loaded))
 const schedule = loaded.default as Schedule;
 
 const { REMINDER_TICK_CRON } = await import("../agent/lib/schedule-table.ts");
-const { readTickHeartbeat } = await import("../agent/lib/reminder-tick.ts");
+const { readTickPulse } = await import("../agent/lib/reminder-tick.ts");
 
 after(() => rmSync(DATA, { recursive: true, force: true }));
 
@@ -39,7 +39,7 @@ test("the reminders dispatcher ticks every minute through waitUntil", async () =
 
   assert.equal(started.length, 1, "the tick is handed to waitUntil");
   const result = await started[0];
-  // Таблицы в свежем каталоге нет: тик ничего не забирает, но отметку о себе пишет.
-  assert.deepEqual(result, { claimed: 0, settledByChild: 0, failedByTick: 0 });
-  assert.notEqual(readTickHeartbeat(), null);
+  // Таблицы в свежем каталоге нет: тик ничего не забирает, но пульс о себе пишет.
+  assert.deepEqual(result, { claimed: 0, spawned: 0, filled: 0, swept: 0 });
+  assert.notEqual(readTickPulse(), null);
 });

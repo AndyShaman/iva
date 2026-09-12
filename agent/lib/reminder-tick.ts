@@ -1,21 +1,25 @@
-// Минутный тик диспетчера напоминаний: забрать просроченные строки таблицы напоминаний и
-// отдать каждую своему дочернему процессу. Доставка живёт в scripts/reminders/deliver.ts
-// (T6): authored tree не может импортировать транспорт Telegram
+// Минутный тик диспетчера напоминаний: забрать созревшие строки таблицы и отдать каждую
+// своему ребёнку scripts/reminders/fire.ts. Доставка и пробуждение агента живут в
+// scripts/: authored tree не может импортировать транспорт Telegram и клиента eve
 // (scripts/authored-tree-guard.test.ts), поэтому тик спавнит скрипт по имени.
 //
-// Два тика одновременно безопасны по построению: claimDue под локом отдаёт строку ровно
-// одному тику, аренда строки 10 минут, а дочерний процесс убивается на девятой - к
-// следующему тику строка либо закрыта, либо снова свободна.
-import { readFileSync } from "node:fs";
+// Взятие строки — один атомарный переход pending → fired внутри fireDue: повторное
+// срабатывание невозможно по построению, поэтому у тика нет ни аренды, ни повторов, ни
+// ожидания ребёнка перед следующим тиком. Ребёнок только дописывает факт в строку; если он
+// не запустился или умер, не сказав факта, тик пишет delivered=false с причиной по коду
+// выхода — и на этом всё, второго захода у строки нет.
+//
+// Пульс тика — mtime файла data/reminders.tick: он обновляется после удачного взятия, и по
+// нему `iva doctor` и remind_list говорят, жив ли диспетчер.
+import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";
-import { writeFileAtomicSync } from "./fs-atomic.ts";
 import {
-  REMINDER_LEASE_MS,
   ReminderStoreError,
-  claimDue,
-  complete,
+  fireDue,
   list,
+  recordDelivery,
+  sweepFired,
   type Reminder,
 } from "./reminder-store.ts";
 import {
@@ -28,50 +32,25 @@ import {
 export const REMINDER_CLAIM_LIMIT = 5;
 /** Тик старше этого — планировщик не жив. */
 export const REMINDER_TICK_STALE_MS = 3 * 60_000;
+/** Потолок ребёнка: ход агента останавливается на восьмой минуте, отправка — быстрее. */
+export const REMINDER_FIRE_TIMEOUT_MS = 10 * 60_000;
 
-const TICK_SCHEMA_VERSION = 1;
-
-export class ReminderTickError extends Error {}
-
-export interface TickHeartbeat {
-  readonly lastTickAtMs: number;
-  readonly claimed: number;
+export function tickPulseFile(): string {
+  return join(dataDir(), "reminders.tick");
 }
 
-export function tickHeartbeatFile(): string {
-  return join(dataDir(), "reminders-tick.json");
+/** Пульс: mtime — единственное, что важно; содержимое нужно человеку, читающему файл. */
+export function touchTickPulse(nowMs: number): void {
+  writeFileSync(tickPulseFile(), `${nowMs}\n`, { mode: 0o600 });
 }
 
-/**
- * Отметка последнего тика. Файла нет — null (свежая установка, `eve dev`); битый или
- * чужой файл — явная ошибка с путём: молча вернуть null значило бы сказать «тиков не
- * было» там, где на самом деле испорчены данные.
- */
-export function readTickHeartbeat(): TickHeartbeat | null {
-  const file = tickHeartbeatFile();
-  let raw: string;
+/** Когда тик бился в последний раз; null — файла нет, то есть тик ещё не проходил. */
+export function readTickPulse(): number | null {
   try {
-    raw = readFileSync(file, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new ReminderTickError(`${file} unreadable: ${message(error)}`);
+    return statSync(tickPulseFile()).mtimeMs;
+  } catch {
+    return null;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new ReminderTickError(
-      `${file} damaged (invalid JSON): ${message(error)}`,
-    );
-  }
-  if (
-    !isRecord(parsed) ||
-    parsed.schemaVersion !== TICK_SCHEMA_VERSION ||
-    !isSafeInt(parsed.lastTickAtMs) ||
-    !isSafeInt(parsed.claimed)
-  )
-    throw new ReminderTickError(`${file} is not a reminders tick heartbeat`);
-  return { lastTickAtMs: parsed.lastTickAtMs, claimed: parsed.claimed };
 }
 
 export interface ReminderTickOptions {
@@ -85,33 +64,22 @@ export interface ReminderTickOptions {
 
 export interface ReminderTickResult {
   readonly claimed: number;
-  readonly settledByChild: number;
-  readonly failedByTick: number;
+  readonly spawned: number;
+  readonly filled: number;
+  readonly swept: number;
   readonly error?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isSafeInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value);
 }
 
 function message(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
-/** Чем закончился дочерний процесс, по полям результата runScheduledJob. */
-function deliveryFailure(result: RunScheduledJobResult): string {
+/** Чем закончился ребёнок, по полям результата runScheduledJob. */
+function fireFailure(result: RunScheduledJobResult): string {
   if (result.error !== undefined)
-    return `delivery process failed to start: ${message(result.error)}`;
-  if (result.signal) return `delivery process killed by ${result.signal}`;
-  return `delivery process exited ${result.code ?? "unknown"}`;
-}
-
-function deliveryOutcome(result: RunScheduledJobResult): string {
-  return String(result.code ?? result.signal ?? "unknown");
+    return `fire process failed to start: ${message(result.error)}`;
+  if (result.signal) return `fire process killed by ${result.signal}`;
+  return `fire process exited ${result.code ?? "unknown"}`;
 }
 
 /**
@@ -132,82 +100,81 @@ export async function runReminderTick(
 
   let rows: Reminder[];
   try {
-    rows = await claimDue(nowMs, limit);
+    rows = await fireDue(nowMs, limit);
   } catch (error) {
     const failure = message(error);
     log(`reminders: tick failed: ${failure}`);
-    return { claimed: 0, settledByChild: 0, failedByTick: 0, error: failure };
+    return { claimed: 0, spawned: 0, filled: 0, swept: 0, error: failure };
   }
 
-  // Отметка — после удачного claim: если таблица недоступна, отметки нет, и экран честно
-  // скажет, что планировщик не подтверждён.
-  writeFileAtomicSync(
-    tickHeartbeatFile(),
-    JSON.stringify({
-      schemaVersion: TICK_SCHEMA_VERSION,
-      lastTickAtMs: nowMs,
-      claimed: rows.length,
-    }),
-    { mode: 0o600 },
-  );
+  // Пульс — после удачного взятия: битая таблица значит, что сроки не разносятся, и
+  // «диспетчер жив» было бы враньём.
+  touchTickPulse(nowMs);
 
-  if (rows.length === 0)
-    return { claimed: 0, settledByChild: 0, failedByTick: 0 };
+  let swept = 0;
+  try {
+    swept = await sweepFired(nowMs);
+  } catch (error) {
+    log(`reminders: sweep failed: ${message(error)}`);
+  }
+
+  if (rows.length === 0) return { claimed: 0, spawned: 0, filled: 0, swept };
+
   log(
     `reminders: tick claimed ${rows.length}: ${rows.map((row) => row.id).join(", ")}`,
   );
 
-  let settledByChild = 0;
-  let failedByTick = 0;
+  let spawned = 0;
+  let filled = 0;
 
-  const settleRow = async (row: Reminder): Promise<void> => {
+  const fireRow = async (row: Reminder): Promise<void> => {
     const jobOptions: RunScheduledJobOptions = {
       name: `reminder-${row.id}`,
-      argv: ["scripts/reminders/deliver.ts", row.id],
+      argv: ["scripts/reminders/fire.ts", row.id],
       root,
       nodeBin,
-      // На минуту короче аренды: процесс обязан умереть раньше, чем строка снова станет
-      // свободной.
-      timeoutMs: REMINDER_LEASE_MS - 60_000,
+      timeoutMs: REMINDER_FIRE_TIMEOUT_MS,
       log,
     };
-    const result = await runJob(jobOptions);
+    // Настоящий runScheduledJob никогда не бросает; двойник в тесте — может, причём и
+    // синхронно. Любой бросок значит одно: ребёнок не сказал факта.
+    let result: RunScheduledJobResult;
+    try {
+      result = await runJob(jobOptions);
+    } catch (error) {
+      result = { skipped: false, ok: false, code: null, signal: null, error };
+    }
     const after = (await list()).find((candidate) => candidate.id === row.id);
-    if (after === undefined || after.leaseUntilMs === null) {
-      settledByChild += 1;
+    if (after === undefined || after.delivered !== null) {
+      spawned += 1;
       log(
-        `reminders: ${row.id} settled by delivery (code ${deliveryOutcome(result)})`,
+        `reminders: ${row.id} fired (delivered=${after?.delivered ?? "row gone"})`,
       );
       return;
     }
-    const failure = deliveryFailure(result);
+    // Ребёнок не сказал факта: причина — по коду выхода. Больше за эту строку не берёмся.
+    const failure = fireFailure(result);
     try {
-      await complete(row.id, {
-        nowMs: Date.now(),
-        status: "failed",
-        error: failure,
-      });
+      await recordDelivery(row.id, { delivered: false, error: failure });
     } catch (error) {
       if (error instanceof ReminderStoreError) {
-        // Гонка: процесс закрыл строку между чтением и записью.
-        settledByChild += 1;
-        log(`reminders: ${row.id} outcome already recorded: ${message(error)}`);
+        log(`reminders: ${row.id} outcome not recorded: ${message(error)}`);
         return;
       }
       throw error;
     }
-    failedByTick += 1;
-    log(`reminders: ${row.id} failed: ${failure}`);
+    filled += 1;
+    log(`reminders: ${row.id} not delivered: ${failure}`);
   };
 
-  const outcomes = await Promise.allSettled(rows.map((row) => settleRow(row)));
+  const outcomes = await Promise.allSettled(rows.map((row) => fireRow(row)));
   outcomes.forEach((outcome, index) => {
     if (outcome.status !== "rejected") return;
-    failedByTick += 1;
+    filled += 1;
     log(
       `reminders: ${rows[index]?.id} tick handler threw: ${message(outcome.reason)}`,
     );
   });
 
-  return { claimed: rows.length, settledByChild, failedByTick };
+  return { claimed: rows.length, spawned, filled, swept };
 }

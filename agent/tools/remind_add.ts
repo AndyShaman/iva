@@ -36,6 +36,7 @@ export default defineTool({
     'Задай время словами пользователя или ISO в его зоне ("in 30m", "14:30", "2026-09-14 09:00"): ' +
     "не считай абсолютный момент сам и не конвертируй в UTC - время считает планировщик и возвращает " +
     "next_run_at, который и сообщи пользователю. " +
+    "В срок код сам пришлёт текст пользователю и разбудит тебя, чтобы ты проверила доставку по remind_list. " +
     "Адрес доставки указывать не нужно: напоминание всегда приходит в чат владельца. " +
     "Никогда не ставь таймер шеллом: systemd-run, crontab, at, sleep-циклы, свой скрипт с curl " +
     "запрещены и заблокированы - всё планирование только через этот инструмент. Если в ответе " +
@@ -60,14 +61,8 @@ export default defineTool({
       .describe(
         'Повторяющееся: cron-выражение из 5 полей в зоне пользователя, например "0 9 * * 1-5"',
       ),
-    mode: z
-      .enum(["verbatim", "agent"])
-      .optional()
-      .describe(
-        "verbatim (по умолчанию) - отправить текст как есть; agent - в назначенное время ты сверишься с задачами и сформулируешь сообщение сам",
-      ),
   }),
-  async execute({ text, at, cron, mode }): Promise<RemindAddAnswer> {
+  async execute({ text, at, cron }): Promise<RemindAddAnswer> {
     if ((at === undefined) === (cron === undefined))
       return { ok: false as const, error: "give exactly one of at or cron" };
     const tz = ownerTimeZone();
@@ -80,7 +75,6 @@ export default defineTool({
       };
     const nowMs = Date.now();
     const id = `r-${randomBytes(3).toString("hex")}`;
-    const deliveryMode = mode ?? "verbatim";
     const answer = (row: Reminder) => ({
       ok: true as const,
       reminder: describeReminder(row, tz),
@@ -92,9 +86,7 @@ export default defineTool({
         const row = await add({
           id,
           text,
-          mode: deliveryMode,
           schedule: { kind: "at", atMs: resolveAt(at, nowMs, tz) },
-          deliver: { chatId },
         });
         return answer(row);
       }
@@ -104,10 +96,8 @@ export default defineTool({
       const row = await add({
         id,
         text,
-        mode: deliveryMode,
         schedule,
         nextRunAtMs: nextCronRunMs(schedule.expr, tz, nowMs),
-        deliver: { chatId },
       });
       return answer(row);
     } catch (error) {

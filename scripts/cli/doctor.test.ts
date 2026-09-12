@@ -4,7 +4,9 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -196,6 +198,160 @@ async function bridgeBacklogEvents(
   })();
   return events.filter(([, message]) => message.startsWith("bridge backlog:"));
 }
+
+/** Доктор на каталоге с напоминаниями: возвращает события, начинающиеся с "reminders". */
+async function remindersEvents(
+  root: string,
+  {
+    now,
+    pulseAgoMs,
+    rows = [],
+  }: {
+    now: number;
+    pulseAgoMs: number | null;
+    rows?: Array<{ id: string; firedAt: number | null; error: string | null }>;
+  },
+): Promise<Array<[string, string]>> {
+  const data = join(root, "data");
+  mkdirSync(data, { recursive: true });
+  // Стор и тик считают путь от cwd + ASSISTANT_DATA_DIR (agent/lib/data-dir.ts), а доктор
+  // спрашивает каталог данных у runtime — в тесте их надо свести.
+  const previousDataDir = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = data;
+  writeFileSync(
+    join(data, "reminders.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      rows: rows.map((row) => ({
+        id: row.id,
+        text: `напоминание ${row.id}`,
+        schedule: { kind: "at", atMs: now - 60_000 },
+        nextRunAtMs: now - 60_000,
+        createdAt: now - 120_000,
+        status: "fired",
+        firedAt: row.firedAt,
+        delivered: row.error === null,
+        error: row.error,
+      })),
+    }),
+  );
+  const pulseFile = join(data, "reminders.tick");
+  if (pulseAgoMs === null) {
+    rmSync(pulseFile, { force: true });
+  } else {
+    writeFileSync(pulseFile, `${now - pulseAgoMs}\n`);
+    const at = new Date(now - pulseAgoMs);
+    utimesSync(pulseFile, at, at);
+  }
+  const units = join(root, "units");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "iva.service"), "[Service]\n");
+  const events: Array<[string, string]> = [];
+  const systemd = createSystemdControl({
+    run: (args) => {
+      if (args[0] === "is-enabled") return { code: 0, out: "enabled" };
+      if (args[0] === "is-active") return { code: 0, out: "active" };
+      return { code: 1, out: "" };
+    },
+  });
+  const runtime: CliRuntime = {
+    ...createCliRuntime(root),
+    UNIT_DIR: units,
+    SERVICES: [],
+    TIMERS: [],
+    C: NO_COLOR,
+    ok: (message) => events.push(["ok", message]),
+    warn: (message) => events.push(["warn", message]),
+    bad: (message) => events.push(["bad", message]),
+    readEnv: completeEnv,
+    dataDirAbs: () => data,
+    hasSystemd: () => true,
+    systemd,
+    cap: (command) =>
+      command === "ss"
+        ? { code: 0, out: "LISTEN 0 511 127.0.0.1:8723 0.0.0.0:*", err: "" }
+        : { code: 1, out: "", err: "" },
+  };
+  try {
+    await createDoctorCommand(runtime, lifecycle(), {
+      nodeVersion: "24.19.0",
+      now: () => now,
+      log: () => undefined,
+      exit: () => undefined,
+    })();
+  } finally {
+    if (previousDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previousDataDir;
+  }
+  return events.filter(([, message]) => message.startsWith("reminders"));
+}
+
+test("doctor показывает провалы напоминаний за сутки и пульс тика", async (t) => {
+  const root = await sandbox(t);
+  const now = Date.now();
+
+  // Свежий пульс и один провал за сутки.
+  const fresh = await remindersEvents(root, {
+    now,
+    pulseAgoMs: 30_000,
+    rows: [
+      { id: "r1", firedAt: now - 3_600_000, error: "400 chat not found" },
+      {
+        id: "r2",
+        firedAt: now - 30 * 3_600_000,
+        error: "старое, не показываем",
+      },
+      { id: "r3", firedAt: now - 60_000, error: null },
+    ],
+  });
+  assert.ok(
+    fresh.some(
+      ([kind, message]) => kind === "ok" && /dispatcher ticked/u.test(message),
+    ),
+    JSON.stringify(fresh),
+  );
+  assert.ok(
+    fresh.some(
+      ([kind, message]) =>
+        kind === "warn" && /#r1 .*400 chat not found/u.test(message),
+    ),
+    JSON.stringify(fresh),
+  );
+  assert.equal(
+    fresh.some(([, message]) => message.includes("#r2")),
+    false,
+    "провал старше суток не показываем",
+  );
+  assert.equal(
+    fresh.some(([, message]) => message.includes("#r3")),
+    false,
+    "успешную строку не показываем",
+  );
+
+  // Тик молчит десять минут.
+  const stale = await remindersEvents(root, {
+    now,
+    pulseAgoMs: 10 * 60_000,
+    rows: [],
+  });
+  assert.ok(
+    stale.some(
+      ([kind, message]) =>
+        kind === "warn" && /has not ticked for 10m/u.test(message),
+    ),
+    JSON.stringify(stale),
+  );
+
+  // Пульса нет вовсе.
+  const none = await remindersEvents(root, { now, pulseAgoMs: null, rows: [] });
+  assert.ok(
+    none.some(
+      ([kind, message]) =>
+        kind === "warn" && /has not ticked yet/u.test(message),
+    ),
+    JSON.stringify(none),
+  );
+});
 
 test("non-systemd doctor preserves exact counter and exit semantics", async (t) => {
   const root = await sandbox(t);

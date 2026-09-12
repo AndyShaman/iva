@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,18 +51,19 @@ function resetState(): void {
   process.env.TELEGRAM_DIGEST_CHAT_ID = "555";
   process.env.TELEGRAM_ALLOWED_USER_IDS = "";
   rmSync(reminderFile(), { force: true });
-  rmSync(join(dataDir, "reminders-tick.json"), { force: true });
+  rmSync(join(dataDir, "reminders.tick"), { force: true });
   for (const name of readdirSync(dataDir)) {
     if (name.includes(".corrupt-"))
       rmSync(join(dataDir, name), { force: true });
   }
 }
 
-function writeHeartbeat(lastTickAtMs: number): void {
-  writeFileSync(
-    join(dataDir, "reminders-tick.json"),
-    JSON.stringify({ schemaVersion: 1, lastTickAtMs, claimed: 0 }),
-  );
+/** Пульс тика — mtime файла data/reminders.tick. */
+function writePulse(atMs: number): void {
+  const file = join(dataDir, "reminders.tick");
+  writeFileSync(file, `${atMs}\n`);
+  const at = new Date(atMs);
+  utimesSync(file, at, at);
 }
 
 /** Отметка замороженного времени: тул считает срок от Date.now(). */
@@ -79,7 +81,8 @@ void test("remind_add stores a one-time reminder and answers with the owner-zone
   assert.equal(answer.reminder.next_run_at, "2026-09-12 10:30");
   assert.equal(answer.reminder.timezone, "Asia/Tashkent");
   assert.equal(answer.reminder.kind, "at");
-  assert.equal(answer.reminder.mode, "verbatim");
+  assert.equal(answer.reminder.delivered, null);
+  assert.equal(answer.reminder.fired_at, null);
   assert.equal(answer.scheduler.alive, false);
   assert.match(answer.scheduler.warning ?? "", /has not ticked yet/u);
 
@@ -88,31 +91,38 @@ void test("remind_add stores a one-time reminder and answers with the owner-zone
   const schedule = rows[0].schedule;
   if (schedule.kind !== "at") assert.fail("expected an at schedule");
   assert.equal(schedule.atMs, NOW + 1_800_000);
-  assert.equal(rows[0].deliver.chatId, "555");
+  assert.deepEqual(Object.keys(rows[0]).sort(), [
+    "createdAt",
+    "delivered",
+    "error",
+    "firedAt",
+    "id",
+    "nextRunAtMs",
+    "schedule",
+    "status",
+    "text",
+  ]);
 
-  writeHeartbeat(NOW - 60_000);
+  writePulse(NOW - 60_000);
   const fresh = await addReminder({ text: "ещё раз", at: "in 45m" });
   if (!fresh.ok) assert.fail(fresh.error);
   assert.equal(fresh.scheduler.alive, true);
   assert.equal(fresh.scheduler.last_tick_at, "2026-09-12 09:59");
   assert.equal(fresh.scheduler.warning, undefined);
 
-  // Постаревшая и битая отметки: строка всё равно записана, но модель обязана предупредить,
-  // что диспетчер не тикает.
-  writeHeartbeat(NOW - 10 * 60_000);
+  // Постаревший пульс: строка всё равно записана, но модель обязана предупредить, что
+  // диспетчер не тикает.
+  writePulse(NOW - 10 * 60_000);
   const stale = await addReminder({ text: "простояло", at: "in 1h" });
   if (!stale.ok) assert.fail(stale.error);
   assert.equal(stale.scheduler.alive, false);
   assert.match(stale.scheduler.warning ?? "", /has not ticked since/u);
 
-  writeFileSync(join(dataDir, "reminders-tick.json"), "nope");
-  const damaged = await addReminder({
-    text: "битая отметка",
-    at: "in 1h",
-  });
-  if (!damaged.ok) assert.fail(damaged.error);
-  assert.equal(damaged.scheduler.alive, false);
-  assert.match(damaged.scheduler.warning ?? "", /heartbeat unreadable/u);
+  rmSync(join(dataDir, "reminders.tick"), { force: true });
+  const noPulse = await addReminder({ text: "без пульса", at: "in 1h" });
+  if (!noPulse.ok) assert.fail(noPulse.error);
+  assert.equal(noPulse.scheduler.alive, false);
+  assert.match(noPulse.scheduler.warning ?? "", /has not ticked yet/u);
 
   // Долг QA T5a: ownerTimeZone вызывается тулом, а кривая зона даёт фолбэк resolveTimeZone,
   // не исключение и не хостовую зону.
@@ -129,13 +139,11 @@ void test("remind_add stores a repeating reminder with the first run computed by
   const answer = await addReminder({
     text: "стендап",
     cron: "0 9 * * 1-5",
-    mode: "agent",
   });
   if (!answer.ok) assert.fail(answer.error);
   assert.equal(answer.reminder.kind, "cron");
   assert.equal(answer.reminder.cron, "0 9 * * 1-5");
   assert.equal(answer.reminder.next_run_at, "2026-09-14 09:00");
-  assert.equal(answer.reminder.mode, "agent");
 
   const rows = await list();
   assert.equal(rows.length, 1);
@@ -145,7 +153,7 @@ void test("remind_add stores a repeating reminder with the first run computed by
   assert.equal(rows[0].nextRunAtMs, Date.UTC(2026, 8, 14, 4));
 });
 
-void test("the model cannot choose the recipient", async (t) => {
+void test("the model cannot choose the recipient: адресат не хранится в строке", async (t) => {
   resetState();
   frozenNow(t);
 
@@ -159,15 +167,18 @@ void test("the model cannot choose the recipient", async (t) => {
   if (!injected.ok) assert.fail(injected.error);
   const rows = await list();
   assert.equal(rows.length, 1);
-  assert.deepEqual(rows[0].deliver, { chatId: "555" });
+  assert.equal(
+    "deliver" in rows[0],
+    false,
+    "адресат берётся из .env в момент срабатывания, а не из строки",
+  );
 
+  // Владельца берут из .env: сначала чат дайджеста, иначе первый из allowlist.
   process.env.TELEGRAM_DIGEST_CHAT_ID = "";
   process.env.TELEGRAM_ALLOWED_USER_IDS = "123, 456";
   const allowlisted = await addReminder({ text: "y", at: "in 5m" });
   if (!allowlisted.ok) assert.fail(allowlisted.error);
-  // Одинаковый срок таблица разводит по id, поэтому строка ищется по тексту, а не по индексу.
-  const second = (await list()).find((row) => row.text === "y");
-  assert.equal(second?.deliver.chatId, "123");
+  assert.equal((await list()).length, 2);
 
   process.env.TELEGRAM_ALLOWED_USER_IDS = " , ";
   const refused = await addReminder({ text: "z", at: "in 5m" });
@@ -223,7 +234,7 @@ void test("list and remove", async (t) => {
     ["через час", "через три часа", "утренний"],
   );
   assert.deepEqual(
-    listed.reminders.map((row) => row.last_status),
+    listed.reminders.map((row) => row.delivered),
     [null, null, null],
   );
   assert.equal(listed.timezone, "Asia/Tashkent");

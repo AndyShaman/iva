@@ -1,8 +1,16 @@
-// Таблица напоминаний в data/reminders.json: строки с точным сроком и адресатом,
-// атомарная аренда строки на время доставки и версия схемы. Файл, записанный более
-// новой версией Ивы, читается как явная ошибка — читать его наугад значит молча
-// испортить данные следующей записью. Тик, тул и доставка живут выше (T4-T6) и зовут
-// этот модуль; сам модуль ничего не отправляет и никого не будит.
+// Таблица напоминаний в data/reminders.json: строка = срок, текст и факт срабатывания.
+//
+// Взятие строки — один атомарный переход pending → fired: повторное срабатывание
+// невозможно по построению, аренды и счётчиков попыток нет. Всё, что происходит после
+// перехода, — две независимые ветки ребёнка scripts/reminders/fire.ts (отправка текста и
+// пробуждение агента); они только дописывают факт в ту же строку. Повторяющаяся строка тем
+// же переходом получает следующий срок от croner и остаётся pending — факт последнего
+// срабатывания при ней.
+//
+// Файл, записанный более новой версией Ивы, читается как явная ошибка: читать его наугад
+// значит молча испортить данные следующей записью. Файл версии 1 (режимы verbatim/agent,
+// аренда, счётчики провалов) переводится построчно: срок и текст сохраняются, режим и все
+// политики повторов отброшены владельцем 12.09.
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";
 import {
@@ -11,56 +19,51 @@ import {
   releaseLock,
   saveJsonAtomic,
 } from "./json-store.ts";
+import { nextCronRunMs } from "./reminder-time.ts";
 
-export const REMINDER_SCHEMA_VERSION = 1;
-/** Аренда на доставку: «умный» ход живёт до 5 минут, десяти хватает с запасом. */
-export const REMINDER_LEASE_MS = 10 * 60_000;
+export const REMINDER_SCHEMA_VERSION = 2;
+/** Сколько держим сработавшую разовую строку: столько владелец видит факт в remind_list. */
+export const REMINDER_FIRED_KEEP_MS = 24 * 60 * 60_000;
 
 export class ReminderStoreError extends Error {}
 
-export type ReminderMode = "verbatim" | "agent";
+export type ReminderStatus = "pending" | "fired";
 /** `at` — один точный срок; `cron` — повторяющееся расписание (cron-выражение пользователя). */
 export type ReminderSchedule =
   { kind: "at"; atMs: number } | { kind: "cron"; expr: string; tz: string };
-export type ReminderStatus = "ok" | "failed";
 export interface Reminder {
   id: string;
   text: string;
-  mode: ReminderMode;
   schedule: ReminderSchedule;
   nextRunAtMs: number;
-  lastRunAtMs: number | null;
-  lastStatus: ReminderStatus | null;
-  lastError: string | null;
-  deliver: { chatId: string; threadId?: number };
-  leaseUntilMs: number | null;
-  deliveredKey: string | null;
+  createdAt: number;
+  /** pending — ждёт своего срока; fired — разовая уже сработала и ждёт уборки через сутки. */
+  status: ReminderStatus;
+  /** Когда строка сработала в последний раз; null — ещё ни разу. */
+  firedAt: number | null;
+  /** Дошёл ли текст до чата владельца; null — ребёнок ещё не сказал. */
+  delivered: boolean | null;
+  /** Причина последнего сбоя — доставки или пробуждения агента. */
+  error: string | null;
 }
 export type ReminderInput = {
   id: string;
   text: string;
-  mode: ReminderMode;
   schedule: unknown;
-  deliver: { chatId: string; threadId?: number };
   /** Обязателен для kind "cron", запрещён для kind "at". */
   nextRunAtMs?: number;
 };
-export type ReminderOutcome =
-  | { nowMs: number; status: "ok"; deliveredKey: string; nextRunAtMs?: number }
-  | { nowMs: number; status: "failed"; error: string; nextRunAtMs?: number };
 
 const ROW_KEYS = [
   "id",
   "text",
-  "mode",
   "schedule",
   "nextRunAtMs",
-  "lastRunAtMs",
-  "lastStatus",
-  "lastError",
-  "deliver",
-  "leaseUntilMs",
-  "deliveredKey",
+  "createdAt",
+  "status",
+  "firedAt",
+  "delivered",
+  "error",
 ] as const;
 
 function fail(file: string, message: string): never {
@@ -176,14 +179,6 @@ function assertReminder(file: string, value: unknown): Reminder {
   if (typeof value.text !== "string" || value.text.trim().length === 0)
     badReminder(file, idLabel, "text must be a non-empty string");
 
-  const mode = value.mode;
-  if (mode !== "verbatim" && mode !== "agent")
-    badReminder(
-      file,
-      idLabel,
-      `mode must be "verbatim" or "agent", got ${JSON.stringify(mode)}`,
-    );
-
   let schedule: ReminderSchedule;
   try {
     schedule = normalizeSchedule(value.schedule);
@@ -198,93 +193,99 @@ function assertReminder(file: string, value: unknown): Reminder {
       `nextRunAtMs must be a safe integer >= 0, got ${JSON.stringify(value.nextRunAtMs)}`,
     );
 
-  const lastRunAtMs = value.lastRunAtMs;
-  if (lastRunAtMs !== null && (!isSafeInt(lastRunAtMs) || lastRunAtMs < 0))
+  if (!isSafeInt(value.createdAt) || value.createdAt < 0)
     badReminder(
       file,
       idLabel,
-      `lastRunAtMs must be null or a safe integer >= 0, got ${JSON.stringify(lastRunAtMs)}`,
+      `createdAt must be a safe integer >= 0, got ${JSON.stringify(value.createdAt)}`,
     );
 
-  const leaseUntilMs = value.leaseUntilMs;
-  if (leaseUntilMs !== null && (!isSafeInt(leaseUntilMs) || leaseUntilMs < 0))
+  const status = value.status;
+  if (status !== "pending" && status !== "fired")
     badReminder(
       file,
       idLabel,
-      `leaseUntilMs must be null or a safe integer >= 0, got ${JSON.stringify(leaseUntilMs)}`,
+      `status must be "pending" or "fired", got ${JSON.stringify(status)}`,
     );
 
-  const status = value.lastStatus;
-  if (status !== null && status !== "ok" && status !== "failed")
+  const firedAt = value.firedAt;
+  if (firedAt !== null && (!isSafeInt(firedAt) || firedAt < 0))
     badReminder(
       file,
       idLabel,
-      `lastStatus must be null, "ok" or "failed", got ${JSON.stringify(status)}`,
+      `firedAt must be null or a safe integer >= 0, got ${JSON.stringify(firedAt)}`,
+    );
+  if (status === "fired" && firedAt === null)
+    badReminder(file, idLabel, "fired row has no firedAt");
+
+  const delivered = value.delivered;
+  if (delivered !== null && typeof delivered !== "boolean")
+    badReminder(
+      file,
+      idLabel,
+      `delivered must be null, true or false, got ${JSON.stringify(delivered)}`,
     );
 
-  const lastError = value.lastError;
-  if (lastError !== null && typeof lastError !== "string")
+  const error = value.error;
+  if (error !== null && typeof error !== "string")
     badReminder(
       file,
       idLabel,
-      `lastError must be null or a string, got ${JSON.stringify(lastError)}`,
-    );
-
-  const deliver = value.deliver;
-  if (!isPlainObject(deliver))
-    badReminder(file, idLabel, "deliver must be an object");
-  for (const key of Object.keys(deliver)) {
-    if (key !== "chatId" && key !== "threadId")
-      badReminder(
-        file,
-        idLabel,
-        `deliver has unknown key ${JSON.stringify(key)}`,
-      );
-  }
-  if (typeof deliver.chatId !== "string" || deliver.chatId.length === 0)
-    badReminder(
-      file,
-      idLabel,
-      `deliver.chatId must be a non-empty string, got ${JSON.stringify(deliver.chatId)}`,
-    );
-  const threadId = deliver.threadId;
-  if (threadId !== undefined && (!isSafeInt(threadId) || threadId <= 0))
-    badReminder(
-      file,
-      idLabel,
-      `deliver.threadId must be a positive safe integer, got ${JSON.stringify(threadId)}`,
-    );
-
-  const deliveredKey = value.deliveredKey;
-  if (
-    deliveredKey !== null &&
-    !(typeof deliveredKey === "string" && deliveredKey.length > 0)
-  )
-    badReminder(
-      file,
-      idLabel,
-      `deliveredKey must be null or a non-empty string, got ${JSON.stringify(deliveredKey)}`,
+      `error must be null or a string, got ${JSON.stringify(error)}`,
     );
 
   return {
     id,
     text: value.text,
-    mode,
     schedule,
     nextRunAtMs: value.nextRunAtMs,
-    lastRunAtMs,
-    lastStatus: status,
-    lastError,
-    deliver: {
-      chatId: deliver.chatId,
-      ...(threadId === undefined ? {} : { threadId }),
-    },
-    leaseUntilMs,
-    deliveredKey,
+    createdAt: value.createdAt,
+    status,
+    firedAt,
+    delivered,
+    error,
   };
 }
 
-/** Путь считается на каждом вызове: тесты и T4 меняют ASSISTANT_DATA_DIR между кейсами. */
+/**
+ * Строка версии 1: режим доставки, аренда и счётчики провалов отброшены, срок, текст и факт
+ * последней попытки сохранены. Разовой строке, которая уже пыталась сработать, ставится
+ * fired — иначе она сработала бы второй раз; повторяющаяся остаётся pending на свой срок.
+ */
+function migrateV1Row(
+  file: string,
+  value: unknown,
+  nowMs: number,
+): Record<string, unknown> {
+  if (!isPlainObject(value))
+    fail(file, `reminder row must be an object, got ${JSON.stringify(value)}`);
+
+  let schedule: ReminderSchedule;
+  try {
+    schedule = normalizeSchedule(value.schedule);
+  } catch (error) {
+    badReminder(file, JSON.stringify(value.id), (error as Error).message);
+  }
+  const firedAt =
+    typeof value.lastRunAtMs === "number" &&
+    Number.isSafeInteger(value.lastRunAtMs)
+      ? value.lastRunAtMs
+      : null;
+  const alreadyRan = firedAt !== null;
+  return {
+    id: value.id,
+    text: value.text,
+    schedule,
+    nextRunAtMs: value.nextRunAtMs,
+    createdAt: nowMs,
+    status: schedule.kind === "at" && alreadyRan ? "fired" : "pending",
+    firedAt,
+    delivered: alreadyRan && value.lastStatus === "ok",
+    error: typeof value.lastError === "string" ? value.lastError : null,
+  };
+}
+
+/** Путь считается на каждом вызове: тесты меняют ASSISTANT_DATA_DIR между кейсами. */
 export function reminderFile(): string {
   return join(dataDir(), "reminders.json");
 }
@@ -313,7 +314,10 @@ async function loadTable(file: string): Promise<Reminder[]> {
   const seen = new Set<string>();
   const rows: Reminder[] = [];
   for (const value of raw.rows) {
-    const reminder = assertReminder(file, value);
+    const reminder =
+      version === 1
+        ? assertReminder(file, migrateV1Row(file, value, Date.now()))
+        : assertReminder(file, value);
     if (seen.has(reminder.id))
       fail(file, `duplicate reminder id ${JSON.stringify(reminder.id)}`);
     seen.add(reminder.id);
@@ -346,8 +350,23 @@ function byDeadline(a: Reminder, b: Reminder): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-function buildReminder(file: string, input: ReminderInput): Reminder {
+function buildReminder(
+  file: string,
+  input: ReminderInput,
+): Record<string, unknown> {
   const idLabel = JSON.stringify(input.id);
+
+  // Чужой ключ во входе — ошибка, а не тихо отброшенное поле: старый вызов с mode или
+  // deliver (схема версии 1) должен упасть, а не записать напоминание без того, что просили.
+  for (const key of Object.keys(input)) {
+    if (
+      key !== "id" &&
+      key !== "text" &&
+      key !== "schedule" &&
+      key !== "nextRunAtMs"
+    )
+      badReminder(file, idLabel, `unknown input key ${JSON.stringify(key)}`);
+  }
 
   let schedule: ReminderSchedule;
   try {
@@ -373,28 +392,27 @@ function buildReminder(file: string, input: ReminderInput): Reminder {
     nextRunAtMs = input.nextRunAtMs;
   }
 
-  return assertReminder(file, {
+  return {
     id: input.id,
     text: input.text,
-    mode: input.mode,
     schedule,
     nextRunAtMs,
-    lastRunAtMs: null,
-    lastStatus: null,
-    lastError: null,
-    deliver: input.deliver,
-    leaseUntilMs: null,
-    deliveredKey: null,
-  });
+    createdAt: Date.now(),
+    status: "pending",
+    firedAt: null,
+    delivered: null,
+    error: null,
+  };
 }
 
 export async function add(input: ReminderInput): Promise<Reminder> {
   const file = reminderFile();
-  const reminder = buildReminder(file, input);
+  const row = buildReminder(file, input);
   return mutate(file, async () => {
     const rows = await loadTable(file);
-    if (rows.some((row) => row.id === reminder.id))
-      fail(file, `duplicate reminder id ${JSON.stringify(reminder.id)}`);
+    if (rows.some((candidate) => candidate.id === row.id))
+      fail(file, `duplicate reminder id ${JSON.stringify(row.id)}`);
+    const reminder = assertReminder(file, row);
     rows.push(reminder);
     await saveTable(file, rows);
     return structuredClone(reminder);
@@ -418,8 +436,17 @@ export async function remove(id: string): Promise<Reminder> {
   });
 }
 
-/** Доставка забирает строку на время аренды; границы срока и аренды включительны. */
-export async function claimDue(
+/**
+ * Срабатывание: pending-строки со сроком не позже nowMs переходят в fired и получают
+ * firedAt — один атомарный переход под локом, поэтому два тика не могут взять одну строку.
+ * Повторяющаяся строка тем же переходом пересчитывается на следующий срок и остаётся
+ * pending: её факт срабатывания (firedAt) уже проставлен, а доставку допишет ребёнок.
+ *
+ * Расписание, которое croner отвергает (в файл могло попасть что угодно), не роняет тик и
+ * не крутит строку: она уходит в fired с ошибкой в поле error — владелец увидит её в
+ * remind_list и iva doctor, а сама строка больше не сработает.
+ */
+export async function fireDue(
   nowMs: number,
   limit: number,
 ): Promise<Reminder[]> {
@@ -438,121 +465,96 @@ export async function claimDue(
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const due = rows
-      .filter(
-        (row) =>
-          row.nextRunAtMs <= nowMs &&
-          (row.leaseUntilMs === null || row.leaseUntilMs <= nowMs),
-      )
+      .filter((row) => row.status === "pending" && row.nextRunAtMs <= nowMs)
       .sort(byDeadline)
       .slice(0, limit);
     if (due.length === 0) return [];
 
-    for (const row of due) row.leaseUntilMs = nowMs + REMINDER_LEASE_MS;
+    for (const row of due) {
+      row.firedAt = nowMs;
+      row.delivered = null;
+      row.error = null;
+      if (row.schedule.kind === "cron") {
+        try {
+          row.nextRunAtMs = nextCronRunMs(
+            row.schedule.expr,
+            row.schedule.tz,
+            nowMs,
+          );
+        } catch (error) {
+          row.status = "fired";
+          row.error = `cron: ${(error as Error).message}`;
+          row.delivered = false;
+        }
+      } else {
+        row.status = "fired";
+      }
+    }
     await saveTable(file, rows);
     return due.map((row) => structuredClone(row));
   });
 }
 
 /**
- * Итог доставки. Разовое напоминание исполнено и уходит из таблицы; повторяющееся
- * получает следующий срок строго в будущем, иначе следующий тик выдал бы его снова.
- * Повтор той же успешной доставки (at-least-once) ничего не меняет.
+ * Факт отправки текста. Успех не стирает чужую причину (провал пробуждения агента,
+ * записанный второй веткой), а провал отправки называет свою.
  */
-export async function complete(
+export async function recordDelivery(
   id: string,
-  outcome: ReminderOutcome,
+  outcome: { readonly delivered: boolean; readonly error: string | null },
 ): Promise<Reminder> {
-  const file = reminderFile();
-  if (!isSafeInt(outcome.nowMs) || outcome.nowMs < 0)
-    fail(
-      file,
-      `reminder ${JSON.stringify(id)}: nowMs must be a safe integer >= 0, got ${JSON.stringify(outcome.nowMs)}`,
-    );
-
-  return mutate(file, async () => {
-    const rows = await loadTable(file);
-    const index = rows.findIndex((row) => row.id === id);
-    if (index === -1) fail(file, `reminder ${JSON.stringify(id)} not found`);
-    const row = rows[index];
-    const idLabel = JSON.stringify(id);
-
-    if (row.leaseUntilMs === null) {
-      if (
-        outcome.status === "ok" &&
-        row.lastStatus === "ok" &&
-        row.deliveredKey === outcome.deliveredKey
-      )
-        return structuredClone(row);
-      badReminder(file, idLabel, "not leased");
-    }
-
-    if (outcome.status === "failed") {
-      if (outcome.error.length === 0)
-        badReminder(file, idLabel, "error must be a non-empty string");
-      // Пропущенный срок повторяющегося напоминания уезжает в будущее тем же вызовом:
-      // иначе строка осталась бы просроченной и следующий тик выдал бы её снова.
-      if (outcome.nextRunAtMs !== undefined) {
-        if (
-          !isSafeInt(outcome.nextRunAtMs) ||
-          outcome.nextRunAtMs <= row.nextRunAtMs
-        )
-          badReminder(
-            file,
-            idLabel,
-            `nextRunAtMs must be a safe integer greater than ${row.nextRunAtMs}, got ${JSON.stringify(outcome.nextRunAtMs)}`,
-          );
-        row.nextRunAtMs = outcome.nextRunAtMs;
-      }
-      row.lastRunAtMs = outcome.nowMs;
-      row.lastStatus = "failed";
-      row.lastError = outcome.error;
-      row.leaseUntilMs = null;
-      await saveTable(file, rows);
-      return structuredClone(row);
-    }
-
-    if (outcome.deliveredKey.length === 0)
-      badReminder(file, idLabel, "deliveredKey must be a non-empty string");
-
-    if (row.schedule.kind === "at") {
-      if (outcome.nextRunAtMs !== undefined)
-        badReminder(file, idLabel, 'nextRunAtMs is not allowed for kind "at"');
-      rows.splice(index, 1);
-      await saveTable(file, rows);
-      return structuredClone(row);
-    }
-
-    if (
-      !isSafeInt(outcome.nextRunAtMs) ||
-      outcome.nextRunAtMs <= row.nextRunAtMs
-    )
-      badReminder(
-        file,
-        idLabel,
-        `nextRunAtMs must be a safe integer greater than ${row.nextRunAtMs}, got ${JSON.stringify(outcome.nextRunAtMs)}`,
-      );
-    row.lastRunAtMs = outcome.nowMs;
-    row.lastStatus = "ok";
-    row.lastError = null;
-    row.deliveredKey = outcome.deliveredKey;
-    row.leaseUntilMs = null;
-    row.nextRunAtMs = outcome.nextRunAtMs;
-    await saveTable(file, rows);
-    return structuredClone(row);
-  });
-}
-
-export async function release(id: string): Promise<Reminder> {
   const file = reminderFile();
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const row = rows.find((candidate) => candidate.id === id);
     if (row === undefined)
       fail(file, `reminder ${JSON.stringify(id)} not found`);
-    if (row.leaseUntilMs === null)
-      fail(file, `reminder ${JSON.stringify(id)}: not leased`);
-    row.leaseUntilMs = null;
+    row.delivered = outcome.delivered;
+    if (outcome.error !== null) row.error = outcome.error;
     await saveTable(file, rows);
     return structuredClone(row);
+  });
+}
+
+/**
+ * Причина сбоя пробуждения агента: факт доставки не трогает, его пишет своя ветка. Провал
+ * доставки она не перекрывает: он и есть главная причина для владельца, а сбой хода остаётся
+ * в журнале.
+ */
+export async function recordWakeError(
+  id: string,
+  error: string,
+): Promise<Reminder> {
+  const file = reminderFile();
+  return mutate(file, async () => {
+    const rows = await loadTable(file);
+    const row = rows.find((candidate) => candidate.id === id);
+    if (row === undefined)
+      fail(file, `reminder ${JSON.stringify(id)} not found`);
+    if (row.delivered !== false) row.error = error;
+    await saveTable(file, rows);
+    return structuredClone(row);
+  });
+}
+
+/** Уборка: сработавшие разовые строки живут сутки — столько владелец видит факт. */
+export async function sweepFired(
+  nowMs: number,
+  keepMs: number = REMINDER_FIRED_KEEP_MS,
+): Promise<number> {
+  const file = reminderFile();
+  return mutate(file, async () => {
+    const rows = await loadTable(file);
+    const kept = rows.filter(
+      (row) =>
+        !(
+          row.status === "fired" &&
+          row.firedAt !== null &&
+          row.firedAt <= nowMs - keepMs
+        ),
+    );
+    const swept = rows.length - kept.length;
+    if (swept > 0) await saveTable(file, kept);
+    return swept;
   });
 }
