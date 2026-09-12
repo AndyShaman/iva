@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
-import { getAccessToken, readAuth } from "./codex-auth.ts";
+import { getAccessToken, readAuth, toAuth } from "./codex-auth.ts";
 
 const SEED = 20_260_916;
 const NOW_S = Math.floor(Date.now() / 1000);
@@ -156,5 +156,64 @@ await test("отказ обновления не отдаёт вызывающе
   } finally {
     globalThis.fetch = realFetch;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Слепое QA v3 (Muse): свежий id_token без клейма аккаунта (не-JWT, JWT без клейма,
+// пустой или нестроковый клейм) не имеет права стереть записанные accountId/planType.
+// Заголовок ChatGPT-Account-ID — то, чем бэкенд подписки узнаёт аккаунт; без него
+// каждый запрос модели едет без аккаунта, а рефреш сам себя не чинит — чинит только
+// повторный `iva login`, хотя запись в файле осталась живой.
+await test("обновление не теряет аккаунт, если новый id_token его не назвал (seed 20260920)", async () => {
+  const claimless = [
+    "not-a-jwt",
+    jwt({ sub: "u" }),
+    jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "",
+        chatgpt_plan_type: "",
+      },
+    }),
+    jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: 42,
+        chatgpt_plan_type: "",
+      },
+    }),
+  ];
+  for (const idToken of claimless) {
+    const { dir } = install();
+    stubTokenEndpoint(
+      JSON.stringify({
+        access_token: jwt(NOW_S + 3600),
+        id_token: idToken,
+      }),
+      200,
+    );
+    try {
+      const token = await getAccessToken(dir);
+      assert.ok(token.accessToken.length > 0, "рефреш не дал живого токена");
+      const stored = readAuth(dir);
+      assert.equal(
+        stored?.accountId,
+        "acc-1",
+        `аккаунт потерян при id_token ${JSON.stringify(idToken)}`,
+      );
+      assert.equal(
+        stored?.planType,
+        "plus",
+        `план потерян при id_token ${JSON.stringify(idToken)}`,
+      );
+      // Та же сборка обеих половин шва, без файла: логин-половина обязана хранить
+      // аккаунт так же, как рантайм (сравнение копий держит seam-тест).
+      const built = toAuth(
+        { id_token: idToken, access_token: "new-access" },
+        { accountId: "acc-1", planType: "plus" },
+      );
+      assert.equal(built.accountId, "acc-1");
+      assert.equal(built.planType, "plus");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
