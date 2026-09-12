@@ -447,6 +447,14 @@ export function materializeCustomLayer({
   const manifest = ManifestSchema.parse(structuredClone(current));
   const custom = customRoot(dataDir);
   mkdirSync(custom, { recursive: true, mode: 0o700 });
+  // Оборванный materialize (краш/сигнал между материализацией и commit/discard)
+  // оставляет .pending-<random> в custom/ навсегда: следующий запуск создаёт новый,
+  // а старый не метёт. Материализация на одном data-dir сериализована сборкой или
+  // обновлением, поэтому сметаем всё незакоммиченное до создания своего каталога.
+  for (const entry of readdirSync(custom, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith(".pending-")) continue;
+    rmSync(join(custom, entry.name), { recursive: true, force: true });
+  }
   // Слот не может занять имя встроенного файла, приехавшего релизом позже; проверка стоит
   // до .pending-, чтобы отказ не оставлял мусора рядом с каноническими файлами.
   for (const [path, entry] of Object.entries(manifest.entries)) {
