@@ -41,9 +41,8 @@ those still need `iva update`.
 ⚠️ Your skills go in `data/custom/agent/skills/` and nowhere else - never in a `.claude/` directory
 (`~/.claude/skills/`, `vault/.claude/skills/`). That is a different tool's layout; Iva does not read it.
 
-If Iva should reach for your skill unprompted, name it in
-`data/custom/agent/instructions.md`. Copy `agent/instructions.md` there before the first edit if the
-custom file does not exist yet.
+If Iva should reach for your skill unprompted, name it in a file under
+`data/custom/agent/instructions/`.
 
 ## MCP connections
 
@@ -94,10 +93,21 @@ A subagent runs on the main provider: the planner takes its model straight from 
 
 ## Changing the character
 
-Iva's voice lives in exactly one customizable file: `data/custom/agent/instructions.md` - tone, rules,
-tool preferences and hard limits. Start by copying the bundled `agent/instructions.md`. The reply
-language still comes from `AGENT_LANGUAGE` in `.env`. The files in `agent/instructions/` stay in the
-authored tree and are not part of the custom layer.
+Iva's voice comes from two places under `data/custom/agent/`:
+
+- `data/custom/agent/instructions.md` **replaces** the bundled `agent/instructions.md` whole: tone,
+  rules, tool preferences and hard limits. Start by copying the bundled file. If an upstream edit
+  overlaps yours, Iva merges the three versions (base, yours, upstream); a full rewrite conflicts.
+  The reply language still comes from `AGENT_LANGUAGE` in `.env`.
+- `data/custom/agent/instructions/<name>.md` (or a dynamic `<name>.ts`, like the bundled
+  `agent/instructions/20-core.ts`: only `eve`, local packages and node `fs`/`path`) **adds** to the
+  bundled blocks. It loads after the bundled persona, next to `agent/instructions/*`. A name already
+  taken by a bundled file is refused by the build with the path — rename the file.
+
+Both paths are code that goes into the bundle: `npm run build`, or `iva update`. On an installation
+that runs built versions, the slot arrives with the first build made by the new CLI — run
+`iva update --force` once after updating to the release that ships it. The bundled files in
+`agent/instructions/` stay upstream and are refreshed by releases; the slot only adds next to them.
 
 If an upstream edit overlaps yours, Iva activates the new authored tree and saves all three versions
 (base, yours, upstream) under `data/update-conflicts/`. Tell Iva "restore my update changes" or «верни
