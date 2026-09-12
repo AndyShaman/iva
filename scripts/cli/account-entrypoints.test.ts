@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { plantCliTree } from "../fixtures/cli-tree.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -32,18 +33,12 @@ async function createAccountFixture(t: TestContext): Promise<AccountFixture> {
   const project = join(dir, "iva");
   const home = join(dir, "home");
   const fakeBin = join(dir, "bin");
-  await mkdir(join(project, "bin"), { recursive: true });
   await mkdir(home, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
-  await cp(join(ROOT, "bin/iva.mjs"), join(project, "bin/iva.mjs"));
-  await cp(join(ROOT, "scripts"), join(project, "scripts"), {
-    recursive: true,
-  });
-  // Всё дерево пакетов целиком, а не список по именам: списком забывают новый пакет, и
-  // тогда CLI в фикстуре падает на импорте, которого нет (T20: packages/secret-redaction).
-  await cp(join(ROOT, "packages"), join(project, "packages"), {
-    recursive: true,
-  });
+  // Деревья CLI — общим списком (scripts/fixtures/cli-tree.ts), а не своим перечнем:
+  // списком забывают новый пакет (T20: packages/secret-redaction). scripts/lib копией —
+  // тест правит в нём codex-oauth.ts, ссылкой это правило бы тронуло сам репозиторий.
+  await plantCliTree(ROOT, project, { copy: ["scripts/lib"] });
   await symlink(
     join(ROOT, "node_modules"),
     join(project, "node_modules"),
