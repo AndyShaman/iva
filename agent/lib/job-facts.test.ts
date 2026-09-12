@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 // Таблица фактов расписаний (T20 п.1): запись, ротация 7 дней, ack, хвост без секретов.
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -228,6 +228,41 @@ test("битый JSON: первый же факт не теряется", async 
   const written = await readFacts(file);
   assert.equal(written.length, 1, "факт после битого JSON потерян");
   assert.equal(written[0]?.ok, true);
+});
+
+test("битая строка: копия в карантин и строка в журнале, не тишина", async () => {
+  // Проверка T20 (раунд 3): одна повреждённая запись (например, провал с битым wake)
+  // исчезала молча вместе с фактом провала. Живые строки остаются, битая — в карантине.
+  const directory = dir();
+  const file = jobFactsFile(directory);
+  const good = fact({ name: "digest", ok: true, error: null, exitCode: 0 });
+  writeFileSync(
+    file,
+    JSON.stringify([good, { ...fact({ ok: false }), wake: { at: "вчера" } }]),
+  );
+  const lines: string[] = [];
+  assert.equal(
+    parseFacts(JSON.parse(readFileSync(file, "utf8")), file, (line) =>
+      lines.push(line),
+    ).length,
+    1,
+  );
+  assert.match(lines.join(" "), /1 row/u, "журнал молчит о пропущенной строке");
+
+  await recordFact(file, fact({ name: "memory-daily" }), NOW);
+
+  const written = await readFacts(file);
+  assert.deepEqual(
+    written.map((row) => row.name),
+    ["digest", "memory-daily"],
+    "живые строки и новый факт",
+  );
+  assert.equal(
+    readdirSync(directory).filter((name) => name.includes("jobs.json.corrupt-"))
+      .length,
+    1,
+    `нет копии в карантине: ${readdirSync(directory).join(", ")}`,
+  );
 });
 
 test("latestFact берёт последнюю строку имени по finishedAt", () => {

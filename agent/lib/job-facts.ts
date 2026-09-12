@@ -9,7 +9,7 @@
 // Форма строки — контракт: битая строка пропускается (файл пишем мы сами, не пользователь),
 // а чужой корень файла — явная ошибка: молча ответить «запусков не было» значило бы
 // выключить и провалы, и сторожа.
-import { readFileSync, renameSync } from "node:fs";
+import { copyFileSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   redact,
@@ -127,11 +127,24 @@ function isFact(value: unknown): value is JobFact {
   );
 }
 
-/** Валидные строки таблицы; битые пропускаются, чужой корень — ошибка с путём. */
-export function parseFacts(value: unknown, file: string): JobFact[] {
+/**
+ * Валидные строки таблицы; чужой корень — ошибка с путём. Битая строка пропускается, но не
+ * молча: она может быть единственным следом провала, а тишина о пропаже — худший исход из
+ * возможных (проверка T20, раунд 3). Копию файла перед перезаписью откладывает запись.
+ */
+export function parseFacts(
+  value: unknown,
+  file: string,
+  log: (line: string) => void = console.error,
+): JobFact[] {
   if (!Array.isArray(value))
     throw new JobFactsError(`${file} is not a job facts array`);
-  return value.filter(isFact);
+  const facts = value.filter(isFact);
+  if (facts.length !== value.length)
+    log(
+      `job facts: ${file} — ${value.length - facts.length} row(s) not in the form, skipped`,
+    );
+  return facts;
 }
 
 /** Синхронное чтение для инструкции хода: нет файла — пусто, битый — ошибка. */
@@ -184,7 +197,13 @@ async function withFacts<T>(file: string, fn: () => Promise<T>): Promise<T> {
  */
 async function readFactsForWrite(file: string): Promise<JobFact[]> {
   try {
-    return await readFacts(file);
+    const parsed = await loadJsonStrict<unknown>(file, []);
+    const facts = parseFacts(parsed, file);
+    // Битые строки перезапись потеряет насовсем, поэтому файл сначала копируется рядом:
+    // живые строки остаются в работе, а испорченная запись переживает запись и видна.
+    if (Array.isArray(parsed) && parsed.length !== facts.length)
+      quarantine(file, "copy");
+    return facts;
   } catch (error) {
     if (error instanceof JobFactsError) {
       quarantine(file);
@@ -196,11 +215,17 @@ async function readFactsForWrite(file: string): Promise<JobFact[]> {
   }
 }
 
-/** Отложить испорченный файл рядом, как это делает json-store для битого JSON. */
-function quarantine(file: string): void {
+/**
+ * Отложить испорченный файл рядом, как это делает json-store для битого JSON. `"copy"` —
+ * когда живые строки нужны дальше: рядом остаётся копия, а работа идёт с самим файлом.
+ */
+function quarantine(file: string, how: "move" | "copy" = "move"): void {
   const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+  const aside = `${file}.corrupt-${stamp}`;
   try {
-    renameSync(file, `${file}.corrupt-${stamp}`);
+    if (how === "copy") copyFileSync(file, aside);
+    else renameSync(file, aside);
+    console.error(`job facts: ${file} kept aside as ${aside}`);
   } catch {
     // Не смогли отложить — таблица всё равно начинается заново, факт важнее файла.
   }
