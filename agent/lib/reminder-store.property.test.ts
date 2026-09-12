@@ -110,7 +110,7 @@ function rowAt(
   return {
     id: `r${index}`,
     text: `напоминание ${index}`,
-    mode: index % 2 === 0 ? "verbatim" : "judged",
+    mode: index % 2 === 0 ? "verbatim" : "agent",
     schedule: { kind: "at", atMs: nextRunAtMs },
     nextRunAtMs,
     lastRunAtMs: null,

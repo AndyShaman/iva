@@ -261,7 +261,7 @@ test("жизненный цикл и права 0600", async () => {
   const cron = await add({
     id: "every-morning",
     text: "повторяющееся",
-    mode: "judged",
+    mode: "agent",
     schedule: { kind: "cron", expr: "0 8 * * *", tz: "UTC" },
     nextRunAtMs: now,
     deliver: { chatId: "42", threadId: 7 },

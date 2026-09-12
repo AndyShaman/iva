@@ -18,7 +18,7 @@ export const REMINDER_LEASE_MS = 10 * 60_000;
 
 export class ReminderStoreError extends Error {}
 
-export type ReminderMode = "verbatim" | "judged";
+export type ReminderMode = "verbatim" | "agent";
 /** `at` — один точный срок; `cron` — повторяющееся расписание (cron-выражение пользователя). */
 export type ReminderSchedule =
   { kind: "at"; atMs: number } | { kind: "cron"; expr: string; tz: string };
@@ -177,11 +177,11 @@ function assertReminder(file: string, value: unknown): Reminder {
     badReminder(file, idLabel, "text must be a non-empty string");
 
   const mode = value.mode;
-  if (mode !== "verbatim" && mode !== "judged")
+  if (mode !== "verbatim" && mode !== "agent")
     badReminder(
       file,
       idLabel,
-      `mode must be "verbatim" or "judged", got ${JSON.stringify(mode)}`,
+      `mode must be "verbatim" or "agent", got ${JSON.stringify(mode)}`,
     );
 
   let schedule: ReminderSchedule;
