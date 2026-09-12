@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
+import type { TurnStreamEvent } from "../lib/reminder-turn.ts";
 import { dispatchCli } from "./main.ts";
 import {
   createRemindCommand,
@@ -24,6 +25,28 @@ type SendCall = readonly [
   text: unknown,
   options: { readonly retryTransient?: boolean } | undefined,
 ];
+
+// The turn reads its client's response as a stream, so a fake client answers with an async
+// iterable of events plus eve's cooperative cancel.
+function fakeTurnResponse(events: readonly TurnStreamEvent[]) {
+  let index = 0;
+  return Object.assign(
+    {
+      [Symbol.asyncIterator]: (): AsyncIterator<TurnStreamEvent> => ({
+        next: () => {
+          const event = events[index];
+          index += 1;
+          return Promise.resolve(
+            event === undefined
+              ? { done: true, value: undefined }
+              : { done: false, value: event },
+          );
+        },
+      }),
+    },
+    { cancel: () => Promise.resolve() },
+  );
+}
 
 function remindCommand(
   agentOutcome: AgentOutcome,
@@ -59,8 +82,13 @@ function remindCommand(
       try {
         if (agentOutcome === "timeout") await new Promise(() => {});
         if (agentOutcome === "failed")
-          return { status: "failed", message: "ignore me" };
-        if (agentOutcome === "empty") return { status: "waiting", message: "" };
+          return {
+            status: "failed",
+            message: "ignore me",
+            feedback: async () => {},
+          };
+        if (agentOutcome === "empty")
+          return { status: "waiting", message: "", feedback: async () => {} };
         return {
           status: "waiting",
           message: "Короткое напоминание",
@@ -113,6 +141,10 @@ void test("a failed agent turn sends the raw Reminder once", async () => {
 
   assert.deepEqual(remind.read, [remind.envPath]);
   assert.equal(remind.prompts.length, 1);
+  assert.match(
+    remind.prompts[0],
+    /one-time reminder fired[\s\S]*Do not send anything yourself/u,
+  );
   assert.deepEqual(remind.sent, [
     ["bot-token", "555", "⏰ Позвонить врачу", { retryTransient: true }],
   ]);
@@ -197,13 +229,13 @@ void test("a session reset failure does not fail a delivered Reminder", async ()
           sessions: {
             create: () =>
               Promise.resolve({
-                response: {
-                  result: () =>
-                    Promise.resolve({
-                      status: "waiting",
-                      message: "Короткое напоминание",
-                    }),
-                },
+                response: fakeTurnResponse([
+                  {
+                    type: "message.completed",
+                    data: { message: "Короткое напоминание" },
+                  },
+                  { type: "session.waiting" },
+                ]),
                 session: {
                   send: () => Promise.resolve(),
                   reset: ({ reason }) => {
@@ -265,13 +297,13 @@ void test("the eve client is built from .env, not process.env", async () => {
             sessions: {
               create: () =>
                 Promise.resolve({
-                  response: {
-                    result: () =>
-                      Promise.resolve({
-                        status: "waiting",
-                        message: "Короткое напоминание",
-                      }),
-                  },
+                  response: fakeTurnResponse([
+                    {
+                      type: "message.completed",
+                      data: { message: "Короткое напоминание" },
+                    },
+                    { type: "session.waiting" },
+                  ]),
                   session: {
                     send: () => Promise.resolve(),
                     reset: () => Promise.resolve(),
