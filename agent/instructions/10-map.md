@@ -81,7 +81,7 @@ ephemeral into CORE (task status, "call at 5") — tasks live in `tasks`, the
 rest settles into the daily transcript.
 
 A rule of behavior ("remember a rule", "always/never do X") is not CORE:
-append one line to `data/custom/agent/instructions/rules.md` through `write_file` —
+once the owner confirms, append one line to `data/custom/agent/instructions/rules.md` through `write_file` —
 read the file first, add the line, write the whole file back; if the file does
 not exist, create it with the header `# Owner rules`. It loads every turn, so
 the rule applies from the next turn.

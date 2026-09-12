@@ -17,7 +17,8 @@ companion files (`scripts/`, `references/`, `assets/`).
   live there.
 - Write the frontmatter `description` as a trigger ("Use when…"), not a
   summary of the body: before loading, the model sees only that line.
-- A skill dropped into `data/custom/agent/skills/` is picked up on the next
-  turn — no rebuild, no restart. The rest of `data/custom/agent/`
-  (instructions, connections, tools) applies only after `npm run build` and a
-  restart — warn the owner about that; never restart yourself.
+- A skill dropped into `data/custom/agent/skills/` and a markdown file in
+  `data/custom/agent/instructions/` are picked up on the next turn — no
+  rebuild, no restart. `.ts` files there, connections and tools apply only
+  after `npm run build` and a restart — warn the owner about that; never
+  restart yourself.
