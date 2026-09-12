@@ -19,6 +19,7 @@ import {
   MODEL_PROVIDER_NAMES,
   invalidModelProviderMessage,
 } from "#lib/model-provider.ts";
+import { jobFactsFile, recordFact } from "#lib/job-facts.ts";
 import { PLUGIN_SCHEMA_URL } from "#lib/plugin-reader.ts";
 import {
   pluginConfigFile,
@@ -132,6 +133,26 @@ async function ownerRulesEvents(
 }
 
 async function bridgeBacklogEvents(
+  root: string,
+  options: {
+    now: number;
+    queue?: unknown;
+    queueRaw?: string;
+    statuses?: Array<{
+      chatKey: string;
+      status: { status?: string; updatedAt?: number };
+    }>;
+  },
+): Promise<Array<[string, string]>> {
+  // Примета по умолчанию — «bridge backlog:», второй фильтр тут был бы копией.
+  return systemdDoctorEvents(root, options);
+}
+
+/**
+ * Доктор с живым systemd (стаб) и своим каталогом данных. Возвращает события команды,
+ * отобранные по примете начала строки; пустая примета — все.
+ */
+async function systemdDoctorEvents(
   root: string,
   {
     now,
@@ -1724,5 +1745,55 @@ test("doctor names the deprecated replacement and an oversized rules file", asyn
     events.some(
       ([level, message]) => level === "warn" && /4000/u.test(message),
     ),
+  );
+});
+
+// T20 п.5: раздел «расписания» доктора собран из таблицы фактов — проводка до вывода
+// команды, а не только сам отчёт (его формат держит scripts/cli/doctor-schedule.test.ts).
+test("doctor names a failed schedule run and its open failure", async (t) => {
+  const root = await sandbox(t);
+  const data = join(root, "data");
+  mkdirSync(data, { recursive: true });
+  const finishedAt = Date.now() - 1000;
+  await recordFact(
+    jobFactsFile(data),
+    {
+      name: "memory-daily",
+      startedAt: finishedAt - 1000,
+      finishedAt,
+      ok: false,
+      error: "exited 1",
+      exitCode: 1,
+      tail: "rollup daily: agent returned no report",
+      acked: false,
+      wake: null,
+    },
+    finishedAt,
+  );
+
+  // Пустая примета = все события команды: раздел расписаний говорит по-русски и с двух
+  // разных начал («расписание …», «незакрытый провал: …»).
+  const events = await systemdDoctorEvents(root, {
+    now: finishedAt + 1000,
+    messagePrefix: "",
+  });
+
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /расписание memory-daily: провал \(exited 1\)/u.test(message),
+    ),
+    "последний запуск имени виден как провал",
+  );
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /незакрытый провал: memory-daily .*iva jobs ack memory-daily/u.test(
+          message,
+        ),
+    ),
+    "незакрытый провал назван с командой закрытия",
   );
 });
