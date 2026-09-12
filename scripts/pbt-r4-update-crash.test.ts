@@ -17,6 +17,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +29,7 @@ import fc from "fast-check";
 import "./lib/ts-esm-hooks.ts";
 
 const { retireCheckout } = await import("../scripts/update-finish.ts");
-const { refreshOwnedShim, shimScript } =
+const { refreshOwnedShim, shimScript, SHIM_CLAIM_TTL_MS } =
   await import("../scripts/lib/version-layout.ts");
 
 const SEED = 20_260_914;
@@ -191,6 +192,38 @@ await test("НАХОДКА R4-4: обрыв при обновлении шима
     [],
     "каталог-заявка остался",
   );
+});
+
+// Жёсткий обрыв (kill -9) мог оставить заявку старого формата - без pid в имени.
+// Её судят по возрасту: брошенная больше часа назад убирается при следующем старте.
+await test("НАХОДКА R4-4: брошенная заявка старого формата старше часа убирается", () => {
+  const home = mkdtempSync(join(tmpdir(), "pbt-r4-shim-home-"));
+  const bin = mkdtempSync(join(tmpdir(), "pbt-r4-shim-bin-"));
+  const shim = join(bin, "iva");
+  const desired = shimScript(home, process.execPath, join(home, "data"));
+  writeFileSync(shim, desired, { mode: 0o755 });
+  const stale = mkdtempSync(join(bin, ".iva-shim-refresh-"));
+  writeFileSync(join(stale, "previous"), desired, { mode: 0o755 });
+  const old = new Date(Date.now() - SHIM_CLAIM_TTL_MS - 60_000);
+  utimesSync(stale, old, old);
+
+  refreshOwnedShim(shim, home, process.execPath, join(home, "data"));
+  assert.ok(!existsSync(stale), "брошенная заявка старого формата осталась");
+});
+
+// Зелёный control уборки: свежую заявку без pid она не трогает - её ещё может держать
+// параллельный ход на старом коде.
+await test("зелёное: свежую заявку старого формата уборка не трогает", () => {
+  const home = mkdtempSync(join(tmpdir(), "pbt-r4-shim-home-"));
+  const bin = mkdtempSync(join(tmpdir(), "pbt-r4-shim-bin-"));
+  const shim = join(bin, "iva");
+  const desired = shimScript(home, process.execPath, join(home, "data"));
+  writeFileSync(shim, desired, { mode: 0o755 });
+  const fresh = mkdtempSync(join(bin, ".iva-shim-refresh-"));
+  writeFileSync(join(fresh, "previous"), desired, { mode: 0o755 });
+
+  refreshOwnedShim(shim, home, process.execPath, join(home, "data"));
+  assert.ok(existsSync(fresh), "свежая заявка удалена");
 });
 
 // Зелёный control уборки: заявку живого процесса она не трогает (иначе снесла бы

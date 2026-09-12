@@ -18,6 +18,7 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -279,9 +280,14 @@ function claimDirectoryName(): string {
 }
 
 /**
- * Убрать заявки оборванных обновлений шима. Имя несёт pid: заявку живого процесса
- * (в том числе свою) не трогаем, заявку мёртвого - убираем. Старый формат без pid
- * остаётся: его мог оставить чужой процесс, которого уже нет рядом.
+/** Час: заявка живёт миллисекунды, поэтому давняя не может принадлежать живому ходу. */
+export const SHIM_CLAIM_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Убрать заявки оборванных обновлений шима, чужие для этого процесса. Имя нового
+ * формата несёт pid: заявку мёртвого процесса убираем сразу, живого - не трогаем.
+ * Имя старого формата pid не несёт, поэтому его судим по возрасту: старше часа -
+ * брошено (жёсткий обрыв, kill -9), свежее - оставляем чужому ходу.
  */
 function sweepStaleShimClaims(directory: string): void {
   const prefix = ".iva-shim-refresh-";
@@ -291,16 +297,26 @@ function sweepStaleShimClaims(directory: string): void {
   } catch {
     return;
   }
+  const now = Date.now();
   for (const name of names) {
     if (!name.startsWith(prefix)) continue;
     const owner = Number.parseInt(name.slice(prefix.length), 10);
-    if (!Number.isInteger(owner) || owner <= 0 || owner === process.pid)
-      continue;
-    try {
-      process.kill(owner, 0);
-      continue; // Хозяин заявки ещё жив.
-    } catch {
-      // Процесса нет - заявка осиротела.
+    if (Number.isInteger(owner) && owner > 0) {
+      if (owner === process.pid) continue;
+      try {
+        process.kill(owner, 0);
+        continue; // Хозяин заявки ещё жив.
+      } catch {
+        // Процесса нет - заявка осиротела, её можно убрать сразу.
+      }
+    } else {
+      let age: number;
+      try {
+        age = now - statSync(join(directory, name)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (age < SHIM_CLAIM_TTL_MS) continue; // Может ещё держать чужой ход.
     }
     rmSync(join(directory, name), { recursive: true, force: true });
   }
