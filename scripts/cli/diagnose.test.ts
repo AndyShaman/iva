@@ -552,3 +552,42 @@ await test("битые данные не мешают пакету: раздел
   assert.match(text, /journalctl unavailable \(no journalctl on this host\)/);
   assert.match(text, /## Custom layer \(file names only\)\n- \(none\)/);
 });
+
+await test("таблица фактов расписаний видна в пакете, секрет из хвоста — нет", async (t) => {
+  const { root, data, env } = await sandbox(t);
+  const { jobFactsFile, recordFact } = await import("#lib/job-facts.ts");
+  const finishedAt = NOW.getTime() - 60 * 60 * 1000;
+  await recordFact(
+    jobFactsFile(data),
+    {
+      name: "memory-daily",
+      startedAt: finishedAt - 1000,
+      finishedAt,
+      ok: false,
+      error: "exited 1",
+      exitCode: 1,
+      tail: `provider ${URL_PASSWORD} rejected`,
+      acked: false,
+      wake: null,
+    },
+    finishedAt,
+  );
+  const printed: string[] = [];
+  await createDiagnoseCommand(
+    runtimeFor(root, data, env, printed, {
+      code: 1,
+      out: "",
+      err: "journalctl not found",
+    }),
+    lifecycle(),
+    { now: () => NOW },
+  )();
+  const text = readFileSync(
+    join(data, "diagnose", "2026-09-12T15-04-07-000Z.md"),
+    "utf8",
+  );
+  assert.match(text, /## Schedules \(facts table/u);
+  assert.match(text, /memory-daily: провал \(exited 1\)/u);
+  assert.match(text, /незакрытый провал: memory-daily/u);
+  assert.ok(!text.includes(URL_PASSWORD), "секрет из хвоста уехал в пакет");
+});

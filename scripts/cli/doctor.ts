@@ -64,6 +64,8 @@ type RollupStatus = Record<string, RollupEntry | null | undefined>;
 export interface ScheduleFactsReport {
   readonly lastRuns: readonly string[];
   readonly openFailures: readonly OpenFailure[];
+  /** Строки таблицы: пакет diagnose печатает по ним хвосты незакрытых провалов. */
+  readonly facts: readonly JobFact[];
 }
 
 /**
@@ -107,7 +109,7 @@ export async function scheduleFactsReport(
         : `${name}: провал (${latest.error ?? "без причины"}), ${when}`,
     );
   }
-  return { lastRuns, openFailures: openJobFailures(facts, now) };
+  return { lastRuns, openFailures: openJobFailures(facts, now), facts };
 }
 
 /** Сколько ждём `/health` прокси: он на loopback, и медленный ответ — уже симптом. */

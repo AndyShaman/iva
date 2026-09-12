@@ -22,7 +22,13 @@ import {
   redact,
   secretValuesFromEnv,
 } from "../../packages/secret-redaction/index.ts";
-import { createDoctorCommand, errorCode, reminderIdHash } from "./doctor.ts";
+import {
+  authoredTreeMissing,
+  createDoctorCommand,
+  errorCode,
+  reminderIdHash,
+  scheduleFactsReport,
+} from "./doctor.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -211,6 +217,41 @@ function failureFact(event: Record<string, unknown>): string | null {
   return `${ts} · ${kind}.${name} · turn ${turn} · code ${code}`;
 }
 
+/**
+ * Таблица фактов расписаний (T20 §5): последний запуск каждого имени и незакрытые провалы
+ * за сутки. Разбор не дублируем: отчёт собирает doctor.scheduleFactsReport теми же
+ * authored-функциями, что и раздел доктора; хвост уже вырезан при записи, а пакет
+ * целиком проходит общее вырезание секретов ниже.
+ */
+async function schedulesSection(
+  dataDir: string,
+  nowMs: number,
+): Promise<string> {
+  let report;
+  try {
+    report = await scheduleFactsReport(dataDir, nowMs);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return authoredTreeMissing(error)
+      ? "- schedule facts unavailable: the authored tree is missing"
+      : `- job facts unreadable: ${reason}`;
+  }
+  const lines = report.lastRuns.map((line) => `- ${line}`);
+  for (const failure of report.openFailures) {
+    lines.push(
+      `- незакрытый провал: ${failure.name} (${failure.reason}) — закрыть: iva jobs ack ${failure.name}`,
+    );
+    const row = report.facts.find(
+      (fact) => fact.name === failure.name && fact.finishedAt === failure.at,
+    );
+    if (row?.tail)
+      lines.push(...row.tail.split("\n").map((line) => `  ${line}`));
+  }
+  return lines.length > 0
+    ? lines.join("\n")
+    : "- no schedule runs in the facts table";
+}
+
 function turnsSection(dataDir: string, nowMs: number): string {
   const directory = join(dataDir, "trace");
   let names: string[];
@@ -370,6 +411,7 @@ async function packageMarkdown(input: {
   readonly doctor: string;
   readonly journal: string;
   readonly redaction: string;
+  readonly schedules: string;
 }): Promise<string> {
   const nowMs = input.now.getTime();
   const reminders = await remindersSection(input.dataDir, nowMs);
@@ -401,6 +443,9 @@ async function packageMarkdown(input: {
     "",
     "## Failed turns (last 24h)",
     turnsSection(input.dataDir, nowMs),
+    "",
+    "## Schedules (facts table, last run per name; open failures of the last day)",
+    input.schedules,
     "",
     "## Custom layer (file names only)",
     customLayerSection(input.dataDir),
@@ -475,6 +520,7 @@ export function createDiagnoseCommand(
       doctor: doctorLines.join("\n"),
       journal: journalSection(cap, dataDirectory, units),
       redaction: redactionLine(envFound, secrets.length),
+      schedules: await schedulesSection(dataDirectory, collectedAt.getTime()),
     });
     const file = join(
       dataDirectory,
