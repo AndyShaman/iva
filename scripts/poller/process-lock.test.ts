@@ -125,7 +125,9 @@ function readyEvidence(state: RunningChild): ReadyEvidence {
 
 /**
  * Выход ребёнка ждём по сигналу процесса, а не по стенным часам: под нагрузкой
- * пятисекундный срок истекал на живом ребёнке, который просто ждал планировщика.
+ * пятисекундный срок истекал на живом ребёнке, который просто ждал планировщика. Таймер
+ * здесь — страховка от ребёнка, который не выходит никогда (в проекте нет --test-timeout):
+ * тест обязан упасть с его pid, а не висеть до конца прогона.
  */
 async function waitForExit(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -133,19 +135,46 @@ async function waitForExit(child: ChildProcess) {
   }
   return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolveExit, rejectExit) => {
-      child.once("error", rejectExit);
-      child.once("exit", (code, signal) => resolveExit({ code, signal }));
+      const guard = setTimeout(
+        () =>
+          rejectExit(
+            new Error(
+              `child ${child.pid} did not exit in ${WAIT_HANG_GUARD_MS}ms`,
+            ),
+          ),
+        WAIT_HANG_GUARD_MS,
+      );
+      child.once("error", (error) => {
+        clearTimeout(guard);
+        rejectExit(error);
+      });
+      child.once("exit", (code, signal) => {
+        clearTimeout(guard);
+        resolveExit({ code, signal });
+      });
     },
   );
 }
 
 /**
- * Опрос признака (файл-замок, строка READY). Часов нет: каждый предикат в файле
- * терминален — признак появится или ребёнок закроется; исход проверяет assert рядом
- * с вызовом, потому что только там есть свежий stderr ребёнка.
+ * Потолок ожидания — та же страховка, что у `waitForExit`, а не расписание: живой ребёнок
+ * под нагрузкой ждёт планировщика сколько нужно. Там, где конец предиката держит чужая
+ * жизнь (внук-холдер, контендер с убитым холдером), без потолка регрессия превращается из
+ * красного теста в вечное ожидание: у проекта нет --test-timeout, дефолт node:test —
+ * Infinity.
  */
-async function waitFor(predicate: () => boolean): Promise<void> {
+const WAIT_HANG_GUARD_MS = 30_000;
+
+/**
+ * Опрос признака (файл-замок, строка READY). Предикат терминален: признак появится или
+ * процесс закончится; `what` называет, чего не дождались. Исход проверяет assert рядом с
+ * вызовом, потому что только там есть свежий stderr ребёнка.
+ */
+async function waitFor(predicate: () => boolean, what: string): Promise<void> {
+  const startedAt = Date.now();
   while (!predicate()) {
+    if (Date.now() - startedAt > WAIT_HANG_GUARD_MS)
+      assert.fail(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -220,13 +249,15 @@ void test("different bots and DATA_DIR values share one uid-global lease", async
     startChild(t, "hold", firstData, guard, "71021"),
     startChild(t, "hold", secondData, guard, "71022"),
   ];
-  await waitFor(() =>
-    contenders.every(
-      ({ child, stdout }) =>
-        stdout.includes('"event":"READY"') ||
-        child.exitCode !== null ||
-        child.signalCode !== null,
-    ),
+  await waitFor(
+    () =>
+      contenders.every(
+        ({ child, stdout }) =>
+          stdout.includes('"event":"READY"') ||
+          child.exitCode !== null ||
+          child.signalCode !== null,
+      ),
+    "both global contenders to settle",
   );
   assert.equal(
     contenders.filter(({ stdout }) => stdout.includes('"event":"READY"'))
@@ -271,6 +302,7 @@ void test("different bots and DATA_DIR values share one uid-global lease", async
         candidate.stdout.includes('"event":"READY"') ||
         candidate.child.exitCode !== null ||
         candidate.child.signalCode !== null,
+      "the successor candidate to settle",
     );
     if (candidate.stdout.includes('"event":"READY"')) {
       successor = candidate;
@@ -336,6 +368,7 @@ void test("direct DATA_DIR recreation cannot admit an aliased second Bridge", as
       first.stdout.includes('"event":"READY"') ||
       first.child.exitCode !== null ||
       first.child.signalCode !== null,
+    "the first owner to acquire",
   );
   assert.ok(
     first.stdout.includes('"event":"READY"'),
@@ -350,6 +383,7 @@ void test("direct DATA_DIR recreation cannot admit an aliased second Bridge", as
       existsSync(join(dataDir, "active-writer")) ||
       first.child.exitCode !== null ||
       first.child.signalCode !== null,
+    "the first Bridge to write the recreated state",
   );
   assert.ok(
     existsSync(join(dataDir, "active-writer")),
@@ -366,6 +400,7 @@ void test("direct DATA_DIR recreation cannot admit an aliased second Bridge", as
       second.stdout.includes('"event":"READY"') ||
       second.child.exitCode !== null ||
       second.child.signalCode !== null,
+    "the second Bridge to settle",
   );
   assert.equal(
     second.stdout.includes('"event":"READY"'),
@@ -398,6 +433,7 @@ void test("guard root, lock, and owner replacement cannot bypass one constant li
           first.stdout.includes('"event":"READY"') ||
           first.child.exitCode !== null ||
           first.child.signalCode !== null,
+        "the first owner to acquire",
       );
       assert.ok(
         first.stdout.includes('"event":"READY"'),
@@ -427,6 +463,7 @@ void test("guard root, lock, and owner replacement cannot bypass one constant li
           second.stdout.includes('"event":"READY"') ||
           second.child.exitCode !== null ||
           second.child.signalCode !== null,
+        "the second Bridge to settle",
       );
       assert.equal(second.stdout.includes('"event":"READY"'), false);
       assert.equal((await waitForExit(second.child)).code, 1, second.stderr);
@@ -441,7 +478,7 @@ void test("guard root, lock, and owner replacement cannot bypass one constant li
         } catch (error) {
           return (error as NodeJS.ErrnoException).code === "ESRCH";
         }
-      });
+      }, `holder ${evidence.holderPid} to exit after its parent was killed`);
     });
   }
 });
@@ -623,13 +660,17 @@ void test("OS lease permits exactly one ordered first-run drop attempt", async (
       name.startsWith("first-bot-api-"),
     );
     assert.ok(firstCalls.length <= 1, "both Bridge mains reached Bot API");
-    return (
-      firstCalls.length === 1 &&
-      mainContenders.some(
-        ({ child }) => child.exitCode !== null || child.signalCode !== null,
-      )
-    );
-  });
+    // Терминально и «дроп не состоялся»: пока ни одного first-bot-api нет, ждать
+    // больше нечего, если оба контендера вышли, — следующий assert назовёт провал,
+    // а не оставит прогон висеть.
+    return firstCalls.length === 1
+      ? mainContenders.some(
+          ({ child }) => child.exitCode !== null || child.signalCode !== null,
+        )
+      : mainContenders.every(
+          ({ child }) => child.exitCode !== null || child.signalCode !== null,
+        );
+  }, "the first-run drop to settle");
   const firstCalls = readdirSync(dataDir).filter((name) =>
     name.startsWith("first-bot-api-"),
   );
