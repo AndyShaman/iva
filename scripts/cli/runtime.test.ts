@@ -206,9 +206,14 @@ test("readEnv and dataDirAbs retain the CLI path rules", async (t) => {
       "",
     ].join("\n"),
   );
+  // Ровно то, что видит сервис: `node --env-file` (и `util.parseEnv` за ним) пускает
+  // строчные имена и режет незакавыченный `#` как начало комментария — CLI обязан читать
+  // тот же файл так же, иначе `iva doctor` и список секретов `iva diagnose` расходятся с
+  // тем, как процесс получил своё окружение (T21).
   assert.deepEqual(runtime.readEnv(), {
     MODEL_PROVIDER: "ollama",
     ASSISTANT_DATA_DIR: "runtime-data",
+    lowercase: "ignored",
   });
   assert.equal(runtime.dataDirAbs(), join(root, "runtime-data"));
   assert.equal(runtime.dataDirAbs({}), join(root, "data"));
@@ -224,6 +229,27 @@ test("readEnv and dataDirAbs retain the CLI path rules", async (t) => {
     runtime.dataDirAbs({ ASSISTANT_DATA_DIR: "" }),
     join(root, "data"),
   );
+});
+
+test("readEnv читает инлайн-комментарий и многострочное значение как node --env-file", async (t) => {
+  const root = await sandbox(t);
+  const runtime = createCliRuntime(root);
+  writeFileSync(
+    runtime.ENV_PATH,
+    [
+      "COMMENT_KEY=commentDDD3456 # inline note",
+      'MULTI_KEY="multiEEE7890',
+      'multiFFF1234"',
+      "",
+    ].join("\n"),
+  );
+
+  // Золотые значения сняты с самого `node --env-file` (слепая приёмка T21): значение
+  // кончается на `#`, а многострочная кавычка собирается в одну строку с переводом.
+  assert.deepEqual(runtime.readEnv(), {
+    COMMENT_KEY: "commentDDD3456",
+    MULTI_KEY: "multiEEE7890\nmultiFFF1234",
+  });
 });
 
 test("writeEnvVars rejects CRLF values before writing", async (t) => {

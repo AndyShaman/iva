@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { parseEnv } from "node:util";
 import { writeEnvAtomicSync } from "../lib/env-file.ts";
 import { resolveDataDir } from "../lib/data-dir.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
@@ -139,13 +140,22 @@ export function createCliRuntime(root: string) {
     parseVersionName(basename(real(ROOT)))?.sha ||
     "";
 
+  /**
+   * `.env` читается ТЕМ ЖЕ парсером, что и сам процесс: сервис стартует через
+   * `node --env-file=.env` (package.json, deploy/*.service), и `util.parseEnv` — ровно его
+   * разбор. Своя регулярка клала в значение инлайн-комментарий целиком
+   * (`KEY=secret # note` → `secret # note`) и видела только первую строку многострочного
+   * значения в кавычках, поэтому половина ключа уезжала мимо любого списка вырезания (T21).
+   * Битая строка бросает, как и у `node --env-file`: молча продолжать значит читать
+   * установку не так, как её читает сервис.
+   */
   function readEnv(): EnvValues {
+    if (!existsSync(ENV_PATH)) return {};
     const env: EnvValues = {};
-    if (!existsSync(ENV_PATH)) return env;
-    for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
-      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (match) env[match[1]] = match[2].replace(/^["']|["']$/g, "");
-    }
+    for (const [key, value] of Object.entries(
+      parseEnv(readFileSync(ENV_PATH, "utf8")),
+    ))
+      if (typeof value === "string") env[key] = value;
     return env;
   }
 
