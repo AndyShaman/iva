@@ -233,3 +233,16 @@ test("динамическая инструкция 40-open-failures несёт 
     else process.env.ASSISTANT_DATA_DIR = previous;
   }
 });
+
+// T30 №7: блок инструкции не растёт без предела — число и длина причин ограничены.
+test("T30 №7: блок инструкции ограничен по числу и длине", () => {
+  const failures = Array.from({ length: 100 }, (_, index) => ({
+    source: "job" as const,
+    name: `job-${index}`,
+    at: NOW,
+    reason: "x".repeat(100_000),
+  }));
+  const block = openFailuresMarkdown(failures);
+  assert.ok(block.length <= 6000, `блок распух: ${block.length} знаков`);
+  assert.match(block, /job-0/);
+});

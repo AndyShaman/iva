@@ -100,6 +100,16 @@ export async function openFailures({
   return openFailuresFrom(facts, reminders, now);
 }
 
+/** Потолки блока для промпта: сотни провалов по 100k знаков раздували ход (T30 №7). */
+const MAX_FAILURE_LINES = 20;
+const MAX_FAILURE_FIELD = 200;
+
+function capped(value: string): string {
+  return value.length > MAX_FAILURE_FIELD
+    ? `${value.slice(0, MAX_FAILURE_FIELD)}…`
+    : value;
+}
+
 function line(failure: OpenFailure): string {
   const when = new Date(failure.at).toISOString();
   if (failure.source === "reminder")
@@ -123,5 +133,16 @@ export function brokenFailureSourceMarkdown(error: unknown): string {
 /** Блок для промпта; провалов нет — пустая строка (инструкция тогда пустая). */
 export function openFailuresMarkdown(failures: readonly OpenFailure[]): string {
   if (failures.length === 0) return "";
-  return ["## Незакрытые провалы за сутки", ...failures.map(line)].join("\n");
+  const shown = failures.slice(0, MAX_FAILURE_LINES).map((failure) =>
+    line({
+      ...failure,
+      name: capped(failure.name),
+      reason: capped(failure.reason),
+    }),
+  );
+  if (failures.length > MAX_FAILURE_LINES)
+    shown.push(
+      `- … и ещё ${failures.length - MAX_FAILURE_LINES} провалов (полный список: iva doctor)`,
+    );
+  return ["## Незакрытые провалы за сутки", ...shown].join("\n");
 }
