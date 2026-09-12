@@ -12,7 +12,11 @@ import {
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { isAuthoredPath } from "./authored-paths.ts";
+import {
+  instructionSlotCollision,
+  isAuthoredPath,
+  isInstructionSlotPath,
+} from "./authored-paths.ts";
 import { resolveDataDir } from "./data-dir.ts";
 import { gitAt, updaterCompat } from "./update-check.ts";
 import {
@@ -851,6 +855,11 @@ async function buildVersion({
   const dir = join(store.layout.versions, name);
   const customDir = join(store.layout.data, "custom");
   const { files } = customOverlay(customDir);
+  // Падать до установки зависимостей: слот не может занять имя встроенного файла.
+  for (const path of files) {
+    if (isInstructionSlotPath(path) && existsSync(join(dir, path)))
+      throw instructionSlotCollision(path);
+  }
   await npmStep(dir, run, INSTALL, "dependency installation");
   for (const path of files) {
     // Confined to the version by `isAuthoredPath`: it rejects anything absolute,

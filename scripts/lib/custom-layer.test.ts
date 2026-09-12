@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -63,6 +64,7 @@ function fixture(t: TestContext): {
     "agent/instructions.md",
     "tone: stock\nkeep-a\nkeep-b\ncore: stock\n",
   );
+  write(root, "agent/instructions/10-map.md", "map: stock\n");
   write(root, "agent/skills/stock/SKILL.md", "stock skill\n");
   write(root, "agent/tools/stock.ts", "export default 'stock';\n");
   write(
@@ -117,6 +119,8 @@ function fixture(t: TestContext): {
 test("authored path policy is narrow and traversal-safe", () => {
   for (const path of [
     "agent/instructions.md",
+    "agent/instructions/20-core.ts",
+    "agent/instructions/rules.md",
     "agent/skills/my-skill/SKILL.md",
     "agent/connections/calendar.ts",
     "agent/tools/my-tool.ts",
@@ -125,7 +129,7 @@ test("authored path policy is narrow and traversal-safe", () => {
     assert.equal(isAuthoredPath(path), true, path);
 
   for (const path of [
-    "agent/instructions/20-core.ts",
+    "agent/instructions/../agent.ts",
     "agent/schedules/digest.ts",
     "agent/agent.ts",
     "package.json",
@@ -608,4 +612,93 @@ test("the recovery CLI reports resolve failures as JSON", (t) => {
     error: "not an authored path: ../outside",
   });
   assert.equal(result.stderr, "");
+});
+
+test("a slot instruction file reaches the build tree beside the bundled ones", (t) => {
+  const { root, dataDir, base } = fixture(t);
+  mkdirSync(join(dataDir, "custom/agent/instructions"), { recursive: true });
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  assert.deepEqual(readCustomManifest(dataDir).entries, {});
+
+  write(dataDir, "custom/agent/instructions/rules.md", "rules: mine\n");
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  const entry =
+    readCustomManifest(dataDir).entries["agent/instructions/rules.md"];
+  assert.equal(entry?.originSha256, null);
+  assert.equal(entry?.tombstone, false);
+  assert.equal(entry?.localSha256?.length, 64);
+
+  const result = materializeCustomLayer({
+    root,
+    dataDir,
+    targetRevision: "6".repeat(40),
+    now: new Date("2026-09-12T06:07:08.000Z"),
+  });
+
+  assert.deepEqual(result.conflicts, []);
+  assert.equal(
+    readFileSync(join(root, "agent/instructions/rules.md"), "utf8"),
+    "rules: mine\n",
+  );
+  assert.equal(
+    readFileSync(join(root, "agent/instructions/10-map.md"), "utf8"),
+    "map: stock\n",
+  );
+  assert.equal(
+    readFileSync(join(root, "agent/instructions.md"), "utf8"),
+    "tone: stock\nkeep-a\nkeep-b\ncore: stock\n",
+  );
+  assert.equal(
+    readFileSync(
+      join(result.runtimeRoot, "agent/instructions/rules.md"),
+      "utf8",
+    ),
+    "rules: mine\n",
+  );
+
+  commitCustomLayer(result);
+  assert.equal(
+    readFileSync(join(dataDir, "custom/agent/instructions/rules.md"), "utf8"),
+    "rules: mine\n",
+  );
+});
+
+test("a slot file that takes a bundled name is refused, not merged", (t) => {
+  const { root, dataDir, base } = fixture(t);
+  write(dataDir, "custom/agent/instructions/10-map.md", "map: mine\n");
+
+  assert.throws(
+    () => captureCustomLayer({ root, dataDir, baseRevision: base }),
+    /collides with a bundled file: agent\/instructions\/10-map\.md/u,
+  );
+  assert.equal(existsSync(join(dataDir, "custom/manifest.json")), false);
+  assert.equal(
+    readFileSync(join(root, "agent/instructions/10-map.md"), "utf8"),
+    "map: stock\n",
+  );
+
+  rmSync(join(dataDir, "custom/agent/instructions/10-map.md"));
+  write(dataDir, "custom/agent/instructions/rules.md", "rules: mine\n");
+  captureCustomLayer({ root, dataDir, baseRevision: base });
+  write(root, "agent/instructions/rules.md", "rules: upstream\n");
+
+  assert.throws(
+    () =>
+      materializeCustomLayer({
+        root,
+        dataDir,
+        targetRevision: "7".repeat(40),
+      }),
+    /agent\/instructions\/rules\.md/u,
+  );
+  assert.equal(
+    readFileSync(join(dataDir, "custom/agent/instructions/rules.md"), "utf8"),
+    "rules: mine\n",
+  );
+  assert.deepEqual(
+    readdirSync(join(dataDir, "custom")).filter((name) =>
+      name.startsWith(".pending-"),
+    ),
+    [],
+  );
 });

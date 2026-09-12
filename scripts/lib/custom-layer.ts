@@ -24,7 +24,11 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import { isAuthoredPath } from "./authored-paths.ts";
+import {
+  isAuthoredPath,
+  instructionSlotCollision,
+  isInstructionSlotPath,
+} from "./authored-paths.ts";
 
 export { isAuthoredPath };
 
@@ -33,6 +37,8 @@ const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // Слоты, которые слой забирает из рабочего дерева и кладёт в сборку. Скиллов здесь нет:
 // их читает с диска резолвер agent/skills/custom.ts, и второй путь к тем же файлам был бы
 // задвоением (docs/extending.md). Остальные слоты — код, ему сборка нужна.
+// Слот agent/instructions/ наполняется только из data/custom: правка встроенного файла в
+// checkout остаётся обычным локальным патчем, а не заменой слота.
 const AUTHORED_PATHSPECS = [
   "agent/instructions.md",
   "agent/connections",
@@ -313,6 +319,8 @@ export function captureCustomLayer({
   for (const path of canonicalFiles(dataDir)) {
     if (manifest.entries[path]) continue;
     const base = revisionFile(root, baseRevision, path);
+    if (isInstructionSlotPath(path) && base !== null)
+      throw instructionSlotCollision(path);
     const local = readOptional(canonicalPath(dataDir, path));
     if (local === null) continue;
     manifest.entries[path] = {
@@ -438,6 +446,13 @@ export function materializeCustomLayer({
   const manifest = ManifestSchema.parse(structuredClone(current));
   const custom = customRoot(dataDir);
   mkdirSync(custom, { recursive: true, mode: 0o700 });
+  // Слот не может занять имя встроенного файла, приехавшего релизом позже; проверка стоит
+  // до .pending-, чтобы отказ не оставлял мусора рядом с каноническими файлами.
+  for (const [path, entry] of Object.entries(manifest.entries)) {
+    if (!isInstructionSlotPath(path) || entry.tombstone) continue;
+    if (readOptional(safeChild(root, path)) !== null)
+      throw instructionSlotCollision(path);
+  }
   const pendingDir = mkdtempSync(join(custom, ".pending-"));
   const currentAgent = join(custom, "agent");
   const pendingAgent = join(pendingDir, "agent");

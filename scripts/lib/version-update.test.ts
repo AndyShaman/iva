@@ -413,6 +413,36 @@ test("a customization that builds is layered into the new version", async (t) =>
   assert.deepEqual(iva.notices, []);
 });
 
+test("an instruction file in the slot is layered into the new version", async (t) => {
+  const iva = world(t);
+  customFile(iva.home, "agent/instructions/rules.md", "rules: mine\n");
+
+  const outcome = updated(await iva.update());
+  assert.equal(outcome.custom, "applied");
+  assert.equal(
+    readFileSync(join(iva.home, "current/agent/instructions/rules.md"), "utf8"),
+    "rules: mine\n",
+  );
+  assert.deepEqual(iva.notices, []);
+});
+
+test("a slot file with a bundled name refuses the version and keeps the running one", async (t) => {
+  const iva = world(t);
+  const first = updated(await iva.update());
+  mkdirSync(join(iva.repo, "agent/instructions"), { recursive: true });
+  writeFileSync(join(iva.repo, "agent/instructions/10-map.md"), "map: stock\n");
+  iva.release("0.3.15");
+  customFile(iva.home, "agent/instructions/10-map.md", "map: mine\n");
+
+  await assert.rejects(
+    iva.update(),
+    /collides with a bundled file: agent\/instructions\/10-map\.md/u,
+  );
+  const store = createVersionStore(iva.home);
+  assert.equal(store.currentName(), first.version);
+  assert.deepEqual(readdirSync(store.layout.versions), [first.version]);
+});
+
 test("the custom layer's own bookkeeping is not mistaken for the user's code", async (t) => {
   const iva = world(t);
   const data = layoutFor(iva.home).data;
