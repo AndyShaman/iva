@@ -111,8 +111,11 @@ const NOT_A_PAYLOAD = new Set([
   "test",
   "exit",
 ]);
-// Командное слово, а не хвост `2>`/`1`, который оставил разделитель `&`.
-const COMMAND_WORD = /^[A-Za-z_./~][\w./~-]*$/;
+// Командное слово, а не хвост `2>`/`1`, который оставил разделитель `&`. `$` в начале —
+// форма из промпта (`$HOME/.local/bin/iva`), присваивания (`TZ=UTC iva notify x`) снимаются
+// до проверки: непонятная нагрузка после длинного sleep — это блок, а не пропуск.
+const COMMAND_WORD = /^[$A-Za-z_./~][\w./~$-]*$/;
+const ASSIGNMENT = /^\w+=/;
 
 function tokens(segment: string): string[] {
   return segment.split(/\s+/).filter(Boolean);
@@ -166,7 +169,8 @@ function sleepSeconds(segment: string): number {
 }
 
 function carriesPayload(segment: string): boolean {
-  const first = tokens(segment)[0] ?? "";
+  const first =
+    tokens(segment).filter((token) => !ASSIGNMENT.test(token))[0] ?? "";
   if (!COMMAND_WORD.test(first)) return false;
   if (SLEEP.test(segment)) return false;
   return !NOT_A_PAYLOAD.has(first);

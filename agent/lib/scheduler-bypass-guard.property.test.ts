@@ -109,6 +109,10 @@ const BLOCKED = [
   "(sleep 3600; iva notify x) &",
   "while true; do sleep 3600; iva notify x; done",
   "sleep $DELAY && iva notify x",
+  // Форма из промпта: абсолютный путь через $HOME и присваивание перед командой.
+  "sleep 3600 && $HOME/.local/bin/iva notify x",
+  "sleep 3600 && TZ=UTC iva notify x",
+  "sleep 3600 && /usr/bin/env iva notify x",
 ];
 
 const WRAPS: ReadonlyArray<readonly [string, (cmd: string) => string]> = [
