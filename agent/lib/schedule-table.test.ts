@@ -59,6 +59,7 @@ void test("the table pins the cron expressions Iva ships with", () => {
       "memory-monthly": "20 4 1 * *",
       "memory-yearly": "25 4 1 1 *",
       digest: "0 8 * * *",
+      "jobs-watchdog": "17 7 * * *",
     },
   );
   // Диспетчер напоминаний стоит вне SCHEDULE_CRON: у него нет ни записи статуса, ни
@@ -75,6 +76,7 @@ void test("parseCron reads every entry off its cron string", () => {
       { minute: 20, hour: 4, dayOfMonth: 1, month: null, dayOfWeek: null },
       { minute: 25, hour: 4, dayOfMonth: 1, month: 1, dayOfWeek: null },
       { minute: 0, hour: 8, dayOfMonth: null, month: null, dayOfWeek: null },
+      { minute: 17, hour: 7, dayOfMonth: null, month: null, dayOfWeek: null },
     ],
   );
 });

@@ -16,6 +16,8 @@ export const SCHEDULE_CRON = {
   "memory-monthly": "20 4 1 * *",
   "memory-yearly": "25 4 1 1 *",
   digest: "0 8 * * *",
+  // Дневной сторож расписаний (T20 п.4): после ночных rollup, до рабочего дня.
+  "jobs-watchdog": "17 7 * * *",
 } as const;
 
 // The reminders dispatcher ticks every minute. It stays out of SCHEDULE_CRON on purpose:
