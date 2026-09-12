@@ -200,7 +200,9 @@ function spawnWake(
   const child = spawn(
     nodeBin,
     [
-      "--env-file=.env",
+      // Тот же терпимый флаг, что у самого запуска (шапка файла): родитель уже несёт
+      // ключи .env в своём окружении, и дерево без файла не должно убивать пробуждение.
+      "--env-file-if-exists=.env",
       join(root, "scripts/jobs/wake.ts"),
       name,
       String(startedAt),

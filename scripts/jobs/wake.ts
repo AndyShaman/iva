@@ -1,5 +1,5 @@
 // Точка входа пробуждения после запуска расписания:
-// `node --env-file=.env scripts/jobs/wake.ts <name> <startedAt>`.
+// `node --env-file-if-exists=.env scripts/jobs/wake.ts <name> <startedAt>`.
 // Запускает её schedule-runner (agent/lib/schedule-runner.ts) после каждого запуска.
 // Ход агента идёт через тот же шлюз, что у напоминаний (scripts/lib/reminder-turn.ts),
 // а ответ уходит владельцу кодом только если он непустой.

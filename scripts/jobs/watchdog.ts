@@ -1,4 +1,4 @@
-// Точка входа дневного сторожа: `node --env-file=.env scripts/jobs/watchdog.ts`.
+// Точка входа дневного сторожа: `node --env-file-if-exists=.env scripts/jobs/watchdog.ts`.
 // Запускает её расписание agent/schedules/jobs-watchdog.ts раз в сутки. Сообщение
 // отправляет код (не агент): сторож существует ровно для случая, когда агент не отвечает.
 import { dataDir } from "#lib/data-dir.ts";
