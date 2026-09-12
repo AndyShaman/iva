@@ -84,6 +84,35 @@ test("состоявшийся ход агента (в том числе пус�
   );
 });
 
+test("ход до провала не гасит провал: страховка уходит", () => {
+  // Проверка T20 (раунд 3): агент отвечал 23 часа назад, а провал случился час назад и его
+  // пробуждение упало. Раньше старый ход гасил свежий провал, а на следующем суточном тике
+  // провал уже выпадал из окна — сообщение не уходило никогда.
+  const message = watchdogDecision({
+    facts: [
+      fact({
+        name: "memory-daily",
+        startedAt: NOW - 23 * HOUR,
+        finishedAt: NOW - 23 * HOUR + 1000,
+        ok: true,
+        error: null,
+        exitCode: 0,
+        wake: { at: NOW - 23 * HOUR + 2000, status: "answered", error: null },
+      }),
+      fact({
+        name: "digest",
+        startedAt: NOW - HOUR,
+        finishedAt: NOW - HOUR + 1000,
+        wake: null,
+      }),
+    ],
+    now: NOW,
+    lastSentAt: null,
+    tr,
+  });
+  assert.match(message ?? "", /провалов расписаний: 1/u);
+});
+
 test("без провалов и после отправки сообщения не шлём", () => {
   assert.equal(
     watchdogDecision({

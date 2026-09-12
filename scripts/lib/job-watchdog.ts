@@ -5,11 +5,7 @@
 import { readFileSync } from "node:fs";
 import { writeFileAtomicSync } from "#lib/fs-atomic.ts";
 import { jobFactsFile, readFactsSync, type JobFact } from "#lib/job-facts.ts";
-import {
-  OPEN_FAILURES_WINDOW_MS,
-  openJobFailures,
-  type OpenFailure,
-} from "#lib/open-failures.ts";
+import { openJobFailures, type OpenFailure } from "#lib/open-failures.ts";
 import type { Translate } from "./job-wake.ts";
 
 export const WATCHDOG_SEND_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -52,13 +48,21 @@ export function readWatchdogState(file: string): WatchdogState | null {
   return { lastSentAt: (parsed as WatchdogState).lastSentAt };
 }
 
-/** Состоявшийся ход агента за окно: ответ (в том числе пустой), а не провал. */
-export function agentTurnSeen(facts: readonly JobFact[], now: number): boolean {
+/**
+ * Состоявшийся ход агента ПОСЛЕ этого момента: ответ (в том числе пустой), а не провал.
+ * Сравнение идёт с временем провала, а не с суточным окном: ход, который был до провала,
+ * о нём ничего не знал, а на следующем суточном тике провал уже выпадал из окна — и
+ * страховка не уходила никогда (проверка T20, раунд 3).
+ */
+export function agentTurnSeen(
+  facts: readonly JobFact[],
+  since: number,
+): boolean {
   return facts.some(
     (fact) =>
       fact.wake !== null &&
       fact.wake.status !== "failed" &&
-      now - fact.wake.at <= OPEN_FAILURES_WINDOW_MS,
+      fact.wake.at >= since,
   );
 }
 
@@ -105,7 +109,8 @@ export function watchdogDecision({
   if (facts === null) return watchdogUnreadableMessage(tr);
   const failures = openJobFailures(facts, now);
   if (failures.length === 0) return null;
-  if (agentTurnSeen(facts, now)) return null;
+  const latestFailureAt = Math.max(...failures.map((failure) => failure.at));
+  if (agentTurnSeen(facts, latestFailureAt)) return null;
   return watchdogMessage(failures, tr);
 }
 
