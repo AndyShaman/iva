@@ -10,7 +10,7 @@
 // выхода — и на этом всё, второго захода у строки нет.
 //
 // Пульс тика — mtime файла data/reminders.tick: он обновляется после удачного взятия, и по
-// нему `iva doctor` и remind_list говорят, жив ли диспетчер.
+// нему `iva doctor` и remind list говорят, жив ли диспетчер.
 import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";

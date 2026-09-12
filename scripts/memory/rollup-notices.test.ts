@@ -111,7 +111,7 @@ test("the red line in the instructions exempts every scheduled sender", () => {
   // например во фразе «дайджест из чата — обычный ход» — этому не удовлетворяет.
   assert.match(
     exception,
-    /There are three:[^.]*rollup[^.]*morning\s+digest[^.]*remind_add/u,
+    /There are three:[^.]*rollup[^.]*morning\s+digest[^.]*remind/u,
     "the exception itself must name the nightly rollup, the scheduled digest and the reminder turn",
   );
 });

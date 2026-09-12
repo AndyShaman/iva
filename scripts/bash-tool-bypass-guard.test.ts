@@ -38,7 +38,7 @@ test("bash tool refuses an own timer before it is executed", async (t) => {
 
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /^ЗАБЛОКИРОВАНО:/);
-  assert.match(result.stderr, /remind_add/);
+  assert.match(result.stderr, /remind:/);
   assert.equal(result.stdout, "");
   assert.equal(result.timedOut, undefined);
   assert.equal(existsSync(marker), false, "команда не должна была исполниться");

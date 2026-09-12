@@ -93,7 +93,7 @@ void test("обе ветки отработали: текст ушёл, аген
   assert.equal(prompts.length, 1, "ход разбужен");
   assert.match(prompts[0], /r1/u);
   assert.match(prompts[0], /позвонить в клинику/u);
-  assert.match(prompts[0], /remind_list/u);
+  assert.match(prompts[0], /remind \{action: "list"\}/u);
 
   const [row] = await list();
   assert.equal(row?.delivered, true);

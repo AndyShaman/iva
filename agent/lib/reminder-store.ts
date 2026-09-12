@@ -22,7 +22,7 @@ import {
 import { nextCronRunMs } from "./reminder-time.ts";
 
 export const REMINDER_SCHEMA_VERSION = 2;
-/** Сколько держим сработавшую разовую строку: столько владелец видит факт в remind_list. */
+/** Сколько держим сработавшую разовую строку: столько владелец видит факт в remind list. */
 export const REMINDER_FIRED_KEEP_MS = 24 * 60 * 60_000;
 
 export class ReminderStoreError extends Error {}
@@ -444,7 +444,7 @@ export async function remove(id: string): Promise<Reminder> {
  *
  * Расписание, которое croner отвергает (в файл могло попасть что угодно), не роняет тик и
  * не крутит строку: она уходит в fired с ошибкой в поле error — владелец увидит её в
- * remind_list и iva doctor, а сама строка больше не сработает.
+ * remind list и iva doctor, а сама строка больше не сработает.
  */
 export async function fireDue(
   nowMs: number,

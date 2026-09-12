@@ -30,7 +30,7 @@ Everything is read in your timezone — the one Iva is configured with, not the 
 Two things at once, and neither waits for the other:
 
 - the code sends your text to the owner chat exactly as you dictated it — no model involved, so it works even when the model provider is down;
-- Iva wakes up, checks the delivery with `remind_list`, and if the text did not go out she writes the message herself and says what broke.
+- Iva wakes up, checks the delivery with the reminder tool, and if the text did not go out she writes the message herself and says what broke.
 
 Nothing repeats. A row fires once: the moment it fires it is marked, and a repeating row moves on to its next time. There is no retry ladder, no window that removes a reminder hours later, and no warning per failure — the fact of the firing stays with the row: `fired_at`, `delivered` and the reason in `error`.
 
@@ -38,13 +38,13 @@ Nothing repeats. A row fires once: the moment it fires it is marked, and a repea
 
 `/menu` → **⏰** shows the nearest reminders, what failed to go out, and one line about the dispatcher: when it last ticked (its pulse is the file `data/reminders.tick`, touched every minute). A fresh pulse means the machinery is alive; a stale one, or none at all, is your signal that reminders are stored but nothing will fire until Iva is running again.
 
-You can also just ask in the chat: `remind_list` lists the same rows with their ids, the next time, and the last firing with the delivery fact. Rows stay in the list for a day after they fire — that is where you see whether the text went out. `remind_remove` cancels any reminder by id.
+You can also just ask in the chat: she lists the same rows with their ids, the next time, and the last firing with the delivery fact. Rows stay in the list for a day after they fire — that is where you see whether the text went out. Ask her to cancel one and she removes it by id.
 
 ## When something breaks
 
 - **The text did not go out.** The row shows `delivered: false` and the reason in `error`, and Iva's own message says the delivery broke and why. Fix the chat settings or the token, then ask again — a one-time reminder has already fired, so put a new one.
 - **The agent turn could not run.** Your text still goes out; the reason is in `error` and in the journal (`journalctl --user -u iva.service | grep reminders`).
-- **The dispatcher is not ticking.** `remind_list` warns that the reminder is stored but will not fire, and `iva doctor` says the same by the pulse file. It also lists every reminder that fired in the last day and did not go out.
+- **The dispatcher is not ticking.** The list warns that the reminder is stored but will not fire, and `iva doctor` says the same by the pulse file. It also lists every reminder that fired in the last day and did not go out.
 
 ## What Iva no longer does
 

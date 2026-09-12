@@ -221,9 +221,9 @@ test("текст отказа называет правило и замену", 
   const msg = schedulerBypassViolation("systemd-run --user true");
   assert.ok(msg);
   assert.match(msg, /^ЗАБЛОКИРОВАНО:/);
-  // Тул есть в списке с T5: отказ обязан послать модель в remind_add, а не учить отказывать
+  // Тул есть в списке с T5: отказ обязан послать модель в remind, а не учить отказывать
   // пользователю и не обещать, что инструмент когда-нибудь появится.
-  assert.match(msg, /remind_add: он посчитает/u);
+  assert.match(msg, /remind: он посчитает/u);
   assert.doesNotMatch(msg, /появится|пока его нет/iu);
   for (const [cmd, what] of [
     ["systemd-run --user true", "systemd-run: свой таймер"],
