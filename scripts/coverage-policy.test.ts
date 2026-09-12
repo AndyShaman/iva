@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 249;
+const EXPECTED_PRODUCTION_COUNT = 252;
 const EXPECTED_INVENTORY_SHA256 =
-  "31131bb870188cc7e8099b0fc972fd6bae6b79ea123c337fb93c354eac104675";
+  "58864d640939ff55606b8beaf9e8f97aaadae27e5d23a6c7ddb1c4618b1c6239";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -179,6 +179,12 @@ const EXPECTED_INVENTORY_SHA256 =
 // never take are the two guards against a normalizeSchedule result that changes kind, not an
 // unloaded file - so the blind spot stays 26, and the inventory counts 249 with the tools in
 // it.
+// The owner rules came next, three paths: `agent/lib/owner-rules.ts`, the reader and the cap
+// shared by the tool, the instruction source and the doctor, `agent/instructions/30-owner-rules.ts`,
+// the dynamic source eve loads alone, and `agent/tools/instructions_add_rule.ts`. Scoped coverage
+// over `scripts/owner-rules.test.ts` reports the reader and the tool, while the instruction source
+// is loaded by eve alone - measured unreported, like `agent/instructions/20-core.ts` - so the
+// blind spot stays 26, and the inventory counts 252 with the slot in it.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
