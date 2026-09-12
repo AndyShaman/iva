@@ -152,6 +152,51 @@ await test("минимальный контрпример: 1e308 в usage про
   });
 });
 
+await test("минимальный контрпример: отрицательный расход шага пропускается с журналом (seed 20260917)", () => {
+  withDir((dir) => {
+    const written: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) =>
+      void written.push(args.map((arg) => String(arg)).join(" "));
+    try {
+      step(
+        {
+          inputTokens: -1,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        0,
+      );
+      // Отрицательное число — мусор провайдера: сумма с ним теряет смысл, а окно last
+      // берёт in в обход sum, поэтому строка не должна попасть в лог вовсе.
+      assert.deepEqual(
+        readEntries(dir),
+        [],
+        "отрицательный расход записан в лог",
+      );
+      assert.ok(
+        written.some((line) => line.includes("usage")),
+        "пропуск обязан оставить строку в журнале, а не молчать",
+      );
+
+      // Ноль и положительное число проходят как обычно — режем знак, а не всё подряд.
+      step(
+        {
+          inputTokens: 1,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        1,
+      );
+      assert.equal(readEntries(dir).length, 1);
+    } finally {
+      console.error = original;
+    }
+  });
+});
+
 await test("старый лог с гигантскими числами не печатает Infinity (seed 20260917)", () => {
   withDir((dir) => {
     // Лог, записанный до починки: строка с 1e308 и total:null уже лежит на диске.
