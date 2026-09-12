@@ -89,11 +89,15 @@ test("nextCronRunMs: next run in the owner zone, strictly after the anchor", () 
 test("nextCronRunMs: refuses spam cadence and expressions that never fire", () => {
   assert.throws(
     () => nextCronRunMs("*/5 * * * *", TASHKENT, NOW),
-    /fires more often than every 10 minutes/u,
+    (error: unknown) =>
+      error instanceof ReminderTimeError &&
+      /fires more often than every 10 minutes/u.test(error.message),
   );
   assert.throws(
     () => nextCronRunMs("0 9 31 2 *", TASHKENT, NOW),
-    /cron: never fires/u,
+    (error: unknown) =>
+      error instanceof ReminderTimeError &&
+      /cron: never fires/u.test(error.message),
   );
   assert.throws(
     () => nextCronRunMs("0 9 * * *", "Mars/Olympus", NOW),
