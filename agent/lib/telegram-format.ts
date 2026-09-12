@@ -417,8 +417,19 @@ export function chunkMarkdown(md: unknown, limit = 3500): string[] {
         paras.push(line);
         continue;
       }
-      for (let j = 0; j < line.length; j += limit)
-        paras.push(line.slice(j, j + limit));
+      for (let j = 0; j < line.length; ) {
+        let end = Math.min(line.length, j + limit);
+        // Не разрывать суррогатную пару: Telegram покажет «�» на стыке сообщений.
+        if (
+          end < line.length &&
+          /[\uD800-\uDBFF]/.test(line[end - 1]) &&
+          /[\uDC00-\uDFFF]/.test(line[end])
+        )
+          end -= 1;
+        if (end <= j) end = j + limit;
+        paras.push(line.slice(j, end));
+        j = end;
+      }
     }
   }
   const chunks: string[] = [];
