@@ -246,3 +246,46 @@ void test("вызов без id и с чужим id — отказ без зап
   const [row] = await list();
   assert.equal(row?.delivered, null, "чужой вызов не тронул строку");
 });
+
+void test("строка ушла к новому сроку — резерв молчит, в журнале newer firing owns the message", async () => {
+  await firedRow();
+  const [real] = await list();
+  assert.ok(real);
+  const firedAt = real.firedAt;
+  assert.ok(firedAt !== null, "строка должна быть сработавшей");
+  // Второе чтение видит строку уже с другим сроком: резерв обязан отступить.
+  const moved = { ...real, firedAt: firedAt + 600_000, delivered: false };
+  let reads = 0;
+  const read = (): Promise<(typeof real)[]> => {
+    reads += 1;
+    return Promise.resolve(reads === 1 ? [real] : [moved]);
+  };
+  const { calls, send } = makeSend([
+    { ok: false, fellBack: false, error: "400 chat not found" },
+  ]);
+  const logged: string[] = [];
+  const runTurn = turn(
+    "completed",
+    "Не смогла отправить напоминание: 400 chat not found",
+  );
+
+  assert.equal(
+    await runReminderFire(
+      "r1",
+      deps({
+        send,
+        runTurn,
+        list: read,
+        log: (...args: unknown[]) => {
+          logged.push(args.map(String).join(" "));
+        },
+      }),
+    ),
+    0,
+  );
+  assert.equal(calls.length, 1, "резерв не стрелял в чужую строку");
+  assert.ok(
+    logged.some((line) => line.includes("newer firing owns the message")),
+    `нет строки в журнале: ${JSON.stringify(logged)}`,
+  );
+});
