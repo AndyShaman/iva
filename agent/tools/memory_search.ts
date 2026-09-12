@@ -147,8 +147,12 @@ export async function loadDocs(scopeDirs: string[]): Promise<LoadedDocs> {
       continue;
     }
     cacheStats.fileReads++;
-    const { fm, meta, body } = cardIndex(text);
     const rel = relative(vault, file).split(sep).join("/");
+    // Карточку, которую владелец сломал руками, пропускаем поимённо: одна кривая
+    // кавычка не имеет права отменить поиск по всем остальным.
+    const indexed = cardIndex(text, rel);
+    if (indexed === null) continue;
+    const { fm, meta, body } = indexed;
     const doc: Doc = {
       path: rel,
       title: cardTitle(rel) || rel,

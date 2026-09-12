@@ -10,7 +10,7 @@ import {
   resolveCard,
   resolveOperation,
 } from "../lib/card-store.js";
-import { parseFrontmatter } from "../lib/frontmatter.js";
+import { parseFrontmatterOrSkip } from "../lib/frontmatter.js";
 import { resolveTimeZone } from "../lib/timezone.js";
 
 // Строго типизированная запись карточки памяти. Заменяет «write_file по наитию» для карточек:
@@ -30,8 +30,11 @@ const CARD_TYPE_DIR: Record<string, string> = {
 };
 const DESC_CAP = 500;
 
-function storedStatus(content: string, fallback: string): string {
-  const value = parseFrontmatter(content).fields?.status;
+// Статус уже лежащей карточки. Её frontmatter мог сломать владелец руками, и до
+// обёртки такая карточка вылетала исключением из тула: "посмотри карточку"
+// превращалось в ошибку хода. Нечитаемый frontmatter = статуса нет, берём запасной.
+function storedStatus(content: string, path: string, fallback: string): string {
+  const value = parseFrontmatterOrSkip(content, path)?.fields?.status;
   return typeof value === "string" ? value : fallback;
 }
 
@@ -305,7 +308,11 @@ export default defineTool({
         ok: true,
         file: rel,
         type,
-        status: storedStatus(readFileSync(file, "utf8"), status ?? allowed[0]),
+        status: storedStatus(
+          readFileSync(file, "utf8"),
+          rel,
+          status ?? allowed[0],
+        ),
         action: "noop",
         matchedBy: id.matchedBy,
       };
@@ -402,7 +409,7 @@ export default defineTool({
         ok: true,
         file: rel,
         type,
-        status: storedStatus(content, status ?? allowed[0]),
+        status: storedStatus(content, rel, status ?? allowed[0]),
         action,
         matchedBy: id.matchedBy,
       };

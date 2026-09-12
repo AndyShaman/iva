@@ -127,6 +127,8 @@ const pending: Array<{ path: string; text: string }> = [];
 for (const file of files) {
   const path = relative(VAULT, file).split(sep).join("/");
   const text = embedText(file, readFileSync(file, "utf8"));
+  // Битая карточка не останавливает ночной индекс: её пропускают с именем в журнале.
+  if (text === null) continue;
   const hash = createHash("sha1").update(text).digest("hex");
   index.hashes[path] = hash;
   const reusable =
