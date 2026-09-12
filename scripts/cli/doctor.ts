@@ -55,6 +55,7 @@ type DoctorDependencies = {
 
 type RollupEntry = {
   readonly lastSuccessAt?: unknown;
+  readonly lastExitCode?: unknown;
 };
 
 type RollupStatus = Record<string, RollupEntry | null | undefined>;
@@ -646,6 +647,18 @@ export function createDoctorCommand(
         } else {
           warn(
             `memory-${period} schedule has never succeeded — check: journalctl --user -u iva.service | grep schedule-runner`,
+          );
+          warnN++;
+        }
+        // A recent success doesn't mean the MOST RECENT attempt was clean — e.g. it
+        // succeeded, then a later catch-up retry failed and hasn't run again since.
+        // Surface that even when the staleness check above is satisfied.
+        if (
+          typeof entry.lastExitCode === "number" &&
+          entry.lastExitCode !== 0
+        ) {
+          warn(
+            `memory-${period} schedule's last run exited ${entry.lastExitCode} — check: journalctl --user -u iva.service | grep schedule-runner`,
           );
           warnN++;
         }
