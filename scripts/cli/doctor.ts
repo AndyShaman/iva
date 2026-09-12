@@ -31,6 +31,12 @@ import {
 } from "../lib/version-store.ts";
 import { hasEmbeddingSource } from "../lib/memory-mode.ts";
 import { ambiguousEnvLines } from "../lib/env-file.ts";
+// Типы authored tree стираются при компиляции; значения грузятся динамически внутри
+// вызовов: `iva doctor` работает и на установке, где agent/ нет (authored-tree-guard).
+type JobFact = import("#lib/job-facts.ts").JobFact;
+type OpenFailure = import("#lib/open-failures.ts").OpenFailure;
+type TickHeartbeat = import("#lib/reminder-tick.ts").TickHeartbeat;
+type ScheduleCronTable = typeof import("#lib/schedule-table.ts").SCHEDULE_CRON;
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -50,10 +56,54 @@ type DoctorDependencies = {
 
 type RollupEntry = {
   readonly lastSuccessAt?: unknown;
-  readonly lastExitCode?: unknown;
 };
 
 type RollupStatus = Record<string, RollupEntry | null | undefined>;
+
+export interface ScheduleFactsReport {
+  readonly lastRuns: readonly string[];
+  readonly openFailures: readonly OpenFailure[];
+  readonly pulse: "ok" | "stale" | "never";
+}
+
+/**
+ * Раздел «расписания» по таблице фактов (T20 п.5): последний запуск каждого имени,
+ * незакрытые провалы и пульс планировщика. Status-файл выше отвечает только за
+ * «последний успех» и гварды, поэтому история берётся отсюда.
+ */
+export async function scheduleFactsReport(
+  dataDirectory: string,
+  now: number,
+  heartbeat: TickHeartbeat | null,
+): Promise<ScheduleFactsReport> {
+  const { latestFact, readFactsSync } = await import("#lib/job-facts.ts");
+  const { openJobFailures } = await import("#lib/open-failures.ts");
+  const { REMINDER_TICK_STALE_MS } = await import("#lib/reminder-tick.ts");
+  const { SCHEDULE_CRON } = await import("#lib/schedule-table.ts");
+  const cronTable: ScheduleCronTable = SCHEDULE_CRON;
+  const facts = readFactsSync(join(dataDirectory, "jobs.json"));
+  const names = [
+    ...new Set([...Object.keys(cronTable), ...facts.map((f) => f.name)]),
+  ].sort();
+  const lastRuns: string[] = [];
+  for (const name of names) {
+    const latest: JobFact | null = latestFact(facts, name);
+    if (!latest) continue;
+    const when = new Date(latest.finishedAt).toISOString();
+    lastRuns.push(
+      latest.ok
+        ? `${name}: ok, ${when}`
+        : `${name}: провал (${latest.error ?? "без причины"}), ${when}`,
+    );
+  }
+  const pulse =
+    heartbeat === null
+      ? "never"
+      : now - heartbeat.lastTickAtMs > REMINDER_TICK_STALE_MS
+        ? "stale"
+        : "ok";
+  return { lastRuns, openFailures: openJobFailures(facts, now), pulse };
+}
 
 /** Сколько ждём `/health` прокси: он на loopback, и медленный ответ — уже симптом. */
 const HEALTH_TIMEOUT_MS = 1500;
@@ -538,6 +588,52 @@ export function createDoctorCommand(
       }
     }
 
+    // Таблица фактов (T20 §5): последний запуск каждого имени, незакрытые провалы и
+    // пульс планировщика. Историю держит jobs.json, rollup-status.json — только
+    // «последний успех» и гварды.
+    try {
+      const { readTickHeartbeat } = await import("#lib/reminder-tick.ts");
+      let heartbeat: TickHeartbeat | null = null;
+      try {
+        heartbeat = readTickHeartbeat();
+      } catch (error) {
+        warn(
+          `расписания: пульс не читается — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        warnN++;
+      }
+      const report = await scheduleFactsReport(dataDirectory, now(), heartbeat);
+      for (const line of report.lastRuns) {
+        if (line.includes(": провал")) {
+          warn(`расписание ${line} — check: iva doctor, iva jobs ack <name>`);
+          warnN++;
+        } else {
+          ok(`расписание ${line}`);
+          okN++;
+        }
+      }
+      for (const failure of report.openFailures)
+        warn(
+          `незакрытый провал: ${failure.name} (${failure.reason}) — закрыть: iva jobs ack ${failure.name}`,
+        );
+      if (report.openFailures.length > 0) warnN++;
+      if (report.pulse === "never") {
+        warn("расписания: планировщик напоминаний ещё не тикал");
+        warnN++;
+      } else if (report.pulse === "stale") {
+        warn("расписания: планировщик напоминаний не тикает");
+        warnN++;
+      } else {
+        ok("расписания: пульс планировщика в норме");
+        okN++;
+      }
+    } catch (error) {
+      warn(
+        `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      warnN++;
+    }
+
     // daily/weekly/monthly/yearly now run as in-process eve schedules (no systemd unit of
     // their own to query for a failed state, unlike doctor above) — data/rollup-status.json
     // (scripts/lib/schedule-runner.ts) is the only record of whether they're actually firing.
@@ -580,18 +676,6 @@ export function createDoctorCommand(
         } else {
           warn(
             `memory-${period} schedule has never succeeded — check: journalctl --user -u iva.service | grep schedule-runner`,
-          );
-          warnN++;
-        }
-        // A recent success doesn't mean the MOST RECENT attempt was clean — e.g. it
-        // succeeded, then a later catch-up retry failed and hasn't run again since.
-        // Surface that even when the staleness check above is satisfied.
-        if (
-          typeof entry.lastExitCode === "number" &&
-          entry.lastExitCode !== 0
-        ) {
-          warn(
-            `memory-${period} schedule's last run exited ${entry.lastExitCode} — check: journalctl --user -u iva.service | grep schedule-runner`,
           );
           warnN++;
         }
