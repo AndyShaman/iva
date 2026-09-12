@@ -1,6 +1,6 @@
 // Строит сайдкар-индекс эмбеддингов для hybrid-поиска: vault/.index/embeddings.json.
 // Запускается вручную или ночным brain.ts (только при MEMORY_SEARCH_MODE=hybrid).
-//   node --env-file=.env scripts/memory/embed-index.ts
+//   node --env-file-if-exists=.env scripts/memory/embed-index.ts
 //
 // Эмбеддит карточки/саммари через один внешний ключ (Jina/DeepInfra, см. agent/lib/embeddings.ts),
 // пишет { model, vectors: { "<vault-rel-path>": number[] } }. Локальной модели/RAM нет.

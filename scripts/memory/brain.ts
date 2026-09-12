@@ -1,8 +1,10 @@
 // Brain: deterministic nightly vault care (no LLM) + git commit&push.
 // Runs nightly via systemd timer (deploy/iva-brain.{service,timer}).
 //
-//   node --env-file=.env scripts/memory/brain.ts
+//   node --env-file-if-exists=.env scripts/memory/brain.ts
 //
+// Файл читается, только если он есть: юнит несёт EnvironmentFile, а сам brain чинит
+// установку и в том состоянии, где .env потерян.
 // Runs the autograph scripts (graph.health / engine.decay / moc.generate /
 // dedup / link_cleanup) on the vault via `uv run`, then commits and pushes the vault repo.
 // Guards: no git-remote/credentials → alert admin on Telegram (gh auth login + git remote),
@@ -364,7 +366,7 @@ if (process.env.MEMORY_SEARCH_MODE === "hybrid") {
   // nvm node dir, so spawning "node" by name fails with ENOENT and falsely reports a failure.
   const r = run(
     process.execPath,
-    ["--env-file=.env", "scripts/memory/embed-index.ts"],
+    ["--env-file-if-exists=.env", "scripts/memory/embed-index.ts"],
     process.cwd(),
   );
   if (r.status !== 0) failures.push("embed-index");

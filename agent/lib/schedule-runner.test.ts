@@ -48,9 +48,9 @@ function parseStatus(source: string): TestStatus {
 
 async function scaffold() {
   const dir = await mkdtemp(join(tmpdir(), "iva-schedule-runner-"));
-  // A real (empty) .env: the runner always spawns `node --env-file=.env <argv>`,
-  // and --env-file requires the file to exist or node refuses to start.
-  await writeFile(join(dir, ".env"), "", "utf8");
+  // No .env on purpose: the runner spawns `node --env-file-if-exists=.env <argv>`, so a
+  // checkout or version tree without the file still starts the child. The one line node
+  // prints about the missing file is what the tail test below pins.
   return dir;
 }
 
@@ -240,7 +240,7 @@ void test("lockPath given: the spawned command is flock-wrapped in the documente
     "3900",
     lockPath,
     "/usr/bin/node-stand-in",
-    "--env-file=.env",
+    "--env-file-if-exists=.env",
     "scripts/memory/rollup.ts",
     "weekly",
   ]);
@@ -268,7 +268,46 @@ void test("no lockPath: the spawned command invokes nodeBin directly (digest cas
   });
 
   assert.equal(seen!.cmd, process.execPath);
-  assert.deepEqual(seen!.args, ["--env-file=.env", "scripts/daily-digest.ts"]);
+  assert.deepEqual(seen!.args, [
+    "--env-file-if-exists=.env",
+    "scripts/daily-digest.ts",
+  ]);
+});
+
+void test("root без .env: ребёнок стартует, и node говорит об этом одной честной строкой", async () => {
+  const root = await scaffold();
+  await writeFile(
+    join(root, "ok.ts"),
+    "console.log(`mark=${process.env.MARK}`);\n",
+  );
+  const { log, lines } = collectLogs();
+
+  const result = await runScheduledJob({
+    name: "reminders",
+    argv: ["ok.ts"],
+    root,
+    nodeBin: process.execPath,
+    env: { ...process.env, MARK: "from-parent" },
+    log,
+  });
+
+  assert.equal(
+    result.ok,
+    true,
+    "без .env ребёнок обязан стартовать: файл больше не обязателен",
+  );
+  assert.equal(result.code, 0);
+  // Ровно одна строка, и она честная: файла правда нет. На проде .env есть, и строки нет.
+  const missing = lines.filter((line) =>
+    line.includes("not found. Continuing"),
+  );
+  assert.equal(missing.length, 1);
+  assert.match(
+    String(missing[0]),
+    /\.env not found\. Continuing without it\./u,
+  );
+  // Ключи родителя доезжают наследством: файл только добавляет то, чего в env нет.
+  assert.ok(lines.some((line) => line.includes("mark=from-parent")));
 });
 
 void test(

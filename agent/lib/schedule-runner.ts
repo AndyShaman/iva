@@ -1,9 +1,12 @@
 // Thin spawner shared by agent/schedules/*.ts and agent/lib/schedule-migration.ts.
 // Runs an existing cron script exactly the way the (now retired) systemd units did —
-// `flock -w 3900 <lockPath> <nodeBin> --env-file=.env <argv...>` — under a hard timeout,
-// and records the outcome to a status file so `iva doctor` and the /menu → crons screen
+// `flock -w 3900 <lockPath> <nodeBin> --env-file-if-exists=.env <argv...>` — under a hard
+// timeout, and records the outcome to a status file so `iva doctor` and the /menu → crons screen
 // can see it. Never throws: eve's schedule runner and the fire-and-forget migration hook
-// both need a promise that always settles.
+// both need a promise that always settles. The flag is the tolerant one on purpose: the
+// parent (systemd EnvironmentFile, eve start) already carries every key of .env in its own
+// process.env, so a checkout or version tree without the file must not kill the child —
+// node prints one honest `not found. Continuing without it.` line to the tail instead.
 import {
   spawn,
   type ChildProcess,
@@ -316,10 +319,10 @@ export async function runScheduledJob(
           String(LOCK_WAIT_SECONDS),
           lockPath,
           nodeBin as string,
-          "--env-file=.env",
+          "--env-file-if-exists=.env",
           ...argv,
         ]
-      : ["--env-file=.env", ...argv];
+      : ["--env-file-if-exists=.env", ...argv];
 
     const outcome = await new Promise<SpawnOutcome>((resolve) => {
       let child: ChildProcess;
