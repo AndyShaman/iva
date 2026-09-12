@@ -345,6 +345,10 @@ void test("doctor warns on a non-zero last exit code even right after a fresh su
 
   assert.match(output, /memory-daily schedule last succeeded/);
   assert.match(output, /memory-daily schedule's last run exited 1/);
+  // На этой установке нет authored tree: раздел расписаний по data/jobs.json читать
+  // нечем, и он обязан молчать — про дерево доктор уже сказал своей строкой.
+  assert.match(output, /the agent tree is missing/);
+  assert.doesNotMatch(output, /таблица фактов не читается/);
 });
 
 void test("legacy memory-timer cleanup is skipped when the current build doesn't contain the eve schedules yet", async (t) => {

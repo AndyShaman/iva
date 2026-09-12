@@ -66,6 +66,18 @@ export interface ScheduleFactsReport {
 }
 
 /**
+ * Модуль authored tree не загрузился: дерева нет или оно недописано (ADR-0003). Это не
+ * поломка таблицы фактов — про само дерево доктор говорит отдельной строкой, поэтому
+ * раздел расписаний в этом случае молчит, как и раздел напоминаний ниже.
+ */
+export function authoredTreeMissing(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return (
+    code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED"
+  );
+}
+
+/**
  * Раздел «расписания» по таблице фактов (T20 п.5): последний запуск каждого имени и
  * незакрытые провалы. Status-файл ниже отвечает только за «последний успех» и гварды,
  * поэтому история берётся отсюда. Пульс минутного диспетчера говорит раздел напоминаний
@@ -599,10 +611,12 @@ export function createDoctorCommand(
         );
       if (report.openFailures.length > 0) warnN++;
     } catch (error) {
-      warn(
-        `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,
-      );
-      warnN++;
+      if (!authoredTreeMissing(error)) {
+        warn(
+          `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        warnN++;
+      }
     }
 
     // daily/weekly/monthly/yearly now run as in-process eve schedules (no systemd unit of
