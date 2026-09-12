@@ -2,7 +2,8 @@
 // «имя → следующий запуск», плюс счётчик задач из data/tasks.json, плюс блок расписаний
 // внутри самой Ивы (agent/schedules/*.ts — Nitro scheduled tasks, не systemd) из
 // data/rollup-status.json (scripts/lib/schedule-runner.ts). Пагинация systemd-списка по 8;
-// блок расписаний Ивы всегда ровно 5 строк — не пагинируется.
+// блок расписаний Ивы всегда ровно 5 строк — не пагинируется. Ниже — блок напоминаний:
+// ближайшие строки таблицы напоминаний и свежесть минутного тика диспетчера.
 //
 // execFile ограничен таймаутом 1.5с и кэшируется на 60с — единственный getUpdates-цикл
 // моста нельзя блокировать дольше (список таймеров редко висит, одной ограниченной пробы
@@ -14,6 +15,14 @@ import { readSettings } from "#lib/settings.ts";
 // Names double as status-file keys — the `name` each schedule passes to runScheduledJob
 // (see scripts/lib/schedule-runner.ts), not the bare period. Display order is table order.
 import { SCHEDULE_CRON } from "#lib/schedule-table.ts";
+import {
+  REMINDER_TICK_STALE_MS,
+  ReminderTickError,
+  readTickHeartbeat,
+} from "#lib/reminder-tick.ts";
+import { list } from "#lib/reminder-store.ts";
+import { resolveTimeZone } from "#lib/timezone.ts";
+import { formatZoned } from "#lib/zoned-time.ts";
 
 const PER_PAGE = 8;
 const CACHE_TTL_MS = 60_000;
@@ -85,6 +94,73 @@ function schedulesBlock(dataDir: string, T: Translate) {
     return `• ${name} (${cron}) → ${formatLastSuccess(status[name], T)}`;
   });
   return `${T("📅 Schedules (inside Iva)", "📅 Расписания (внутри Ивы)")}\n${lines.join("\n")}`;
+}
+
+function shortText(text: string): string {
+  return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+}
+
+// Ближайшие напоминания и свежесть минутного тика. Ошибки чтения не подменяются пустотой:
+// экран говорит, что именно не читается, а причина уезжает в журнал — runtime-текст ошибки
+// в чат не несём, экраны идут мимо Outbox (agent/lib/outbox.ts).
+async function remindersBlock(T: Translate): Promise<string> {
+  const head = T("⏰ Reminders", "⏰ Напоминания");
+  const tz = resolveTimeZone(process.env.ASSISTANT_TIMEZONE);
+  const stamp = (at: number) => formatZoned(at, tz);
+  let tick: string;
+  try {
+    const heartbeat = readTickHeartbeat();
+    if (heartbeat === null) {
+      tick = T("dispatcher: no tick yet", "диспетчер: тиков ещё не было");
+    } else if (Date.now() - heartbeat.lastTickAtMs <= REMINDER_TICK_STALE_MS) {
+      tick = T(
+        `dispatcher: last tick ${stamp(heartbeat.lastTickAtMs).slice(11)}`,
+        `диспетчер: последний тик ${stamp(heartbeat.lastTickAtMs).slice(11)}`,
+      );
+    } else {
+      tick = `⚠️ ${T(
+        `dispatcher: no tick since ${stamp(heartbeat.lastTickAtMs)}`,
+        `диспетчер: тиков нет с ${stamp(heartbeat.lastTickAtMs)}`,
+      )}`;
+    }
+  } catch (error) {
+    if (!(error instanceof ReminderTickError)) throw error;
+    console.error("menu: reminders tick heartbeat unreadable:", error);
+    tick = `⚠️ ${T(
+      "dispatcher: heartbeat unreadable, see the journal",
+      "диспетчер: отметка тика не читается, см. журнал",
+    )}`;
+  }
+
+  const lines: string[] = [head, tick];
+  let rows: Awaited<ReturnType<typeof list>>;
+  try {
+    rows = await list();
+  } catch (error) {
+    console.error("menu: reminder table unreadable:", error);
+    lines.push(
+      `⚠️ ${T(
+        "reminder table unreadable, see the journal",
+        "таблица напоминаний не читается, см. журнал",
+      )}`,
+    );
+    return lines.join("\n");
+  }
+  if (rows.length === 0) {
+    lines.push(T("none", "нет"));
+    return lines.join("\n");
+  }
+  for (const row of rows.slice(0, 5)) {
+    const repeats =
+      row.schedule.kind === "cron" ? T("(repeats) ", "(повтор) ") : "";
+    const failed = row.lastStatus === "failed" ? "⚠️ " : "";
+    lines.push(
+      `• ${stamp(row.nextRunAtMs)} ${repeats}${failed}${shortText(row.text)}`,
+    );
+  }
+  if (rows.length > 5)
+    lines.push(T(`${rows.length} total`, `всего: ${rows.length}`));
+  return lines.join("\n");
 }
 
 function run(cmd: string, args: string[], timeout = 1500): Promise<string> {
@@ -161,9 +237,10 @@ export default {
     );
     const head = T("⏰ Timers & tasks", "⏰ Кроны и задачи");
     const schedules = schedulesBlock(ctx.deps.dataDir, T);
+    const reminders = await remindersBlock(T);
     if (timers.length === 0) {
       return {
-        text: `${head}\n\n${T("No Iva timers found.", "Таймеров Iva не найдено.")}\n${taskLine}\n\n${schedules}`,
+        text: `${head}\n\n${T("No Iva timers found.", "Таймеров Iva не найдено.")}\n${taskLine}\n\n${schedules}\n\n${reminders}`,
         rows: [ctx.backRow("r")],
       };
     }
@@ -186,7 +263,10 @@ export default {
       ]);
     }
     rows.push(ctx.backRow("r"));
-    return { text: `${head}\n\n${body}\n\n${taskLine}\n\n${schedules}`, rows };
+    return {
+      text: `${head}\n\n${body}\n\n${taskLine}\n\n${schedules}\n\n${reminders}`,
+      rows,
+    };
   },
   on() {},
 };
