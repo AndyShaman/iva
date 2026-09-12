@@ -127,17 +127,40 @@ function ownsReservation(
   );
 }
 
+export class ScheduleStatusError extends Error {}
+
 // Shared with schedule-migration.ts — one status file, one implementation of how it's
 // safely read/written/locked, rather than two copies that could drift.
+//
+// No file yet → empty status: that is a fresh install, and every caller's guards read
+// correctly off it. Anything else — damaged JSON, EACCES, EISDIR, a JSON value that
+// isn't an object — throws with the path: answering "{}" there would claim nothing had
+// ever run, which turns off the in-progress and last-success guards AND makes the very
+// next `{ ...existing, [name]: … }` write erase every other schedule's record. Same
+// split, for the same reason, in agent/lib/json-store.ts and agent/lib/reminder-tick.ts.
 export function readStatus(statusPath: string): ScheduleStatus {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(statusPath, "utf8"));
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as ScheduleStatus)
-      : {};
-  } catch {
-    return {};
+    raw = readFileSync(statusPath, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return {};
+    throw new ScheduleStatusError(
+      `${statusPath} unreadable: ${errorMessage(error)}`,
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new ScheduleStatusError(
+      `${statusPath} damaged (invalid JSON): ${errorMessage(error)}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new ScheduleStatusError(
+      `${statusPath} is not a schedule status object`,
+    );
+  return parsed as ScheduleStatus;
 }
 
 export function writeStatusAtomic(
@@ -223,7 +246,19 @@ export async function runScheduledJob(
           );
           return false;
         }
-        const existing = readStatus(statusPath);
+        let existing: ScheduleStatus;
+        try {
+          existing = readStatus(statusPath);
+        } catch (error) {
+          // Deciding off a status we could not read means deciding off "nothing ever
+          // ran": both guards below would wave this attempt through, and the
+          // reservation write would erase every other schedule's record. Defer exactly
+          // like the lock-less path above — no write, retried next tick.
+          log(
+            `schedule-runner: ${name} deferring this attempt — ${errorMessage(error)} (retried on the next tick/boot)`,
+          );
+          return false;
+        }
         const prior = existing[name];
 
         // Genuinely still running (started less than our own hard timeout ago) — a run
@@ -399,7 +434,19 @@ export async function runScheduledJob(
           );
           return false;
         }
-        const current = readStatus(statusPath);
+        let current: ScheduleStatus;
+        try {
+          current = readStatus(statusPath);
+        } catch (error) {
+          // The job already ran; we simply cannot record it. Writing from an unreadable
+          // snapshot would erase the neighbours, so leave the file alone: the
+          // reservation stays, and the inProgressSince/timeoutMs staleness check frees
+          // it on a later attempt.
+          log(
+            `schedule-runner: ${name} outcome not recorded — ${errorMessage(error)}`,
+          );
+          return false;
+        }
         if (!ownsReservation(current[name], startedAt)) {
           log(
             `schedule-runner: ${name} completion ignored because its reservation changed owner`,

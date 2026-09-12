@@ -287,7 +287,18 @@ export async function runScheduleMigration({
           );
           return { action: "defer" };
         }
-        const current: MigrationStatus = readStatus(statusPath);
+        let current: MigrationStatus;
+        try {
+          current = readStatus(statusPath);
+        } catch (error) {
+          // Seeding over a status we could not read would tell every period "you never
+          // ran" and fire a catch-up burst off it. Defer the pass like the lock-less
+          // path above.
+          log(
+            `schedule-migration: deferring this pass — ${(error as Error).message} (retried on the next boot)`,
+          );
+          return { action: "defer" };
+        }
         const nowMs = now();
         const seeded: MigrationStatus = { ...current };
         const freshlySeeded = new Set<Period>();
