@@ -615,13 +615,14 @@ test("the recovery CLI reports resolve failures as JSON", (t) => {
   assert.equal(result.stderr, "");
 });
 
-test("a slot instruction file reaches the build tree beside the bundled ones", (t) => {
+test("a markdown rule file in the slot is live, not built", (t) => {
   const { root, dataDir, base } = fixture(t);
   mkdirSync(join(dataDir, "custom/agent/instructions"), { recursive: true });
   captureCustomLayer({ root, dataDir, baseRevision: base });
   assert.deepEqual(readCustomManifest(dataDir).entries, {});
 
   write(dataDir, "custom/agent/instructions/rules.md", "rules: mine\n");
+  write(dataDir, "custom/agent/instructions/30-mine.ts", "export default 1;\n");
   captureCustomLayer({ root, dataDir, baseRevision: base });
   const entry =
     readCustomManifest(dataDir).entries["agent/instructions/rules.md"];
@@ -637,9 +638,24 @@ test("a slot instruction file reaches the build tree beside the bundled ones", (
   });
 
   assert.deepEqual(result.conflicts, []);
+  // Markdown-правила читает с диска agent/instructions/30-owner-rules.ts: в дереве сборки
+  // и в runtime их нет, иначе текст правила попал бы в промпт дважды.
+  assert.equal(existsSync(join(root, "agent/instructions/rules.md")), false);
   assert.equal(
-    readFileSync(join(root, "agent/instructions/rules.md"), "utf8"),
-    "rules: mine\n",
+    existsSync(join(result.runtimeRoot, "agent/instructions/rules.md")),
+    false,
+  );
+  // Файл слота с кодом по-прежнему идёт через сборку.
+  assert.equal(
+    readFileSync(join(root, "agent/instructions/30-mine.ts"), "utf8"),
+    "export default 1;\n",
+  );
+  assert.equal(
+    readFileSync(
+      join(result.runtimeRoot, "agent/instructions/30-mine.ts"),
+      "utf8",
+    ),
+    "export default 1;\n",
   );
   assert.equal(
     readFileSync(join(root, "agent/instructions/10-map.md"), "utf8"),
@@ -648,13 +664,6 @@ test("a slot instruction file reaches the build tree beside the bundled ones", (
   assert.equal(
     readFileSync(join(root, "agent/instructions.md"), "utf8"),
     "tone: stock\nkeep-a\nkeep-b\ncore: stock\n",
-  );
-  assert.equal(
-    readFileSync(
-      join(result.runtimeRoot, "agent/instructions/rules.md"),
-      "utf8",
-    ),
-    "rules: mine\n",
   );
 
   commitCustomLayer(result);
@@ -706,9 +715,13 @@ test("a slot file that takes a bundled name is refused, not merged", (t) => {
 
 test("a slot file renamed out of a collision leaves nothing under the taken name", (t) => {
   const { root, dataDir, base } = fixture(t);
-  write(dataDir, "custom/agent/instructions/rules.md", "rules: mine\n");
+  write(
+    dataDir,
+    "custom/agent/instructions/rules.ts",
+    "export const rules = 1;\n",
+  );
   captureCustomLayer({ root, dataDir, baseRevision: base });
-  write(root, "agent/instructions/rules.md", "rules: upstream\n");
+  write(root, "agent/instructions/rules.ts", "export const rules = 2;\n");
   assert.throws(
     () =>
       materializeCustomLayer({
@@ -716,13 +729,13 @@ test("a slot file renamed out of a collision leaves nothing under the taken name
         dataDir,
         targetRevision: "8".repeat(40),
       }),
-    /agent\/instructions\/rules\.md/u,
+    /agent\/instructions\/rules\.ts/u,
   );
 
   // Владелец делает ровно то, что просит текст отказа: переименовывает свой файл.
   renameSync(
-    join(dataDir, "custom/agent/instructions/rules.md"),
-    join(dataDir, "custom/agent/instructions/my-rules.md"),
+    join(dataDir, "custom/agent/instructions/rules.ts"),
+    join(dataDir, "custom/agent/instructions/my-rules.ts"),
   );
   captureCustomLayer({ root, dataDir, baseRevision: base });
   commitCustomLayer(
@@ -734,28 +747,28 @@ test("a slot file renamed out of a collision leaves nothing under the taken name
   );
 
   assert.equal(
-    existsSync(join(dataDir, "custom/agent/instructions/rules.md")),
+    existsSync(join(dataDir, "custom/agent/instructions/rules.ts")),
     false,
   );
   assert.equal(
     readFileSync(
-      join(dataDir, "custom/agent/instructions/my-rules.md"),
+      join(dataDir, "custom/agent/instructions/my-rules.ts"),
       "utf8",
     ),
-    "rules: mine\n",
+    "export const rules = 1;\n",
   );
   assert.equal(
-    readCustomManifest(dataDir).entries["agent/instructions/rules.md"],
+    readCustomManifest(dataDir).entries["agent/instructions/rules.ts"],
     undefined,
   );
   assert.equal(
-    readFileSync(join(root, "agent/instructions/rules.md"), "utf8"),
-    "rules: upstream\n",
+    readFileSync(join(root, "agent/instructions/rules.ts"), "utf8"),
+    "export const rules = 2;\n",
   );
 
   // Живая сборка начинает с чистой копии ревизии (scripts/build.ts), поэтому файл,
   // который слой положил в дерево, к следующему проходу там не лежит.
-  rmSync(join(root, "agent/instructions/my-rules.md"));
+  rmSync(join(root, "agent/instructions/my-rules.ts"));
   // Следующая сборка без единой правки владельца обязана пройти.
   captureCustomLayer({ root, dataDir, baseRevision: base });
   commitCustomLayer(
@@ -766,7 +779,7 @@ test("a slot file renamed out of a collision leaves nothing under the taken name
     }),
   );
   assert.equal(
-    existsSync(join(dataDir, "custom/agent/instructions/rules.md")),
+    existsSync(join(dataDir, "custom/agent/instructions/rules.ts")),
     false,
   );
 });

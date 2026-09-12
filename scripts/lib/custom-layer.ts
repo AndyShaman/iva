@@ -28,6 +28,7 @@ import {
   isAuthoredPath,
   instructionSlotCollision,
   isInstructionSlotPath,
+  isLiveInstructionPath,
 } from "./authored-paths.ts";
 
 export { isAuthoredPath };
@@ -549,10 +550,14 @@ export function materializeCustomLayer({
       continue;
     }
 
-    // Скилл в дерево не кладём — его отдаёт резолвер прямо из data/custom. Исключение
-    // одно: удаление встроенного скилла. Динамика умеет перекрыть одноимённый скилл,
-    // но не убрать его, поэтому tombstone по-прежнему правит дерево.
-    if (!path.startsWith(SKILLS_PREFIX) || materialized === null)
+    // Скилл в дерево не кладём — его отдаёт резолвер прямо из data/custom. Так же
+    // markdown-правила владельца: их читает с диска agent/instructions/30-owner-rules.ts.
+    // Исключение одно: удаление встроенного скилла. Динамика умеет перекрыть одноимённый
+    // скилл, но не убрать его, поэтому tombstone по-прежнему правит дерево.
+    if (
+      (!path.startsWith(SKILLS_PREFIX) && !isLiveInstructionPath(path)) ||
+      materialized === null
+    )
       applyToTree(root, path, materialized);
     const pendingPath = safeChild(pendingDir, path);
     if (materialized === null) rmSync(pendingPath, { force: true });

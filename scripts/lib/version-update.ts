@@ -16,6 +16,7 @@ import {
   instructionSlotCollision,
   isAuthoredPath,
   isInstructionSlotPath,
+  isLiveInstructionPath,
 } from "./authored-paths.ts";
 import { resolveDataDir } from "./data-dir.ts";
 import { gitAt, updaterCompat } from "./update-check.ts";
@@ -142,15 +143,21 @@ type UpdateOptions = Omit<FinishOptions, "name"> & {
 /** The files the user authored; the rest of `data/custom` is the layer's bookkeeping. */
 function authored(customDir: string): string[] {
   try {
-    return readdirSync(customDir, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) =>
-        join(relative(customDir, entry.parentPath), entry.name)
-          .split(sep)
-          .join("/"),
-      )
-      .filter(isAuthoredPath)
-      .sort();
+    return (
+      readdirSync(customDir, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          join(relative(customDir, entry.parentPath), entry.name)
+            .split(sep)
+            .join("/"),
+        )
+        .filter(isAuthoredPath)
+        // Markdown-правила владельца читает с диска agent/instructions/30-owner-rules.ts:
+        // они не вход сборки и не часть дайджеста, иначе каждое «запиши правило» звало бы
+        // `iva update` без нужды.
+        .filter((path) => !isLiveInstructionPath(path))
+        .sort()
+    );
   } catch {
     return [];
   }

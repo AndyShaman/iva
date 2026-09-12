@@ -30,6 +30,15 @@ export function isInstructionSlotPath(path: string): boolean {
   return isAuthoredPath(path) && path.startsWith("agent/instructions/");
 }
 
+/**
+ * Markdown-правила владельца читает с диска `agent/instructions/30-owner-rules.ts`,
+ * поэтому сборка их в дерево не копирует: статическая копия рядом с живым чтением
+ * положила бы каждое правило в промпт дважды.
+ */
+export function isLiveInstructionPath(path: string): boolean {
+  return isInstructionSlotPath(path) && path.endsWith(".md");
+}
+
 /** One text for both build paths: a slot file may not take a bundled name. */
 export function instructionSlotCollision(path: string): Error {
   return new Error(

@@ -413,30 +413,52 @@ test("a customization that builds is layered into the new version", async (t) =>
   assert.deepEqual(iva.notices, []);
 });
 
-test("an instruction file in the slot is layered into the new version", async (t) => {
+test("a markdown rule file in the slot is live, not built", async (t) => {
   const iva = world(t);
-  customFile(iva.home, "agent/instructions/rules.md", "rules: mine\n");
+  customFile(iva.home, "agent/instructions/rules.md", "- mine\n");
 
-  const outcome = updated(await iva.update());
-  assert.equal(outcome.custom, "applied");
+  const stock = updated(await iva.update());
+  assert.equal(stock.custom, "none");
   assert.equal(
-    readFileSync(join(iva.home, "current/agent/instructions/rules.md"), "utf8"),
-    "rules: mine\n",
+    existsSync(join(iva.home, "current/agent/instructions/rules.md")),
+    false,
   );
   assert.deepEqual(iva.notices, []);
+
+  // Правка живого правила не рождает новую Version: дайджест слоя её не видит.
+  customFile(iva.home, "agent/instructions/rules.md", "- mine\n- also mine\n");
+  assert.deepEqual(await iva.update(), {
+    status: "current",
+    version: stock.version,
+  });
+
+  // Файл слота с кодом по-прежнему проходит через сборку.
+  customFile(iva.home, "agent/instructions/30-mine.ts", "export default 1;\n");
+  const applied = updated(await iva.update());
+  assert.equal(applied.custom, "applied");
+  assert.equal(
+    readFileSync(
+      join(iva.home, "current/agent/instructions/30-mine.ts"),
+      "utf8",
+    ),
+    "export default 1;\n",
+  );
 });
 
 test("a slot file with a bundled name refuses the version and keeps the running one", async (t) => {
   const iva = world(t);
   const first = updated(await iva.update());
   mkdirSync(join(iva.repo, "agent/instructions"), { recursive: true });
-  writeFileSync(join(iva.repo, "agent/instructions/10-map.md"), "map: stock\n");
+  writeFileSync(
+    join(iva.repo, "agent/instructions/20-core.ts"),
+    "export default 1;\n",
+  );
   iva.release("0.3.15");
-  customFile(iva.home, "agent/instructions/10-map.md", "map: mine\n");
+  customFile(iva.home, "agent/instructions/20-core.ts", "export default 2;\n");
 
   await assert.rejects(
     iva.update(),
-    /collides with a bundled file: agent\/instructions\/10-map\.md/u,
+    /collides with a bundled file: agent\/instructions\/20-core\.ts/u,
   );
   const store = createVersionStore(iva.home);
   assert.equal(store.currentName(), first.version);
