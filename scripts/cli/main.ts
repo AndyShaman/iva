@@ -1,6 +1,7 @@
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
 import { createDiagnoseCommand } from "./diagnose.ts";
+import { createJobsCommand } from "./jobs.ts";
 import { createDoctorCommand } from "./doctor.ts";
 import { createNotifyCommand } from "./notify.ts";
 import { createPluginCommands } from "./plugin.ts";
@@ -71,6 +72,7 @@ export function createCliMain(root: string) {
   const cmdDiagnose = createDiagnoseCommand(runtime, systemdLifecycle);
   const trace = createTraceCommands(runtime);
   const cmdNotify = createNotifyCommand(runtime);
+  const cmdJobs = createJobsCommand(runtime);
   const cmdRemind = createRemindCommand(runtime);
   const cmdPost = createPostCommand(runtime);
   const legacyUpdate = createUpdateCommand({
@@ -117,6 +119,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva usage${C.x} [win]      token usage (last|today|week|month|by-model|by-source|tail)
   ${C.c}iva trace${C.x} <cmd>      the turn journal: tail|show [turn]|open
   ${C.c}iva notify${C.x} <text>    send one Telegram message verbatim
+  ${C.c}iva jobs ack${C.x} <name> close an open schedule failure
   ${C.c}iva remind${C.x} <text>    let the agent judge one Reminder, then send it to Telegram
   ${C.c}iva post${C.x} --md-file <p>  rich Telegram post to the digest chat or an allowlisted --chat
   ${C.c}iva userbot${C.x} [creds|setup|status|diagnose --json|off]  personal-account userbot proxy
@@ -144,6 +147,7 @@ ${C.b}Commands:${C.x}
     usage: account.cmdUsage,
     notify: cmdNotify,
     remind: cmdRemind,
+    jobs: cmdJobs,
     post: cmdPost,
     start: services.cmdStart,
     stop: services.cmdStop,

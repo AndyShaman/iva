@@ -166,6 +166,7 @@ void test("main composition exposes the exact legacy command key set without exe
     "usage",
     "notify",
     "remind",
+    "jobs",
     "post",
     "start",
     "stop",
