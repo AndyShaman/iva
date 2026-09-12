@@ -96,15 +96,59 @@ export function parseEnvText(text: unknown): EnvValues {
  * записи не нужны вовсе - и `grep … | cut -d=` в install.sh продолжает читать файл.
  */
 export function envValueRejection(value: string): EnvValueRejection | null {
-  // Перевод строки - отдельной причиной: владельцу надо сказать «вставьте одной
-  // строкой», а не «управляющий символ».
+  return (
+    textRejection(value) ??
+    (/["'`#\\]/u.test(value) ? "special" : null) ??
+    (/^[ \t]|[ \t]$/u.test(value) ? "edge-space" : null)
+  );
+}
+
+/**
+ * То, что негодно в значении при любом обрамлении: кавычки от этих символов не спасают.
+ * Перевод строки - отдельной причиной: владельцу надо сказать «вставьте одной строкой»,
+ * а не «управляющий символ».
+ */
+function textRejection(value: string): EnvValueRejection | null {
   if (/[\n\r]/u.test(value)) return "newline";
   // eslint-disable-next-line no-control-regex -- управляющие символы и есть предмет проверки.
   if (/[\u0000-\u001f\u007f]/u.test(value)) return "control";
   if (/[^\u0020-\u007e]/u.test(value)) return "non-ascii";
-  if (/["'`#\\]/u.test(value)) return "special";
-  if (/^[ \t]|[ \t]$/u.test(value)) return "edge-space";
   return null;
+}
+
+/**
+ * Текст внутри кавычек, если значение закавычено ЦЕЛИКОМ и оба парсера снимут кавычки
+ * одинаково; иначе null.
+ *
+ * Проверено дочерним `node --env-file` (`scripts/env-runtime-agreement.test.ts`):
+ * у целиком закавыченного значения он отдаёт ровно то, что внутри - вместе с решёткой,
+ * краевыми пробелами и чужой кавычкой. Systemd в `EnvironmentFile=` снимает кавычки по
+ * тем же правилам POSIX-шелла (systemd.exec).
+ *
+ * Что НЕ считается снятием кавычек обоими и потому сюда не попадает:
+ *   - обратный слэш внутри двойных кавычек: node разворачивает `\n` в перевод строки,
+ *     systemd применяет POSIX-правила (systemd/systemd#10659) - расхождение;
+ *   - текст после закрывающей кавычки (`K="a" tail`): node берёт только закавыченное,
+ *     шелл склеил бы всё;
+ *   - незакрытая кавычка и кавычки не по краям: обычные символы значения.
+ */
+const FULLY_QUOTED = /^[ \t]*(?:"([^"\\]*)"|'([^']*)')[ \t]*$/u;
+
+export function quotedEnvValue(raw: string): string | null {
+  const match = FULLY_QUOTED.exec(raw);
+  return match ? (match[1] ?? match[2] ?? "") : null;
+}
+
+/**
+ * Причина, по которой строку уже существующего `.env` сервис и команда прочитают
+ * по-разному, или null. От `envValueRejection` отличается одним: то правило судит
+ * значение, которое мы САМИ собираемся записать голым, а это - строку, которую кто-то
+ * уже написал, в том числе в кавычках. Кавычки оба парсера снимают, поэтому судить надо
+ * то, что внутри: иначе обычный `KEY="value"` объявляется расхождением.
+ */
+export function envLineRejection(raw: string): EnvValueRejection | null {
+  const quoted = quotedEnvValue(raw);
+  return quoted === null ? envValueRejection(raw) : textRejection(quoted);
 }
 
 /** Имя переменной, которое оба парсера примут за имя, а не за часть значения. */
@@ -144,11 +188,10 @@ export function ambiguousEnvLines(
     const match = /^\s*(?:export\s+)?([^\s=]+)\s*=(.*)$/u.exec(line);
     if (!match) continue;
     const [, key, raw] = match;
+    const rejection = envLineRejection(raw);
     const problem =
       envKeyProblem(key) ??
-      (envValueRejection(raw) === null
-        ? null
-        : ENV_VALUE_PROBLEM[envValueRejection(raw)!]);
+      (rejection === null ? null : ENV_VALUE_PROBLEM[rejection]);
     if (problem) found.push({ key, problem });
   }
   return found;

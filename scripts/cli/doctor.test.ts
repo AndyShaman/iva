@@ -441,6 +441,7 @@ test("doctor names the .env lines the service and the CLI read differently", asy
       envText: [
         "CUSTOM_API_KEY=ab#cd",
         "ASSISTANT_VAULT_DIR=вольт",
+        // Закавычено целиком: оба парсера отдают `tg ` — доктору сказать нечего.
         'TELEGRAM_BOT_TOKEN="tg "',
         "my.key=1",
         "IVA_PORT=8723",
@@ -454,7 +455,6 @@ test("doctor names the .env lines the service and the CLI read differently", asy
         ".env lines the service and the CLI may read differently: " +
           "CUSTOM_API_KEY (one of # \" ' ` \\), " +
           "ASSISTANT_VAULT_DIR (a character outside ASCII), " +
-          "TELEGRAM_BOT_TOKEN (one of # \" ' ` \\), " +
           "my.key (a name the service cannot use)" +
           " — re-enter them: iva config",
       ],

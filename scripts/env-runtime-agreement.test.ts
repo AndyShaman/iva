@@ -180,9 +180,10 @@ await test("строки существующего .env разбираются 
     "ab",
     "разобранное значение выглядит безобидно - потому и нужен сырой текст",
   );
+  // `TELEGRAM_BOT_TOKEN="tg "` в фикстуре есть, а в списке его нет намеренно: кавычки
+  // снимают оба парсера, и краевой пробел ВНУТРИ них расхождением не является (T34-7).
   assert.deepEqual(ambiguousEnvLines(text), [
     { key: "CUSTOM_API_KEY", problem: ENV_VALUE_PROBLEM.special },
-    { key: "TELEGRAM_BOT_TOKEN", problem: ENV_VALUE_PROBLEM.special },
     { key: "my.key", problem: "a name the service cannot use" },
     { key: "ASSISTANT_VAULT_DIR", problem: ENV_VALUE_PROBLEM["non-ascii"] },
   ]);
@@ -298,5 +299,75 @@ await test("iva userbot creds: значение вне подмножества 
     valueInProcess(readFileSync(envPath, "utf8"), "TELEGRAM_API_HASH"),
     "0123456789abcdef",
     "годный api_hash не доехал до процесса",
+  );
+});
+
+// T34-7: doctor судил СЫРОЕ значение, а `envValueRejection` отвергает любую кавычку -
+// поэтому обычная строка `KEY="value"` из уже существующего .env объявлялась
+// расхождением парсеров. Кавычки снимают оба (шапка env-file.ts), значит целиком
+// закавыченное значение надо судить по тому, что ВНУТРИ.
+await test("doctor: кавычки, которые снимают оба парсера, - не расхождение", () => {
+  const agreed = [
+    'CUSTOM_API_KEY="sk-live_ABC-123"',
+    'TELEGRAM_BOT_TOKEN="tg "',
+    "ASSISTANT_VAULT_DIR='my vault'",
+    'CUSTOM_BASE_URL="https://api.example.com/v1#frag"',
+    `TELEGRAM_BOT_USERNAME="it's"`,
+    "DEEPGRAM_LANGUAGE='a\"b'",
+    'ASSISTANT_HOST=""',
+  ].join("\n");
+  assert.deepEqual(
+    ambiguousEnvLines(agreed),
+    [],
+    "на закавыченных значениях доктору сказать нечего",
+  );
+
+  // Не «держит ноль»: оракул подтверждает, что процесс правда снимает эти кавычки.
+  assert.deepEqual(
+    valuesInProcess(`${agreed}\n`, [
+      "CUSTOM_API_KEY",
+      "TELEGRAM_BOT_TOKEN",
+      "ASSISTANT_VAULT_DIR",
+      "CUSTOM_BASE_URL",
+      "TELEGRAM_BOT_USERNAME",
+      "DEEPGRAM_LANGUAGE",
+      "ASSISTANT_HOST",
+    ]),
+    {
+      CUSTOM_API_KEY: "sk-live_ABC-123",
+      TELEGRAM_BOT_TOKEN: "tg ",
+      ASSISTANT_VAULT_DIR: "my vault",
+      CUSTOM_BASE_URL: "https://api.example.com/v1#frag",
+      TELEGRAM_BOT_USERNAME: "it's",
+      DEEPGRAM_LANGUAGE: 'a"b',
+      ASSISTANT_HOST: "",
+    },
+  );
+});
+
+// Обратная сторона: кавычки снимают расхождение не всегда. Здесь предупреждение обязано
+// остаться, иначе правка выше просто выключила бы доктору голос.
+await test("doctor: кавычки, которые парсеры снимают по-разному, названы", () => {
+  assert.deepEqual(
+    ambiguousEnvLines(
+      [
+        'A="a\\nb"', // node разворачивает \n в перевод строки, systemd оставляет буквы
+        'B="a" trailing', // node берёт только закавыченное, шелл склеил бы всё
+        'C="abc', // кавычка не закрыта: значение начинается с неё
+        'D=a"b"c', // кавычки не по краям - обычные символы
+        'E="каф"', // не-ASCII внутри кавычек так и остаётся необещанным
+        "F=ab#cd", // голая решётка - исходный случай ветки, не трогаем
+        'G="a\tb"', // табуляция внутри кавычек: systemd отвергает непечатные
+      ].join("\n"),
+    ),
+    [
+      { key: "A", problem: ENV_VALUE_PROBLEM.special },
+      { key: "B", problem: ENV_VALUE_PROBLEM.special },
+      { key: "C", problem: ENV_VALUE_PROBLEM.special },
+      { key: "D", problem: ENV_VALUE_PROBLEM.special },
+      { key: "E", problem: ENV_VALUE_PROBLEM["non-ascii"] },
+      { key: "F", problem: ENV_VALUE_PROBLEM.special },
+      { key: "G", problem: ENV_VALUE_PROBLEM.control },
+    ],
   );
 });
