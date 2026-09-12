@@ -309,6 +309,7 @@ const telegram = telegramChannel({
       }
       await notifyTelegramFailure(
         ctx.session.id,
+        data.turnId,
         data,
         noticeSender((text) => channel.telegram.sendMessage(text)),
       );
@@ -325,6 +326,7 @@ const telegram = telegramChannel({
       }
       await notifyTelegramFailure(
         data.sessionId,
+        null,
         data,
         noticeSender((text) => channel.telegram.sendMessage(text)),
       );
