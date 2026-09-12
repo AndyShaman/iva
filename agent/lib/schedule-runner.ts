@@ -314,6 +314,9 @@ export async function runScheduledJob(
 ): Promise<RunScheduledJobResult> {
   let reserved = false;
   let startedAt = now();
+  // Провал записи обязательного факта: причину обязан увидеть тот, кто ждёт промис
+  // (waitUntil расписаний), поэтому она выезжает отклонением, а не полем результата.
+  let factFailure: unknown = null;
   try {
     if (statusPath) {
       const admitted = await withStatusLock(statusPath, (acquired) => {
@@ -517,7 +520,6 @@ export async function runScheduledJob(
     // разбудит, а «последний успех» в статусе скажет, что всё в порядке (слепая приёмка
     // T20 по v6). Поэтому исход считается ниже, после попытки записи.
     const childOk = outcome.code === 0 && !outcome.error;
-    let factError_: unknown = null;
     const codeDesc = outcome.code ?? "n/a";
     const signalDesc = outcome.signal ? `, signal=${outcome.signal}` : "";
     log(`schedule-runner: ${name} finished (code=${codeDesc}${signalDesc})`);
@@ -554,7 +556,7 @@ export async function runScheduledJob(
         log(
           `schedule-runner: ${name} fact not recorded — ${errorMessage(error)}`,
         );
-        factError_ = error;
+        factFailure = error;
       }
       if (recorded && wake) {
         try {
@@ -580,7 +582,7 @@ export async function runScheduledJob(
     }
 
     // Запуск успешен, только если ребёнок вышел нулём И факт лёг в таблицу.
-    const ok = childOk && factError_ === null;
+    const ok = childOk && factFailure === null;
 
     if (statusPath) {
       const completed = await withStatusLock(statusPath, (acquired) => {
@@ -636,6 +638,10 @@ export async function runScheduledJob(
       if (completed) reserved = false;
     }
 
+    // Факт обязателен: без строки нет ни пробуждения, ни следа в таблице. Отказ записи
+    // обязан отклонить промис, иначе расписание считает шаг успешным (T30 №5).
+    if (factFailure !== null) throw factFailure;
+
     // Ошибка spawn (ENOENT и любая другая) едет наружу: потребитель обязан сказать
     // причину, а не «exited unknown» — ребёнок не запускался вовсе.
     return {
@@ -643,13 +649,12 @@ export async function runScheduledJob(
       ok,
       code: outcome.code,
       signal: outcome.signal,
-      ...(outcome.error !== undefined
-        ? { error: outcome.error }
-        : factError_ !== null
-          ? { error: factError_ }
-          : {}),
+      ...(outcome.error === undefined ? {} : { error: outcome.error }),
     };
   } catch (error) {
+    // Провал факта уже назван в журнале строкой «fact not recorded» — не выдаём его за
+    // неожиданный сбой, а отдаём тому, кто ждёт промис.
+    if (error === factFailure) throw error;
     try {
       log(
         `schedule-runner: ${name} unexpected failure: ${errorMessage(error)}`,

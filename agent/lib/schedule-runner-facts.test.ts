@@ -251,19 +251,24 @@ void test("факт не записался — запуск не успешны
   await mkdir(join(root, "data"), { recursive: true });
   const lines: string[] = [];
 
-  const result = await runScheduledJob({
-    name: "memory-daily",
-    argv: ["ok.ts"],
-    root,
-    nodeBin: process.execPath,
-    statusPath,
-    // Путь, по которому записи не быть: каталог данных — это файл.
-    factsPath: join(root, "ok.ts", "jobs.json"),
-    wakeImpl: () => {},
-    log: (...args) => lines.push(args.map(String).join(" ")),
-  });
-
-  assert.equal(result.ok, false, "запуск без факта считается успешным");
+  // T30 №5: провал записи обязательного факта — отказ запуска, а не поле в исполненном
+  // промиса: иначе waitUntil видит успех, а строки и пробуждения нет.
+  await assert.rejects(
+    () =>
+      runScheduledJob({
+        name: "memory-daily",
+        argv: ["ok.ts"],
+        root,
+        nodeBin: process.execPath,
+        statusPath,
+        // Путь, по которому записи не быть: каталог данных — это файл.
+        factsPath: join(root, "ok.ts", "jobs.json"),
+        wakeImpl: () => {},
+        log: (...args) => lines.push(args.map(String).join(" ")),
+      }),
+    (error: unknown) => error instanceof Error,
+    "запуск без факта обязан отклоняться",
+  );
   assert.ok(
     lines.some((line) => /fact not recorded/u.test(line)),
     `в журнале нет причины: ${lines.join(" | ")}`,
