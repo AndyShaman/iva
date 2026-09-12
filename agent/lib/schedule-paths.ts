@@ -9,6 +9,8 @@ export interface SchedulePaths {
   readonly dataDir: string;
   readonly statusPath: string;
   readonly memoryLockPath: string;
+  /** Таблица фактов расписаний (T20 п.1) — история запусков для агента и доктора. */
+  readonly factsPath: string;
 }
 
 export function resolvePaths(): SchedulePaths {
@@ -19,6 +21,7 @@ export function resolvePaths(): SchedulePaths {
     dataDir: resolvedDataDir,
     statusPath: join(resolvedDataDir, "rollup-status.json"),
     memoryLockPath: join(root, ".memory.lock"),
+    factsPath: join(resolvedDataDir, "jobs.json"),
   };
 }
 
@@ -27,7 +30,7 @@ export type MemoryPeriod = "daily" | "weekly" | "monthly" | "yearly";
 // Same command shape every memory-*.ts schedule spawns: `flock -w 3900 .memory.lock node
 // --env-file-if-exists=.env scripts/memory/rollup.ts <period>` — see agent/lib/schedule-runner.ts.
 export function memoryRollupJob(period: MemoryPeriod) {
-  const { root, statusPath, memoryLockPath } = resolvePaths();
+  const { root, statusPath, memoryLockPath, factsPath } = resolvePaths();
   return {
     name: `memory-${period}`,
     argv: ["scripts/memory/rollup.ts", period],
@@ -35,5 +38,6 @@ export function memoryRollupJob(period: MemoryPeriod) {
     nodeBin: process.execPath,
     lockPath: memoryLockPath,
     statusPath,
+    factsPath,
   };
 }

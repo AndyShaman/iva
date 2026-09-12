@@ -14,6 +14,8 @@ import {
 } from "node:child_process";
 import { resolveDataDir } from "./data-dir.ts";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { jobTail, recordFact } from "./job-facts.ts";
 import {
   acquireFileLock,
   releaseFileLock,
@@ -70,6 +72,11 @@ export interface RunScheduledJobOptions {
   readonly killGraceMs?: number;
   readonly guardMs?: number;
   readonly statusPath?: string;
+  /** Путь к data/jobs.json; по умолчанию — рядом с данными при наличии statusPath. */
+  readonly factsPath?: string;
+  /** Будить агента после запуска (по умолчанию да). */
+  readonly wake?: boolean;
+  readonly wakeImpl?: (name: string, startedAt: number) => void;
   readonly env?: NodeJS.ProcessEnv;
   readonly spawnImpl?: SpawnImplementation;
   readonly killImpl?: (pid: number, signal: NodeJS.Signals) => unknown;
@@ -173,6 +180,45 @@ export function writeStatusAtomic(
   writeFileAtomicSync(statusPath, JSON.stringify(data, null, 2));
 }
 
+/** Причина провала одной строкой: спавн, сигнал или код выхода. */
+function factError(outcome: SpawnOutcome, ok: boolean): string | null {
+  if (outcome.error !== undefined) return errorMessage(outcome.error);
+  if (outcome.signal) return `killed by ${outcome.signal}`;
+  if (!ok) return `exited ${outcome.code ?? "n/a"}`;
+  return null;
+}
+
+// Fire-and-forget: раннер не ждёт хода агента (он идёт до восьми минут) и не падает,
+// если ребёнок не поднялся — провал хода запишет сам wake.ts, а сторожа увидит его в факте.
+function spawnWake(
+  root: string,
+  nodeBin: string,
+  env: NodeJS.ProcessEnv,
+  name: string,
+  startedAt: number,
+): void {
+  const child = spawn(
+    nodeBin,
+    [
+      "--env-file=.env",
+      join(root, "scripts/jobs/wake.ts"),
+      name,
+      String(startedAt),
+    ],
+    {
+      cwd: root,
+      env: {
+        ...env,
+        ASSISTANT_DATA_DIR: resolveDataDir(root, env.ASSISTANT_DATA_DIR),
+      },
+      detached: true,
+      stdio: "ignore",
+    },
+  );
+  child.on("error", () => {});
+  child.unref();
+}
+
 function tailLines(tail: string, n = 5): string {
   return tail
     .split("\n")
@@ -223,6 +269,9 @@ export async function runScheduledJob(
     killGraceMs = DEFAULT_KILL_GRACE_MS,
     guardMs = GUARD_MS,
     statusPath,
+    factsPath,
+    wake = true,
+    wakeImpl,
     env = process.env,
     spawnImpl = spawn,
     killImpl = (pid: number, signal: NodeJS.Signals) =>
@@ -428,6 +477,54 @@ export async function runScheduledJob(
       log(
         `schedule-runner: ${name} spawn error: ${errorMessage(outcome.error)}`,
       );
+
+    // Факт — история запуска (одна таблица, п.1 T20): пишется и после провала, и после
+    // успеха. Будим агента только когда факт на диске — иначе ходу нечего показать.
+    const factsFile = factsPath ?? null;
+    if (factsFile) {
+      let recorded = false;
+      try {
+        await recordFact(
+          factsFile,
+          {
+            name,
+            startedAt,
+            finishedAt,
+            ok,
+            error: factError(outcome, ok),
+            exitCode: outcome.code,
+            tail: jobTail(outcome.tail, env),
+            acked: false,
+            wake: null,
+          },
+          finishedAt,
+        );
+        recorded = true;
+      } catch (error) {
+        log(
+          `schedule-runner: ${name} fact not recorded — ${errorMessage(error)}`,
+        );
+      }
+      if (recorded && wake) {
+        try {
+          (
+            wakeImpl ??
+            ((wakeName: string, at: number) =>
+              spawnWake(
+                root ?? process.cwd(),
+                nodeBin ?? process.execPath,
+                env,
+                wakeName,
+                at,
+              ))
+          )(name, startedAt);
+        } catch (error) {
+          log(
+            `schedule-runner: ${name} wake not started — ${errorMessage(error)}`,
+          );
+        }
+      }
+    }
 
     if (statusPath) {
       const completed = await withStatusLock(statusPath, (acquired) => {
