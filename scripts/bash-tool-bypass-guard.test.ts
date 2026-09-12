@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import bash from "./bash.ts";
+import bash from "../agent/tools/bash.ts";
 
 type BashInput = { command: string; timeoutMs?: number };
 type BashResult = {
