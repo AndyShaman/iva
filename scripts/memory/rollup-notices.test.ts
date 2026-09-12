@@ -88,7 +88,7 @@ test("the delivery half of the prompt is the one that carries the language", () 
   assert.match(source, /no H1\/H2 headings/u);
 });
 
-test("the red line in the instructions exempts both scheduled senders", () => {
+test("the red line in the instructions exempts every scheduled sender", () => {
   // Красный блок системных инструкций говорит, что отчёт — обычный ответ хода: отправку
   // делает код Outbox. В плановых ходах отправку тоже делает код, но другой, и без явного
   // исключения модель считает своим ответом уже отправленный текст — владелец получает
@@ -107,11 +107,11 @@ test("the red line in the instructions exempts both scheduled senders", () => {
   const exception = red.slice(at);
   assert.match(exception, /final text of the turn/u);
   assert.match(exception, /forbidden/u);
-  // Оба хода названы В САМОМ исключении, одним предложением: упоминание дайджеста рядом —
+  // Все три хода названы В САМОМ исключении, одним предложением: упоминание дайджеста рядом —
   // например во фразе «дайджест из чата — обычный ход» — этому не удовлетворяет.
   assert.match(
     exception,
-    /There are two:[^.]*rollup[^.]*morning\s+digest/u,
-    "the exception itself must name the nightly rollup and the scheduled digest",
+    /There are three:[^.]*rollup[^.]*morning\s+digest[^.]*remind_add/u,
+    "the exception itself must name the nightly rollup, the scheduled digest and the reminder turn",
   );
 });
