@@ -29,22 +29,37 @@ export type DiagnoseDependencies = {
 
 /** Пометка вырезанного. Тот же вид, что в правилах про evidence (AGENTS.md). */
 export const REDACTED = "<redacted>";
-/**
- * Значения `.env` короче этого не режутся. Секреты (ключи, токены, bearer, chat id)
- * длиннее восьми знаков всегда; а `ru`, `data`, `codex`, `8723` — конфиг, и вырезание
- * таких значений превратило бы пакет в кашу: `CUSTOM_REASONING=1` съел бы все цифры
- * отчёта, `ASSISTANT_DATA_DIR=data` — все пути. Ключи берутся ИЗ ФАЙЛА (какие есть), а
- * не по шаблону значения.
- */
-export const SECRET_MIN_LENGTH = 8;
 export const JOURNAL_LINES = 200;
 /** Потолок списка на раздел: пакет должен читаться, а не весить мегабайт. */
 export const SECTION_ITEM_LIMIT = 100;
-/** Потолок поля ошибки: хвост ошибки может нести пользовательский текст, а он не нужен. */
+/** Потолок текста ошибки: в тело ответа апстрим кладёт что угодно, а нужен только код. */
 const ERROR_CHARS = 200;
-/** Ключи `.env`, значения которых режутся независимо от длины: это личные id владельца. */
+/** Потолок кода ошибки хода: код — короткое слово, а не текст. */
+const TRACE_CODE_CHARS = 60;
+/**
+ * Имя ключа, значение которого режется целиком, какой бы длины оно ни было: секреты —
+ * это ключи, токены, пароли и личные id, и трёхзначный PIN прячется ровно так же, как
+ * длинный ключ. Пробелы не значат ничего: значение режется как есть.
+ */
+const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|ID/u;
+/** На трёх знаках кончается конфиг (`ru`), поэтому значение длиннее трёх — уже секрет. */
+const SHORT_VALUE_LIMIT = 3;
+/** Ключи со списком личных id: их значения делятся по запятой и пробелам. */
 const CHAT_ID_KEY = /(?:_CHAT_ID|_USER_IDS|_API_ID)$/u;
-const TELEGRAM_TOKEN_RE = /(?<![\w-])\d{5,}:[A-Za-z0-9_-]{25,}(?![\w-])/gu;
+/**
+ * Токен бота в ЛЮБОМ месте строки. Границы слова тут вредны: в журнале токен стоит внутри
+ * URL — `api.telegram.org/bot<token>/sendMessage`, — и lookbehind срывался на букве `t`
+ * из `bot`, пропуская чужой токен в пакет (T21). У формы `<5+ цифр>:<25+ знаков>` ложных
+ * срабатываний нет, поэтому режем без оглядки на соседей.
+ */
+const TELEGRAM_TOKEN_RE = /\d{5,}:[A-Za-z0-9_-]{25,}/gu;
+/**
+ * Личный id рядом с меткой: `tg:555000111222:43`, `chat_id=…`, `chatId: …`, `from=…`.
+ * Работает БЕЗ `.env` — иначе chat id из журнала хода уезжает в пакет (личные данные).
+ * Голые длинные числа не трогаем: тогда пакет превратился бы в кашу из времён и размеров.
+ */
+const TELEGRAM_ID_RE =
+  /((?:tg|chat|chatId|chat_id|userId|user_id|from|to)[:=]\s*)\d{5,}/giu;
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gu;
 /** Файлы журнала хода: имя дня — единственный контракт каталога (docs/trace.md). */
 const TRACE_DAY_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/u;
@@ -58,29 +73,56 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * Чистая: каждое вхождение секрета, а также всё похожее на токен бота или e-mail,
- * становится пометкой. Секреты режутся ОДНИМ проходом и от длинного к короткому: иначе
- * второй проход резал бы буквы внутри только что вставленной пометки, а короткий секрет
- * съедал бы начало длинного.
+ * Формы, в которых один и тот же секрет попадает в журнал: сырая, percent-encoded
+ * (Basic-строки и куски запросов), JSON-экранированная (тело запроса уехало в лог целиком)
+ * и base64/base64url (заголовки авторизации). Список — функция от секрета, поэтому режется
+ * всё, чем секрет может приехать, а не только то, как он лежит в `.env`.
+ */
+function secretForms(secret: string): string[] {
+  return [
+    secret,
+    encodeURIComponent(secret),
+    JSON.stringify(secret).slice(1, -1),
+    Buffer.from(secret, "utf8").toString("base64"),
+    Buffer.from(secret, "utf8").toString("base64url"),
+  ];
+}
+
+/**
+ * Чистая: каждая форма секрета, токен бота в любом месте строки, личный id рядом с меткой и
+ * e-mail становятся пометкой. Формы режутся ОДНИМ проходом и от длинной к короткой: иначе
+ * второй проход резал бы буквы внутри только что вставленной пометки, а короткая форма
+ * съедала бы начало длинной (короткий секрет-префикс оставлял хвост длинного — T21).
  */
 export function redact(text: string, secrets: readonly string[]): string {
-  const unique = [...new Set(secrets)]
-    .filter((secret) => secret.length > 0)
-    .sort((left, right) => right.length - left.length);
+  const forms = new Set<string>();
+  for (const secret of secrets)
+    for (const form of secretForms(secret))
+      if (form.length > 0) forms.add(form);
+  const ordered = [...forms].sort((left, right) => right.length - left.length);
   let out = text;
-  if (unique.length > 0) {
+  if (ordered.length > 0) {
     out = out.replace(
-      new RegExp(unique.map(escapeRegExp).join("|"), "gu"),
+      new RegExp(ordered.map(escapeRegExp).join("|"), "gu"),
       REDACTED,
     );
   }
-  return out.replace(TELEGRAM_TOKEN_RE, REDACTED).replace(EMAIL_RE, REDACTED);
+  return out
+    .replace(TELEGRAM_TOKEN_RE, REDACTED)
+    .replace(TELEGRAM_ID_RE, `$1${REDACTED}`)
+    .replace(EMAIL_RE, REDACTED);
 }
 
 /**
  * Какие значения `.env` считать секретами. Имена ключей берутся из самого файла: список
- * известных секретов не угадывается по виду значения. Личные id (chat, user, api) режутся
- * любой длины, остальные — от SECRET_MIN_LENGTH знаков.
+ * не угадывается по виду значения. Режется значение целиком, если имя ключа похоже на
+ * секрет (KEY, TOKEN, SECRET, PASSWORD, ID) — любой длины, — и любое значение длиннее
+ * трёх знаков: на трёх знаках кончается конфиг (`ru`), а короткий PIN или код доступа
+ * короче не бывает. Ветвь CHAT_ID_KEY делит список на части: личные id пишут через запятую.
+ *
+ * Цена решения названа владельцем и принята: короткое значение вроде `data` режется по
+ * всему пакету, и путь к каталогу данных показывается пометкой. Утёкший ключ дороже
+ * читаемости, а что именно вырезано, пакет говорит первой строкой.
  */
 export function secretValuesFromEnv(env: Record<string, string>): string[] {
   const values: string[] = [];
@@ -96,7 +138,8 @@ export function secretValuesFromEnv(env: Record<string, string>): string[] {
       );
       continue;
     }
-    if (value.length >= SECRET_MIN_LENGTH) values.push(value);
+    if (SECRET_KEY.test(key) || value.length > SHORT_VALUE_LIMIT)
+      values.push(value);
   }
   return values;
 }
@@ -117,6 +160,23 @@ function readJsonObject(path: string): Record<string, unknown> | null {
 function errorText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.length > ERROR_CHARS ? message.slice(0, ERROR_CHARS) : message;
+}
+
+/**
+ * Код ошибки вместо её текста. В `lastError` строки напоминания апстрим кладёт тело ответа
+ * Telegram (`scripts/lib/telegram-send.ts`), а в теле может лежать текст самого напоминания
+ * — владельческий. Кода хватает, чтобы отличить отказ доступа от лимита и от 5xx; имени
+ * операции и статуса достаточно, всё остальное в пакет не едет.
+ */
+function errorCode(raw: string): string {
+  const status = /\b[1-5]\d{2}\b/u.exec(raw)?.[0] ?? "";
+  const name = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}/u.exec(raw.trim())?.[0] ?? "";
+  const code = [name, status].filter(Boolean).join(" ");
+  return code.length > 0 ? code : "error text omitted";
+}
+
+function capText(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit)}…` : value;
 }
 
 function tailLines(text: string, limit: number): string {
@@ -200,7 +260,7 @@ function remindersSection(dataDir: string, nowMs: number): string {
           : "never";
     const error =
       typeof record.lastError === "string" && record.lastError.length > 0
-        ? errorText(record.lastError)
+        ? errorCode(record.lastError)
         : "none";
     facts.push(
       `${String(record.id)} · due ${due === null ? "-" : new Date(due).toISOString()} · ` +
@@ -233,9 +293,9 @@ function failureFact(event: Record<string, unknown>): string | null {
       : {};
   const code =
     typeof data.errorCode === "string"
-      ? data.errorCode
+      ? capText(data.errorCode, TRACE_CODE_CHARS)
       : typeof data.code === "string" || typeof data.code === "number"
-        ? String(data.code)
+        ? capText(String(data.code), TRACE_CODE_CHARS)
         : "-";
   const turn =
     typeof event.turn === "string" && event.turn.length > 0 ? event.turn : "-";
@@ -381,6 +441,20 @@ function journalSection(
   );
 }
 
+/**
+ * Строка о том, ЧЕМ вырезано. Без неё пакет с пустым списком секретов выглядел бы так же,
+ * как пакет с полным (слепая приёмка T21): владелец и модель обязаны видеть, что `.env`
+ * не нашли и работают только шаблонные правила.
+ */
+function redactionLine(envFound: boolean, secretCount: number): string {
+  if (!envFound)
+    return (
+      "- redaction: .env not found — only the pattern rules were applied " +
+      "(bot token, telegram ids, e-mail); values of keys are NOT in the cut list"
+    );
+  return `- redaction: ${secretCount} values from .env, pattern rules always on`;
+}
+
 function packageMarkdown(input: {
   readonly root: string;
   readonly dataDir: string;
@@ -388,6 +462,7 @@ function packageMarkdown(input: {
   readonly now: Date;
   readonly doctor: string;
   readonly journal: string;
+  readonly redaction: string;
 }): string {
   const nowMs = input.now.getTime();
   return [
@@ -395,6 +470,7 @@ function packageMarkdown(input: {
     "",
     `- collected: ${input.now.toISOString()}`,
     `- data dir: ${input.dataDir}`,
+    input.redaction,
     "",
     "## Versions",
     versionsSection(input.root, input.gitHead),
@@ -436,7 +512,9 @@ export function createDiagnoseCommand(
 ) {
   const {
     ROOT,
+    ENV_PATH,
     ok,
+    warn,
     readEnv,
     dataDirAbs,
     cap,
@@ -450,6 +528,11 @@ export function createDiagnoseCommand(
 
   return async function cmdDiagnose(): Promise<void> {
     const env = readEnv();
+    const envFound = existsSync(ENV_PATH);
+    if (!envFound)
+      warn(
+        "No .env — redaction applies only the pattern rules (bot token, telegram ids, e-mail); the package says so in its header",
+      );
     const dataDirectory = dataDirAbs(env);
     const collectedAt = now();
     // Доктор — половина улик, поэтому зовётся настоящий: его строки уходят в пакет, а не в
@@ -468,6 +551,14 @@ export function createDiagnoseCommand(
       },
       exit: () => undefined,
     })();
+    // Доктор мог записать в .env новый внутренний bearer — его значение тоже секрет, и
+    // читать список только до прогона значит выпустить свежий ключ в пакет (T21).
+    const secrets = [
+      ...new Set([
+        ...secretValuesFromEnv(env),
+        ...secretValuesFromEnv(readEnv()),
+      ]),
+    ];
     const text = packageMarkdown({
       root: ROOT,
       dataDir: dataDirectory,
@@ -475,6 +566,7 @@ export function createDiagnoseCommand(
       now: collectedAt,
       doctor: doctorLines.join("\n"),
       journal: journalSection(cap, dataDirectory, units),
+      redaction: redactionLine(envFound, secrets.length),
     });
     const file = join(
       dataDirectory,
@@ -482,7 +574,7 @@ export function createDiagnoseCommand(
       `${collectedAt.toISOString().replace(/[:.]/gu, "-")}.md`,
     );
     mkdirSync(join(dataDirectory, "diagnose"), { recursive: true });
-    writeFileSync(file, redact(text, secretValuesFromEnv(env)), {
+    writeFileSync(file, redact(text, secrets), {
       encoding: "utf8",
       mode: 0o600,
     });
