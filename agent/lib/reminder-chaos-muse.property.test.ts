@@ -68,8 +68,9 @@ test(`resolveAt: мусор дает ReminderTimeError или срок в буд
       try {
         result = resolveAt(input, NOW, tz);
       } catch (error) {
-        // Битый ASSISTANT_TIMEZONE — тот же ReminderTimeError, что и мусор дат:
-        // никаких сырых RangeError наружу.
+        // Прямой вызов с битой зоной — тот же ReminderTimeError, что и мусор дат:
+        // никаких сырых RangeError наружу. (Боевой путь зону уже провалидировал:
+        // ownerTimeZone сводит мусор к UTC через resolveTimeZone.)
         assert.ok(
           error instanceof ReminderTimeError,
           `не тот тип ошибки для ${JSON.stringify(input.slice(0, 40))}: ${String(error)}`,
