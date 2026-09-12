@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 // Таблица фактов расписаний (T20 п.1): запись, ротация 7 дней, ack, хвост без секретов.
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -192,6 +192,42 @@ test("чужой корень файла — ошибка, битые строк
   assert.equal((await readFacts(file)).length, 1);
   writeFileSync(file, "{");
   assert.throws(() => readFactsSync(file), /damaged/u);
+});
+
+test("чужой корень: файл в карантин, факт записан, таблица лечится", async () => {
+  // Слепая приёмка T20: валидный JSON, но не массив (агенту велено «вернуть массив строк»,
+  // и он может записать объект). Раньше recordFact бросал, факт терялся, а файл не лечился
+  // никогда — значит и пробуждение не запускалось ни разу.
+  const directory = dir();
+  const file = jobFactsFile(directory);
+  writeFileSync(file, JSON.stringify({ "memory-daily": { ok: true } }));
+
+  await recordFact(file, fact({ ok: false, error: "exited 1" }), NOW);
+
+  const written = await readFacts(file);
+  assert.equal(written.length, 1, "факт после карантина потерян");
+  assert.equal(written[0]?.error, "exited 1");
+  const quarantined = readdirSync(directory).filter((name) =>
+    name.includes("jobs.json.corrupt-"),
+  );
+  assert.equal(
+    quarantined.length,
+    1,
+    `нет карантина: ${readdirSync(directory).join(", ")}`,
+  );
+});
+
+test("битый JSON: первый же факт не теряется", async () => {
+  // Слепая приёмка T20 (F3): loadJsonStrict откладывал файл и бросал, и первый факт после
+  // порчи пропадал вместе с пробуждением. Теперь запись идёт в свежую таблицу.
+  const file = jobFactsFile(dir());
+  writeFileSync(file, '[{"name":"memory-daily"');
+
+  await recordFact(file, fact({ ok: true, error: null }), NOW);
+
+  const written = await readFacts(file);
+  assert.equal(written.length, 1, "факт после битого JSON потерян");
+  assert.equal(written[0]?.ok, true);
 });
 
 test("latestFact берёт последнюю строку имени по finishedAt", () => {

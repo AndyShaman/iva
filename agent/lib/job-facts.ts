@@ -9,7 +9,7 @@
 // Форма строки — контракт: битая строка пропускается (файл пишем мы сами, не пользователь),
 // а чужой корень файла — явная ошибка: молча ответить «запусков не было» значило бы
 // выключить и провалы, и сторожа.
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   redact,
@@ -174,6 +174,38 @@ async function withFacts<T>(file: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Чтение перед записью: испорченный файл не повод терять факт запуска. Потеря факта тут
+ * стоит дорого — без строки не будет и пробуждения агента, а чужой корень (валидный JSON,
+ * но не массив) не лечился никогда: каждый следующий запуск снова терял факт. Невалидный
+ * JSON `loadJsonStrict` уже откладывает в `<файл>.corrupt-<метка>` сам и только сообщает об
+ * этом ошибкой; чужой корень откладываем здесь тем же способом. Остальные ошибки чтения
+ * (права, ввод-вывод) идут наружу: молча начать таблицу заново значило бы потерять её.
+ */
+async function readFactsForWrite(file: string): Promise<JobFact[]> {
+  try {
+    return await readFacts(file);
+  } catch (error) {
+    if (error instanceof JobFactsError) {
+      quarantine(file);
+      return [];
+    }
+    // `loadJsonStrict` переносит битый файл сам и говорит об этом в тексте ошибки.
+    if (/damaged \(invalid JSON\)/u.test((error as Error).message)) return [];
+    throw error;
+  }
+}
+
+/** Отложить испорченный файл рядом, как это делает json-store для битого JSON. */
+function quarantine(file: string): void {
+  const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+  try {
+    renameSync(file, `${file}.corrupt-${stamp}`);
+  } catch {
+    // Не смогли отложить — таблица всё равно начинается заново, факт важнее файла.
+  }
+}
+
 /** Записать факт запуска: ротация старше 7 дней и добавление строки под локом. */
 export async function recordFact(
   file: string,
@@ -181,23 +213,29 @@ export async function recordFact(
   now: number = Date.now(),
 ): Promise<void> {
   await withFacts(file, async () => {
-    const existing = await readFacts(file);
+    const existing = await readFactsForWrite(file);
     await saveJsonAtomic(file, [...rotated(existing, now), fact]);
   });
 }
 
-/** Записать исход хода агента в строку запуска; false — строки уже нет. */
+/**
+ * Записать исход хода агента в строку запуска; false — строки уже нет (или её исход уже
+ * записан, а звали с `onlyIfMissing`). `onlyIfMissing` нужен раннеру: он видит смерть
+ * ребёнка пробуждения снаружи и не должен затирать исход, который сам ход уже записал.
+ */
 export async function recordWake(
   file: string,
   name: string,
   startedAt: number,
   wake: JobWake,
+  onlyIfMissing = false,
 ): Promise<boolean> {
   return withFacts(file, async () => {
     const facts = await readFacts(file);
     let found = false;
     const next = facts.map((fact) => {
       if (fact.name !== name || fact.startedAt !== startedAt) return fact;
+      if (onlyIfMissing && fact.wake !== null) return fact;
       found = true;
       return { ...fact, wake };
     });
