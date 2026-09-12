@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 235;
+const EXPECTED_PRODUCTION_COUNT = 236;
 const EXPECTED_INVENTORY_SHA256 =
-  "6f2e632ef3c51b3f3737c546eaa96ef69b2d90ff123726b7f27695624260aeaf";
+  "a55df1aeddf652f1feaa88479e5960d195f5304d59d55cae903bcd6420a7cdbe";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -126,6 +126,12 @@ const EXPECTED_INVENTORY_SHA256 =
 // message. Scoped coverage over `scripts/telegram-rich-replies.test.ts` reports it at 100%
 // lines, 100% branches and 100% functions - both modes and the startup refusal on a junk
 // value are the test's subject - so the blind spot stays 26.
+// The scheduler-bypass guard came last, one path: `agent/lib/scheduler-bypass-guard.ts`, the
+// rule set the bash tool consults before exec. Scoped coverage over its own test, the
+// property test and `scripts/bash-tool.test.ts` reports it at 100% lines, 88.41% branches
+// and 100% functions - the uncovered branches are arguments the tables never produce, not
+// an unloaded module - so the blind spot stays 26. It also made
+// `agent/lib/self-restart-guard.ts` exported to the guard and measured at 100% lines.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
