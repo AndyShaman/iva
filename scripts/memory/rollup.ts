@@ -543,14 +543,18 @@ if (period === "daily") {
   if (damage.damaged) {
     writeFileAtomicSync(CORE_PATH, coreBeforeTurn);
     core = coreBeforeTurn;
-    const lost = damage.lostHeadings.map((h) => `## ${h}`).join(", ");
+    const damagedHeadings = [
+      ...damage.lostHeadings,
+      ...damage.hollowedHeadings,
+    ];
+    const lost = damagedHeadings.map((h) => `## ${h}`).join(", ");
     console.error(
       `rollup daily: CORE.md lost ${lost || "all of its content"} during the turn — restored the pre-turn file`,
     );
     await alertOwner(
       CORE_DAMAGE_ALERT_KEY,
-      damage.lostHeadings.join(",") || "emptied",
-      coreDamageAlert(tr, damage.lostHeadings),
+      damagedHeadings.join(",") || "emptied",
+      coreDamageAlert(tr, damagedHeadings),
     );
   } else {
     alertResolved(DATA_DIR, CORE_DAMAGE_ALERT_KEY);
