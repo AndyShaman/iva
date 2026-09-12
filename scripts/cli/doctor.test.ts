@@ -104,6 +104,30 @@ async function doctorOutput(root: string): Promise<{
   return { events, summaryLogs };
 }
 
+/** Доктор с подменённым каталогом данных: правила владельца читаются из своего sandbox. */
+async function ownerRulesEvents(
+  root: string,
+  data: string,
+): Promise<Array<[string, string]>> {
+  const events: Array<[string, string]> = [];
+  const runtime: CliRuntime = {
+    ...createCliRuntime(root),
+    C: NO_COLOR,
+    ok: (message) => events.push(["ok", message]),
+    warn: (message) => events.push(["warn", message]),
+    bad: (message) => events.push(["bad", message]),
+    readEnv: completeEnv,
+    dataDirAbs: () => data,
+    hasSystemd: () => false,
+  };
+  await createDoctorCommand(runtime, lifecycle(), {
+    nodeVersion: "24.19.0",
+    log: () => undefined,
+    exit: () => undefined,
+  })();
+  return events;
+}
+
 async function bridgeBacklogEvents(
   root: string,
   {
@@ -1367,5 +1391,48 @@ test("doctor says nothing about a plugin whose config is valid or absent", async
     events.filter(([, message]) => message.includes("unusable")),
     [],
     "исправный и отсутствующий конфиг доктор не комментирует",
+  );
+});
+
+test("doctor counts the owner rules", async (t) => {
+  const root = await sandbox(t);
+  const data = join(root, "data");
+  const rules = "- no emoji\n- one paragraph per reply\n";
+  mkdirSync(join(data, "custom/agent/instructions"), { recursive: true });
+  writeFileSync(join(data, "custom/agent/instructions/rules.md"), rules);
+
+  const events = await ownerRulesEvents(root, data);
+
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "ok" &&
+        message === `owner rules: 1 file, ${rules.length} chars`,
+    ),
+  );
+  assert.ok(!events.some(([, message]) => message.includes("deprecated")));
+});
+
+test("doctor names the deprecated replacement and an oversized rules file", async (t) => {
+  const root = await sandbox(t);
+  const data = join(root, "data");
+  mkdirSync(join(data, "custom/agent/instructions"), { recursive: true });
+  writeFileSync(join(data, "custom/agent/instructions.md"), "replacement\n");
+  writeFileSync(
+    join(data, "custom/agent/instructions/rules.md"),
+    "x".repeat(4100),
+  );
+
+  const events = await ownerRulesEvents(root, data);
+
+  assert.ok(
+    events.some(
+      ([level, message]) => level === "warn" && /deprecated/u.test(message),
+    ),
+  );
+  assert.ok(
+    events.some(
+      ([level, message]) => level === "warn" && /4000/u.test(message),
+    ),
   );
 });

@@ -942,11 +942,52 @@ export function createDoctorCommand(
       }
     }
 
+    // Правила владельца: markdown-файлы слота читает с диска
+    // agent/instructions/30-owner-rules.ts, поэтому доктору нужен только счёт. Файл-замена
+    // инструкции заморожен на дне правки и прячет всё, что приехало релизом, — его доктор
+    // называет отдельно, а не молчит (как у плагинов, когда тех нет).
+    async function checkOwnerRules(): Promise<void> {
+      const custom = join(dataDirectory, "custom", "agent");
+      if (existsSync(join(custom, "instructions.md"))) {
+        warn(
+          "replacement persona data/custom/agent/instructions.md is deprecated and hides every rule shipped since it was written - move your rules to data/custom/agent/instructions/rules.md (docs/extending.md) and remove the file",
+        );
+        warnN++;
+      }
+      let rules: typeof import("../../agent/lib/owner-rules.ts");
+      try {
+        rules = await import("../../agent/lib/owner-rules.ts");
+      } catch {
+        // Авторское дерево недоступно (урезанная установка) — считать правила нечем.
+        warn(
+          "owner rules not checked: the agent tree is missing — run: iva update",
+        );
+        warnN++;
+        return;
+      }
+      const { files, chars } = rules.readOwnerRules(
+        join(custom, "instructions"),
+      );
+      if (files.length === 0) return;
+      if (chars > rules.OWNER_RULES_CAP) {
+        warn(
+          `owner rules: ${chars} chars over the ${rules.OWNER_RULES_CAP} cap - shorten or move the long part into a skill`,
+        );
+        warnN++;
+        return;
+      }
+      ok(
+        `owner rules: ${files.length} file${files.length === 1 ? "" : "s"}, ${chars} chars`,
+      );
+      okN++;
+    }
+
     // Plugins (ADR-0009) идут последними и в обоих выходах доктора: манифесты,
     // plugins.json, сборка кода в работающей версии и юниты — MCP proxy с его
     // `/health` и сервисы плагина.
     async function finish(): Promise<void> {
       await checkPlugins();
+      await checkOwnerRules();
       log();
       log(
         `${C.b}Summary:${C.x} ${C.g}${okN} ok${C.x} · ${C.y}${warnN} warn${C.x} · ${C.c}${fixN} fixed${C.x} · ${C.r}${badN} fail${C.x}`,
