@@ -362,13 +362,14 @@ if (supersede.status === 0) {
         console.error(
           `brain: supersede report entry ${entry.index} ${entry.problem}`,
         );
-      for (const item of skipped) supersedeSkippedPaths.add(item.path);
       // Пока в отчёте есть чужая запись, про пропущенные карточки не утверждается
       // ничего: ни алерта (счёт был бы неполон), ни его гашения (гашение сказало бы
-      // «всё чисто»). Шаг провален, владелец увидит его в общем алерте ночи.
+      // «всё чисто»), ни гашения карточек в алерте про незакрытый фенс: список путей
+      // заведомо неполон. Шаг провален, владелец увидит его в общем алерте ночи.
       if (wrong.length) {
         failures.push("supersede");
       } else if (skipped.length) {
+        for (const item of skipped) supersedeSkippedPaths.add(item.path);
         const count = skipped.length;
         const essence = createHash("sha256")
           .update(JSON.stringify(skipped))

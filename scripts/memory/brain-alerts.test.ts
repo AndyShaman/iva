@@ -261,6 +261,124 @@ exit 0
   });
 }
 
+test("a failed supersede step suppresses neither the missed Cards nor the fence alert", (t) => {
+  // Провальный шаг ничего не гасит: счёт пропущенных карточек заведомо неполон, значит и
+  // «эти карточки уже учтены» сказать нельзя — карточка с незакрытым фенсом обязана
+  // остаться в алерте фенса, иначе владелец про неё не узнает вовсе.
+  const home = mkdtempSync(join(tmpdir(), "iva-supersede-failed-skip-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const vault = join(home, "vault");
+  const dataDir = join(home, "data");
+  const bin = join(home, "bin");
+  mkdirSync(join(vault, "cards"), { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(vault, "CORE.md"), "# CORE\n");
+  writeFileSync(
+    join(vault, "cards", "unreadable.md"),
+    "---\ntype: note\n---\n```\nnever closed\n",
+  );
+
+  // Валидная запись (карточка с фенсом) плюс чужая: шаг провален, разбор неполон.
+  const skipped = [
+    { path: "cards/unreadable.md", reason: "malformed_frontmatter" },
+    { file: "cards/private-name.md", why: "нипочему" },
+  ];
+  const uv = join(bin, "uv");
+  writeFileSync(
+    uv,
+    `#!/bin/sh
+/bin/mkdir -p .graph
+printf '%s\\n' '${JSON.stringify({ skipped })}' > .graph/supersede-report.json
+exit 0
+`,
+  );
+  chmodSync(uv, 0o755);
+
+  const run = spawnSync(process.execPath, ["scripts/memory/brain.ts"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      PATH: bin,
+      ASSISTANT_VAULT_DIR: vault,
+      ASSISTANT_DATA_DIR: dataDir,
+      ASSISTANT_TIMEZONE: "UTC",
+      AGENT_LANGUAGE: "en",
+    },
+  });
+
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(
+    run.stderr,
+    /Nightly memory care failed at: [^.]*supersede/u,
+    run.stderr,
+  );
+  // Алерта про пропущенные карточки нет: шаг провален, а не чист.
+  assert.doesNotMatch(
+    run.stderr,
+    /Supersede skipped unreadable Cards\./u,
+    run.stderr,
+  );
+  // Провальный шаг не гасит и алерт фенса: карточка из неполного списка остаётся в нём.
+  assert.match(
+    run.stderr,
+    /Cards with an unclosed ``` fence: 1\./u,
+    run.stderr,
+  );
+  assert.match(run.stderr, /cards\/unreadable\.md/u, run.stderr);
+  // Чужая запись в журнал не течёт.
+  assert.doesNotMatch(run.stderr, /private-name/u, run.stderr);
+});
+
+test("a reason that looks like a path is never printed in the journal", (t) => {
+  // Значение reason печатается, только если оно похоже на причину supersede.py
+  // (/^[a-z0-9_]{1,40}$/): чужой путь в журнал не уезжает.
+  const home = mkdtempSync(join(tmpdir(), "iva-supersede-reason-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const vault = join(home, "vault");
+  const dataDir = join(home, "data");
+  const bin = join(home, "bin");
+  mkdirSync(join(vault, "cards"), { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(vault, "CORE.md"), "# CORE\n");
+  writeFileSync(
+    join(vault, "cards", "ok.md"),
+    "---\ntype: note\n---\n\n# Ok\n\nfacts\n",
+  );
+
+  const uv = join(bin, "uv");
+  writeFileSync(
+    uv,
+    `#!/bin/sh
+/bin/mkdir -p .graph
+printf '%s\\n' '${JSON.stringify({ skipped: [{ path: "cards/x.md", reason: "../../etc/passwd" }] })}' > .graph/supersede-report.json
+exit 0
+`,
+  );
+  chmodSync(uv, 0o755);
+
+  const run = spawnSync(process.execPath, ["scripts/memory/brain.ts"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      PATH: bin,
+      ASSISTANT_VAULT_DIR: vault,
+      ASSISTANT_DATA_DIR: dataDir,
+      ASSISTANT_TIMEZONE: "UTC",
+      AGENT_LANGUAGE: "en",
+    },
+  });
+
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(
+    run.stderr,
+    /supersede report entry 0 has an unknown "reason"/u,
+    run.stderr,
+  );
+  assert.doesNotMatch(run.stderr, /passwd/u, run.stderr);
+});
+
 test("Supersede skip report raises one actionable throttled Alert without Card data", (t) => {
   const home = mkdtempSync(join(tmpdir(), "iva-supersede-alert-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
