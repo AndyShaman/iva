@@ -355,6 +355,30 @@ test("жизненный цикл и права 0600", async () => {
     /nextRunAtMs must be a safe integer greater than 11060000/u,
   );
 
+  // Пропущенный срок повторяющегося напоминания уезжает в будущее тем же вызовом,
+  // которым отмечен провал: иначе следующий тик выдал бы его снова.
+  await assert.rejects(
+    complete("every-morning", {
+      nowMs: now + 60_000,
+      status: "failed",
+      error: "gave up on this occurrence: boom",
+      nextRunAtMs: now + 60_000,
+    }),
+    /nextRunAtMs must be a safe integer greater than 11060000/u,
+  );
+  await complete("every-morning", {
+    nowMs: now + 60_000,
+    status: "failed",
+    error: "gave up on this occurrence: boom",
+    nextRunAtMs: now + 120_000,
+  });
+  rows = await list();
+  assert.equal(rows[0].lastStatus, "failed");
+  assert.equal(rows[0].lastError, "gave up on this occurrence: boom");
+  assert.equal(rows[0].nextRunAtMs, now + 120_000);
+  assert.equal(rows[0].deliveredKey, "k2", "провал не трогает ключ доставки");
+  assert.equal(rows[0].leaseUntilMs, null);
+
   await assert.rejects(remove("nope"), /nope/);
   assert.equal(statSync(reminderFile()).mode & 0o777, 0o600);
 });

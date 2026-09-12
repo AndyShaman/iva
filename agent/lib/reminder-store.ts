@@ -47,7 +47,7 @@ export type ReminderInput = {
 };
 export type ReminderOutcome =
   | { nowMs: number; status: "ok"; deliveredKey: string; nextRunAtMs?: number }
-  | { nowMs: number; status: "failed"; error: string };
+  | { nowMs: number; status: "failed"; error: string; nextRunAtMs?: number };
 
 const ROW_KEYS = [
   "id",
@@ -489,6 +489,20 @@ export async function complete(
     if (outcome.status === "failed") {
       if (outcome.error.length === 0)
         badReminder(file, idLabel, "error must be a non-empty string");
+      // Пропущенный срок повторяющегося напоминания уезжает в будущее тем же вызовом:
+      // иначе строка осталась бы просроченной и следующий тик выдал бы её снова.
+      if (outcome.nextRunAtMs !== undefined) {
+        if (
+          !isSafeInt(outcome.nextRunAtMs) ||
+          outcome.nextRunAtMs <= row.nextRunAtMs
+        )
+          badReminder(
+            file,
+            idLabel,
+            `nextRunAtMs must be a safe integer greater than ${row.nextRunAtMs}, got ${JSON.stringify(outcome.nextRunAtMs)}`,
+          );
+        row.nextRunAtMs = outcome.nextRunAtMs;
+      }
       row.lastRunAtMs = outcome.nowMs;
       row.lastStatus = "failed";
       row.lastError = outcome.error;
