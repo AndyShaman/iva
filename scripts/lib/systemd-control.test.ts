@@ -54,6 +54,9 @@ async function fixture(t: TestContext) {
     recursive: true,
   });
   await symlink(join(ROOT, "scripts/lib"), join(project, "scripts/lib"), "dir");
+  // Дерево пакетов целиком и ссылкой: `scripts/cli` здесь копия, поэтому его относительные
+  // импорты в `packages/` должны разрешаться внутри фикстуры (T20: packages/secret-redaction).
+  await symlink(join(ROOT, "packages"), join(project, "packages"), "dir");
   // The real nightly entrypoint: the retained-legacy-unit tests check that the unit kept on
   // disk names a script that actually exists in the tree it will run against.
   await symlink(

@@ -39,25 +39,11 @@ async function createAccountFixture(t: TestContext): Promise<AccountFixture> {
   await cp(join(ROOT, "scripts"), join(project, "scripts"), {
     recursive: true,
   });
-  await cp(
-    join(ROOT, "packages/data-dir"),
-    join(project, "packages/data-dir"),
-    {
-      recursive: true,
-    },
-  );
-  await cp(
-    join(ROOT, "packages/timezone"),
-    join(project, "packages/timezone"),
-    {
-      recursive: true,
-    },
-  );
-  await cp(
-    join(ROOT, "packages/context-window"),
-    join(project, "packages/context-window"),
-    { recursive: true },
-  );
+  // Всё дерево пакетов целиком, а не список по именам: списком забывают новый пакет, и
+  // тогда CLI в фикстуре падает на импорте, которого нет (T20: packages/secret-redaction).
+  await cp(join(ROOT, "packages"), join(project, "packages"), {
+    recursive: true,
+  });
   await symlink(
     join(ROOT, "node_modules"),
     join(project, "node_modules"),

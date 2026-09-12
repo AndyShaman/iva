@@ -105,11 +105,14 @@ function escapes(): string[] {
   return [...found].sort();
 }
 
-test("the authored tree has one explicit shared-package edge", () => {
+test("the authored tree has only its explicit shared-package edges", () => {
   assert.deepEqual(
     escapes(),
-    ["agent/lib/data-dir.ts -> ../../packages/data-dir/index.ts"],
-    "agent/ may leave its tree only for the canonical data-dir package that Eve bundles",
+    [
+      "agent/lib/data-dir.ts -> ../../packages/data-dir/index.ts",
+      "agent/lib/job-facts.ts -> ../../packages/secret-redaction/index.ts",
+    ],
+    "agent/ may leave its tree only for a shared package Eve bundles: the canonical data-dir, and the one rule that cuts secrets for both `iva diagnose` and the schedule log tail the agent reads (a second copy of that rule is how a token inside `bot<token>` stayed in data/jobs.json)",
   );
 });
 

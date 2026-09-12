@@ -11,6 +11,10 @@
 // выключить и провалы, и сторожа.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  redact,
+  secretValuesFromEnv,
+} from "../../packages/secret-redaction/index.ts";
 import { dataDir } from "./data-dir.ts";
 import {
   acquireLock,
@@ -25,11 +29,12 @@ export const JOB_FACT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const JOB_TAIL_LINES = 20;
 export const JOB_TAIL_MAX_CHARS = 4000;
 
-/** Имена ключей, значения которых не попадают в хвост (см. правила билдера). */
-const SECRET_ENV_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|BEARER)$/iu;
-/** Телеграм-токен узнаётся и без env: цифры, двоеточие, длинный хвост. */
-const TELEGRAM_TOKEN = /\b\d{6,}:[A-Za-z0-9_-]{20,}\b/gu;
-const REDACTED = "<redacted>";
+/**
+ * Короткое значение окружения секретом не считаем: сюда приходит ВСЁ окружение процесса,
+ * а не `.env`-файл, и `SHLVL=1` вычистил бы из хвоста каждую единицу. Всё остальное режется
+ * по общему правилу (packages/secret-redaction/index.ts).
+ */
+const MIN_ENV_SECRET_CHARS = 4;
 
 export class JobFactsError extends Error {}
 
@@ -56,21 +61,27 @@ export function jobFactsFile(dir: string = dataDir()): string {
 }
 
 /**
- * Хвост для факта: последние 20 строк, значения секретных ключей вырезаны. Хвост
- * складывается из stdout+stderr ребёнка, поэтому в него попадает всё, что скрипт
- * печатал, включая случайно выведенный ключ.
+ * Хвост для факта: последние 20 строк без секретов. Хвост складывается из stdout+stderr
+ * ребёнка, поэтому в него попадает всё, что скрипт печатал, — и хвост едет дальше двумя
+ * путями: в data/jobs.json и в текст хода пробуждения, откуда модель может его
+ * процитировать владельцу. Поэтому правило вырезания здесь ровно то же, что у пакета улик
+ * `iva diagnose` (packages/secret-redaction/index.ts): значение любого ключа, кроме
+ * настроечных, пароль из userinfo URL, токен бота в любом месте строки, личный id рядом с
+ * меткой и e-mail. Свой шаблон здесь был слабее и пропускал и токен внутри `bot<token>`,
+ * и пароль в `CUSTOM_BASE_URL` (слепая приёмка T20).
  */
 export function jobTail(
   tail: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  let text = tail.replace(TELEGRAM_TOKEN, REDACTED);
-  for (const [name, value] of Object.entries(env)) {
-    if (!SECRET_ENV_NAME.test(name)) continue;
-    const secret = (value ?? "").trim();
-    if (secret.length < 4) continue;
-    text = text.split(secret).join(REDACTED);
-  }
+  const named: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env))
+    if (
+      typeof value === "string" &&
+      value.trim().length >= MIN_ENV_SECRET_CHARS
+    )
+      named[name] = value;
+  const text = redact(tail, secretValuesFromEnv(named));
   const lines = text
     .split("\n")
     .map((line) => line.trimEnd())

@@ -337,9 +337,9 @@ function seed(tree: string): void {
     "scripts/cli",
     "scripts/lib",
     "scripts/migrations",
-    "packages/context-window",
-    "packages/data-dir",
-    "packages/timezone",
+    // Дерево пакетов целиком: список по именам забывает новый пакет, и установка в
+    // фикстуре падает на импорте, которого нет (T20: packages/secret-redaction).
+    "packages",
     "deploy",
   ])
     cpSync(join(REPO, path), join(tree, path), {

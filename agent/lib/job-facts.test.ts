@@ -159,6 +159,31 @@ test("хвост: последние 20 строк, секреты выреза�
   assert.ok(tail.includes("<redacted>"));
 });
 
+test("хвост режет токен внутри bot<token> и пароль из ключа без приметы", () => {
+  // Две формы из слепой приёмки T20: токен стоит внутри `bot<token>` в URL Bot API (границы
+  // слова его не ловили), а пароль лежит в значении ключа `CUSTOM_BASE_URL` — в имени ключа
+  // нет ни KEY, ни TOKEN, ни PASSWORD, и прежний список примет его не видел.
+  const token = "1234567890:AAF3xK9mQ7vR2sT5uW8yZ1bC4dE6fG0hI2j";
+  const env = {
+    TELEGRAM_BOT_TOKEN: "совсем другое значение",
+    CUSTOM_BASE_URL: "https://buser:bpass1111@api.example.com/v1",
+  };
+  const tail = jobTail(
+    [
+      `GET https://api.telegram.org/bot${token}/sendMessage 401 failed`,
+      "provider rejected https://buser:bpass1111@api.example.com/v1 end",
+      "upstream said password bpass1111 is wrong",
+    ].join("\n"),
+    env,
+  );
+  assert.ok(!tail.includes(token), "токен внутри bot<token> остался в хвосте");
+  assert.ok(
+    !tail.includes("bpass1111"),
+    "пароль из значения .env остался в хвосте",
+  );
+  assert.ok(tail.includes("<redacted>"));
+});
+
 test("чужой корень файла — ошибка, битые строки пропускаются", async () => {
   const file = jobFactsFile(dir());
   writeFileSync(file, JSON.stringify({ runs: [] }));

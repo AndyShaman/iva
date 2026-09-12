@@ -79,6 +79,43 @@ void test("провал: факт с причиной и хвостом, про�
   assert.deepEqual(woken, ["digest"]);
 });
 
+void test("хвост факта не несёт пароль из окружения запуска", async () => {
+  // Репро слепой приёмки T20 (a4): ребёнок печатает URL с паролем, значение лежит в
+  // окружении запуска под ключом без слова-приметы — в data/jobs.json пароля быть не должно.
+  const root = await scaffold();
+  await writeFile(
+    join(root, "leak.ts"),
+    'process.stdout.write("provider " + process.env.CUSTOM_BASE_URL + " rejected\\n");\n' +
+      // Пароль отдельным словом, без `@`: так его не спасёт ни одна форма, кроме правила
+      // «значение ключа .env — секрет» (иначе пароль вырезал бы шаблон e-mail).
+      'process.stdout.write("upstream says bpass1111 is wrong\\n"); process.exit(3);\n',
+  );
+  const factsPath = join(root, "data/jobs.json");
+  await mkdir(join(root, "data"), { recursive: true });
+
+  await runScheduledJob({
+    name: "digest",
+    argv: ["leak.ts"],
+    root,
+    nodeBin: process.execPath,
+    factsPath,
+    env: {
+      ...process.env,
+      CUSTOM_BASE_URL: "https://buser:bpass1111@api.example.com/v1",
+    },
+    wakeImpl: () => {},
+    log: () => {},
+  });
+
+  const [written] = await readFacts(factsPath);
+  assert.ok(written, "факт записан");
+  assert.ok(
+    !written.tail.includes("bpass1111"),
+    `пароль доехал до таблицы фактов: ${written.tail}`,
+  );
+  assert.ok(written.tail.includes("<redacted>"), written.tail);
+});
+
 void test("wake:false пишет факт, но не будит", async () => {
   const root = await scaffold();
   await writeFile(join(root, "ok.ts"), "process.exit(0);\n");
