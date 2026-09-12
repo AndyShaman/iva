@@ -61,6 +61,20 @@ function wallClockMs(
 /** Разовое время: `in 30m`, `14:30`, `2026-09-14 09:00` или ISO-момент со смещением. */
 export function resolveAt(input: string, nowMs: number, tz: string): number {
   const value = input.trim();
+  try {
+    return resolveAtValue(value, nowMs, tz);
+  } catch (error) {
+    if (error instanceof ReminderTimeError) throw error;
+    // Битый ASSISTANT_TIMEZONE: Intl бросает сырой RangeError, а контракт модуля —
+    // один тип ошибки на любой негодный вход; иначе форма «14:30» падает иначе,
+    // чем остальной мусор дат.
+    throw new ReminderTimeError(`at: unknown time zone ${JSON.stringify(tz)}`, {
+      cause: error,
+    });
+  }
+}
+
+function resolveAtValue(value: string, nowMs: number, tz: string): number {
   let result: number;
 
   if (RELATIVE.test(value)) {
