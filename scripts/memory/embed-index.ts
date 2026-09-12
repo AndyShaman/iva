@@ -24,8 +24,9 @@ import {
   hasEmbeddingKey,
 } from "../../agent/lib/embeddings.ts";
 import { embedText } from "../../agent/lib/card-index.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
-const VAULT = process.env.ASSISTANT_VAULT_DIR || "vault";
+const VAULT = resolveVaultDir(process.cwd());
 const SCOPE = ["cards", "summaries", "weekly", "monthly", "yearly"];
 const IGNORE = new Set([
   ".git",

@@ -10,7 +10,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   archiveInvalidCustomLayer,
@@ -24,6 +24,7 @@ import {
 } from "./lib/custom-layer.ts";
 import { resolveDataDir } from "./lib/data-dir.ts";
 import { classifyRoot, isEntrypoint } from "./lib/version-layout.ts";
+import { resolveVaultDir } from "../packages/vault-dir/index.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const BUILD_ROOT = join(ROOT, ".iva-build");
@@ -50,14 +51,9 @@ function dataDir(): string {
 }
 
 function copySourceTree(staging: string): void {
-  const configuredVault = process.env.ASSISTANT_VAULT_DIR || "vault";
   const privateRoots = [
     resolve(dataDir()),
-    resolve(
-      isAbsolute(configuredVault)
-        ? configuredVault
-        : join(ROOT, configuredVault),
-    ),
+    resolveVaultDir(ROOT, process.env.ASSISTANT_VAULT_DIR),
   ];
   const isPrivateRoot = (source: string): boolean => {
     const absolute = resolve(source);

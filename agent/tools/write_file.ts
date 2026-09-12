@@ -3,6 +3,7 @@ import { z } from "zod";
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../lib/fs-atomic.js";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // Host-native запись файла. Переопределяет встроенный write_file eve: пишет реальный
 // файл на VPS через каноническую атомарную запись, создавая родительские директории.
@@ -11,8 +12,6 @@ import { writeFileAtomic } from "../lib/fs-atomic.js";
 // это полная замена файла, из-за которой терялись поля (tier/relevance/phone…) и старый текст.
 // Такие правки идут через write_card (он сливает). Всё остальное (vault/CORE.md, daily,
 // новые файлы в cards/) write_file пишет как раньше — см. instructions/10-map.md.
-
-const VAULT = () => process.env.ASSISTANT_VAULT_DIR || "vault";
 
 type PathProbe =
   | { readonly kind: "path"; readonly path: string }
@@ -44,7 +43,7 @@ function cardVerdict(path: string): CardVerdict {
   // Файла нет — перезаписывать нечего, и где вольт, знать не требуется.
   if (!existsSync(abs)) return { card: false };
 
-  const vault = resolve(VAULT());
+  const vault = resolveVaultDir(process.cwd());
   const cardsPath = join(vault, "cards");
   const root = probe(vault);
   if (root.kind === "absent")
@@ -81,7 +80,7 @@ export default defineTool({
   async execute({ path, content }) {
     const verdict = cardVerdict(path);
     if ("undecidable" in verdict) {
-      const error = `не могу проверить ${join(resolve(VAULT()), "cards")}: ${verdict.undecidable}`;
+      const error = `не могу проверить ${join(resolveVaultDir(process.cwd()), "cards")}: ${verdict.undecidable}`;
       console.error(`[write_file] ${error}`);
       return { ok: false, path, error };
     }

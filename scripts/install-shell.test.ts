@@ -507,10 +507,13 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
   );
   writeFileSync(join(install, "bin/iva.mjs"), IVA_CLI);
   writeFileSync(join(install, "scripts/init-vault.mjs"), "");
-  cpSync(
-    join(ROOT, "packages/data-dir/index.ts"),
-    join(install, "packages/data-dir/index.ts"),
-  );
+  for (const name of ["data-dir", "vault-dir"]) {
+    mkdirSync(join(install, "packages", name), { recursive: true });
+    cpSync(
+      join(ROOT, "packages", name, "index.ts"),
+      join(install, "packages", name, "index.ts"),
+    );
+  }
   for (const name of ["env-file.ts", "version-layout.ts", "version-store.ts"])
     cpSync(join(ROOT, "scripts/lib", name), join(install, "scripts/lib", name));
   writeFileSync(join(install, "README.md"), "# fixture\n");

@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CORE_CAP } from "../lib/core-cap.ts";
 import { clampCore } from "../lib/core-clamp.ts";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // Динамическая инструкция: каждый турн инжектит CORE (vault/CORE.md) в системный
 // промпт — кто пользователь, постоянные предпочтения, активные цели, указатели. Это always-on
 // RAM памяти (аналог core memory у MemGPT): маленькое, переживает компактацию (инструкции —
 // не часть сжимаемой истории диалога). Пишет CORE ночной rollup; живой чат правит его только
 // на явное «запомни …». Clamp чистый и общий с ночным brain.
-const VAULT = process.env.ASSISTANT_VAULT_DIR ?? "vault";
+const VAULT = resolveVaultDir(process.cwd());
 
 function coreMarkdown(): string {
   let core: string;

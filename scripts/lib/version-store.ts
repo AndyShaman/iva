@@ -20,6 +20,7 @@ import {
   VERSION_DIRECTORY_PATTERN,
 } from "../../packages/data-dir/index.ts";
 import { parseEnvText } from "./env-file.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
 const INCOMPLETE = ".iva-incomplete";
 const SETTLED = "active.json";
@@ -112,7 +113,7 @@ export function layoutFor(home: string) {
     versions: join(home, "versions"),
     current: join(home, "current"),
     data: resolveDataDir(home, values.ASSISTANT_DATA_DIR),
-    vault: stateDir(home, values.ASSISTANT_VAULT_DIR, "vault"),
+    vault: resolveVaultDir(home, values.ASSISTANT_VAULT_DIR),
     env,
     // Already parsed to find the state directories; handed back so the updater does not
     // read and parse the same file again to check one more value.

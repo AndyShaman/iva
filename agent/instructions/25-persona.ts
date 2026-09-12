@@ -1,6 +1,7 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // Динамическая инструкция: каждый турн инжектит PERSONA Ивы (vault/PERSONA.md) в
 // системный промпт — тон, инициативность, стиль ответов, настроенные тестом-квизом в
@@ -8,7 +9,7 @@ import { join } from "node:path";
 // (инструкции — не часть сжимаемой истории диалога), применяется со следующего
 // сообщения без рестарта (квиз пишет файл — инструкция его подхватывает на очередном
 // турне). Самодостаточна — только eve + node fs/path (гоча eve 0.11.4).
-const VAULT = process.env.ASSISTANT_VAULT_DIR ?? "vault";
+const VAULT = resolveVaultDir(process.cwd());
 const MAX_CHARS = 800; // жёсткий лимит персоны — держим always-on пол плоским.
 
 function personaMarkdown(): string {

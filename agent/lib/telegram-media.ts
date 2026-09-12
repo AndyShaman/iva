@@ -26,6 +26,7 @@ import { readTelegramMessageText } from "./telegram-rich-message.ts";
 import { imageMediaType, MAX_IMAGE_BYTES } from "./attachment-ref.ts";
 import { appendDaily, localStamp, saveBlob } from "./vault-daily.ts";
 import type { TelegramRawMedia, TelegramRawMessage } from "./telegram-parts.ts";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 export type TelegramMediaEffects = {
   readonly request: (
@@ -111,9 +112,7 @@ export async function processMediaPart(
       let bytes: ArrayBuffer | undefined;
       if (rel) {
         try {
-          const saved = readFileSync(
-            join(process.env.ASSISTANT_VAULT_DIR || "vault", rel),
-          );
+          const saved = readFileSync(join(resolveVaultDir(process.cwd()), rel));
           bytes = saved.buffer.slice(
             saved.byteOffset,
             saved.byteOffset + saved.byteLength,
@@ -243,6 +242,9 @@ export async function processMediaPart(
       return { kind: "silent", context: [] };
     }
 
+    // Путь в ТЕКСТЕ хода, а не на диске: владелец видит его как задал
+    // (относительный `vault/...` по умолчанию), поэтому здесь сырое значение
+    // окружения, а не resolveVaultDir. Файловые шаги резолвером не ходят.
     const path = `${process.env.ASSISTANT_VAULT_DIR || "vault"}/${rel}`;
     const isImage =
       media.tag === "photo" ||

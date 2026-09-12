@@ -12,13 +12,12 @@ import {
 } from "../lib/card-store.js";
 import { parseFrontmatterOrSkip } from "../lib/frontmatter.js";
 import { resolveTimeZone } from "../lib/timezone.js";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // Строго типизированная запись карточки памяти. Заменяет «write_file по наитию» для карточек:
 // zod-enum на type/status берётся из autograph schema.json (единый источник правды), поэтому
 // модель НЕ может выдумать тип или добавить неизвестное поле — вызов упадёт на валидации.
 // Ночной enforce.py остаётся backstop'ом для всего, что записалось мимо этого тула.
-
-const VAULT = () => process.env.ASSISTANT_VAULT_DIR || "vault";
 
 // Типы карточек, которые модель создаёт интерактивно (summary-типы пишет ночной rollup, не тул).
 const CARD_TYPE_DIR: Record<string, string> = {
@@ -100,8 +99,14 @@ function asStringRecord(value: unknown): Record<string, string> | null {
 // Схема vault'а: корень vault'а → легаси `.claude`-путь (vault'ы до 0.3.3) → дефолт из репо.
 function schemaPath(): string {
   const candidates = [
-    join(VAULT(), "schema.json"),
-    join(VAULT(), ".claude", "skills", "autograph", "schema.json"),
+    join(resolveVaultDir(process.cwd()), "schema.json"),
+    join(
+      resolveVaultDir(process.cwd()),
+      ".claude",
+      "skills",
+      "autograph",
+      "schema.json",
+    ),
     join("scripts", "autograph", "schema.example.json"),
   ];
   return candidates.find((p) => existsSync(p)) ?? candidates[0];
@@ -266,13 +271,17 @@ export default defineTool({
       };
     }
 
-    const dir = join(VAULT(), "cards", CARD_TYPE_DIR[type]);
+    const dir = join(
+      resolveVaultDir(process.cwd()),
+      "cards",
+      CARD_TYPE_DIR[type],
+    );
     // Идентичность: точный слаг → иначе карточка того же типа с таким же H1/name/aliases
     // (легаси-файлы с латинским слагом и кириллическим заголовком).
     const id = resolveCard(dir, title);
     if (id.candidates && id.candidates.length > 1) {
       const list = id.candidates.map((f) =>
-        relative(VAULT(), f).split(sep).join("/"),
+        relative(resolveVaultDir(process.cwd()), f).split(sep).join("/"),
       );
       return {
         ok: false,
@@ -283,7 +292,9 @@ export default defineTool({
       };
     }
     const file = id.file;
-    const rel = relative(VAULT(), file).split(sep).join("/");
+    const rel = relative(resolveVaultDir(process.cwd()), file)
+      .split(sep)
+      .join("/");
 
     // Пробельная пустота history_entry (value.trim() === "") ничего не вытесняет и не
     // подделывает History: для UPDATE и NOOP она равна отсутствующему полю — так же, как

@@ -550,11 +550,10 @@ test("the public build falls back to core when Git metadata is unavailable", (t)
   cpSync(join(PROJECT_ROOT, "scripts/lib"), join(root, "scripts/lib"), {
     recursive: true,
   });
-  cpSync(
-    join(PROJECT_ROOT, "packages/data-dir"),
-    join(root, "packages/data-dir"),
-    { recursive: true },
-  );
+  for (const name of ["data-dir", "vault-dir"])
+    cpSync(join(PROJECT_ROOT, "packages", name), join(root, "packages", name), {
+      recursive: true,
+    });
   symlinkSync(
     join(PROJECT_ROOT, "node_modules"),
     join(root, "node_modules"),

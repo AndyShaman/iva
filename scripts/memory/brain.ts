@@ -30,8 +30,9 @@ import { notificationChat } from "../lib/notification-chat.ts";
 import { redactNotice } from "../lib/notice.ts";
 import { resolveDataDir } from "../lib/data-dir.ts";
 import { resolveTimeZone } from "../lib/timezone.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
-const VAULT = resolve(process.env.ASSISTANT_VAULT_DIR ?? "vault");
+const VAULT = resolveVaultDir(process.cwd());
 const DATA_DIR = resolveDataDir(process.cwd());
 // The autograph code lives in THIS repo, not in the vault: the vault is user data only.
 // Absolute paths, because every script is spawned with cwd = VAULT (they take "." as the vault).

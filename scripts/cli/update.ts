@@ -24,6 +24,7 @@ import {
 } from "../lib/update-safety.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 type CliSystemd = ReturnType<typeof createCliSystemd>;
@@ -402,10 +403,7 @@ export function createUpdateCommand({
       // The script comes from the freshly updated repo, so it is always the current version —
       // best-effort: it never fails an update.
       try {
-        const vaultRel = readEnv().ASSISTANT_VAULT_DIR || "vault";
-        const vaultDir = vaultRel.startsWith("/")
-          ? vaultRel
-          : join(ROOT, vaultRel);
+        const vaultDir = resolveVaultDir(ROOT, readEnv().ASSISTANT_VAULT_DIR);
         const cleanupScript = join(ROOT, "scripts/autograph/cleanup.py");
         const cleaned = ops.spawnSync(
           "uv",

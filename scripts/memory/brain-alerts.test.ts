@@ -576,6 +576,7 @@ function runBrainWithoutTree(
   mkdirSync(join(island, "scripts/memory"), { recursive: true });
   mkdirSync(join(island, "scripts/lib"), { recursive: true });
   mkdirSync(join(island, "packages/data-dir"), { recursive: true });
+  mkdirSync(join(island, "packages/vault-dir"), { recursive: true });
   mkdirSync(join(island, "packages/timezone"), { recursive: true });
   writeFileSync(
     join(island, "package.json"),
@@ -606,6 +607,11 @@ function runBrainWithoutTree(
     copyFileSync(
       join(ROOT, "packages/timezone", name),
       join(island, "packages/timezone", name),
+    );
+  for (const name of ["index.ts", "package.json"])
+    copyFileSync(
+      join(ROOT, "packages/vault-dir", name),
+      join(island, "packages/vault-dir", name),
     );
 
   const vault = join(home, "vault");

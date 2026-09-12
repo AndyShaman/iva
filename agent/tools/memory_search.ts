@@ -7,6 +7,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { embedTexts, cosine, hasEmbeddingKey } from "../lib/embeddings.js";
 import { cardIndex, cardTitle } from "../lib/card-index.js";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // node:sqlite — встроенный модуль (Node 24+). В ESM нет глобального require, поэтому
 // поднимаем его через createRequire; грузим лениво внутри bm25Search (с fallback, если нет).
@@ -18,7 +19,6 @@ const nodeRequire = createRequire(import.meta.url);
 // (его пишет autograph graph.py каждую ночь). Деградирует мягко: любой сбой движка →
 // подстрочный fallback, ход НЕ падает.
 
-const VAULT = () => process.env.ASSISTANT_VAULT_DIR || "vault";
 const IGNORE_DIRS = new Set([
   ".git",
   "node_modules",
@@ -87,7 +87,7 @@ export interface LoadedDocs {
 }
 
 export async function loadDocs(scopeDirs: string[]): Promise<LoadedDocs> {
-  const vault = VAULT();
+  const vault = resolveVaultDir(process.cwd());
   // scope приходит в тул свободными строками — их пишет МОДЕЛЬ, а её может завести
   // содержимое чужого сообщения. join(vault, "../..") уводил обход за пределы vault:
   // поиск читал бы .env, ключи и чужие репозитории, а куски их строк уезжали бы модели
@@ -230,7 +230,7 @@ function isVectorIndex(value: unknown): value is Record<string, number[]> {
 function loadGraph(): GraphNodes {
   const path =
     process.env.ASSISTANT_GRAPH_PATH ||
-    join(VAULT(), ".graph", "vault-graph.json");
+    join(resolveVaultDir(process.cwd()), ".graph", "vault-graph.json");
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!isRecord(parsed)) return {};
@@ -281,7 +281,7 @@ function bfsDistances(
 function loadEmbedIndex(): Record<string, number[]> | null {
   try {
     const raw = readFileSync(
-      join(VAULT(), ".index", "embeddings.json"),
+      join(resolveVaultDir(process.cwd()), ".index", "embeddings.json"),
       "utf8",
     );
     const parsed: unknown = JSON.parse(raw);

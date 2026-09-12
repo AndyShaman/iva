@@ -38,6 +38,7 @@ import type { JobFact } from "#lib/job-facts.ts";
 import type { OpenFailure } from "#lib/open-failures.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 type SystemdLifecycle = ReturnType<typeof createCliSystemd>;
@@ -882,10 +883,7 @@ export function createDoctorCommand(
     }
 
     // 6. Vault + git origin (report only — we don't initiate git operations)
-    const vaultRel = env.ASSISTANT_VAULT_DIR || "vault";
-    const vaultPath = vaultRel.startsWith("/")
-      ? vaultRel
-      : join(ROOT, vaultRel);
+    const vaultPath = resolveVaultDir(ROOT, env.ASSISTANT_VAULT_DIR);
     if (!existsSync(vaultPath)) {
       warn(
         `vault not found (${vaultPath}) — created on first memory or: npm run init-vault`,

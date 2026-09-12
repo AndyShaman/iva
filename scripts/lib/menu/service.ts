@@ -20,6 +20,7 @@ import {
   type RunOptions,
   type ServiceRun,
 } from "./svc-run.ts";
+import { resolveVaultDir } from "../../../packages/vault-dir/index.ts";
 
 type ServiceCommand = "doc" | "cln" | "mem";
 type MenuButton = { text: string; callback_data: string };
@@ -115,8 +116,7 @@ export async function commandSpec(
     };
   if (cmd === "cln") {
     const env = await readEnvValues(ctx.deps.envPath);
-    const rel = env.ASSISTANT_VAULT_DIR || "vault";
-    const vaultDir = rel.startsWith("/") ? rel : join(root, rel);
+    const vaultDir = resolveVaultDir(root, env.ASSISTANT_VAULT_DIR);
     // Скрипт живёт в репо (в vault'е его может не быть — до 0.3.3 его туда клал синк, и
     // прыжок 0.3.0 → 0.3.2 оставлял кнопку без файла: «Failed to spawn … (os error 2)»).
     // Путь абсолютный, cwd — vault: скрипты autograph берут vault первым аргументом («.»).

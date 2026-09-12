@@ -7,6 +7,7 @@ import {
   saveJsonAtomic,
 } from "./json-store.ts";
 import { dataDir as configuredDataDir } from "./data-dir.ts";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 export const TELEGRAM_MEDIA_CACHE_LIMIT = 500;
 
@@ -71,7 +72,7 @@ async function loadCache(
  */
 export function resolveAttachmentPath(
   rel: string,
-  vaultDir = process.env.ASSISTANT_VAULT_DIR ?? "vault",
+  vaultDir = resolveVaultDir(process.cwd()),
 ): string | null {
   const attachments = resolve(vaultDir, "attachments");
   const target = resolve(vaultDir, rel);
@@ -107,7 +108,7 @@ export async function getTelegramMediaCacheEntry(
   fileUniqueId: string,
   {
     dataDir = configuredDataDir(),
-    vaultDir = process.env.ASSISTANT_VAULT_DIR ?? "vault",
+    vaultDir = resolveVaultDir(process.cwd()),
     log = console.error,
   }: CacheOptions = {},
 ): Promise<TelegramMediaCacheEntry | null> {

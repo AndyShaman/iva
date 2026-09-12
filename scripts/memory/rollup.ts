@@ -46,6 +46,7 @@ import {
   sentNotBeforeIso,
 } from "../lib/rollup-stale-cursor.ts";
 import { sendTelegramHtml } from "../lib/telegram-send.ts";
+import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
 
@@ -66,7 +67,7 @@ const CHAT = notificationChat();
 // Absolute, like the instructions above: the prompt hands these paths to the model as
 // read_file/write_file targets, and read_file resolves a RELATIVE path against the vault
 // root — a "vault/daily/…" string would come back as vault/vault/daily/… and ENOENT.
-const VAULT = resolve(process.env.ASSISTANT_VAULT_DIR ?? "vault");
+const VAULT = resolveVaultDir(process.cwd());
 const TZ = resolveTimeZone(process.env.ASSISTANT_TIMEZONE);
 // Format rules and the memory-processor prompts live in the repo, not in the vault: they
 // are product, and must update with it instead of rotting inside every user's vault.

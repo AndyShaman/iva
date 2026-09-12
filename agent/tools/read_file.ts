@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { resolveVaultDir } from "@iva/vault-dir";
 
 // Host-native чтение файла. Переопределяет встроенный read_file eve: читает реальный
 // файл на VPS через node:fs/promises (UTF-8). Самодостаточно (eve/tools, zod, node-builtins).
@@ -12,10 +13,10 @@ import { isAbsolute, resolve } from "node:path";
 // последний от ASSISTANT_VAULT_DIR. Иначе модель получала ENOENT на путь, который ей же
 // и выдали. Не менять в одностороннем порядке.
 
-const VAULT = () => process.env.ASSISTANT_VAULT_DIR || "vault";
-
 function resolvePath(path: string): string {
-  return isAbsolute(path) ? path : resolve(VAULT(), path);
+  return isAbsolute(path)
+    ? path
+    : resolve(resolveVaultDir(process.cwd()), path);
 }
 
 // Потолок вывода: большой файл не должен переполнять окно контекста за один ход.

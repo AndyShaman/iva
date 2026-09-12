@@ -41,6 +41,7 @@
     "@iva/context-window": "file:packages/context-window",
     "@iva/data-dir": "file:packages/data-dir",
     "@iva/timezone": "file:packages/timezone",
+    "@iva/vault-dir": "file:packages/vault-dir",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@vercel/connect": "0.2.2",
     "ai": "7.0.39",

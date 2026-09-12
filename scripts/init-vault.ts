@@ -8,8 +8,9 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { resolveVaultDir } from "../packages/vault-dir/index.ts";
 
-const VAULT: string = resolve(process.env.ASSISTANT_VAULT_DIR ?? "vault");
+const VAULT: string = resolveVaultDir(process.cwd());
 const TEMPLATE: string = resolve("vault-template");
 
 if (!existsSync(TEMPLATE)) {

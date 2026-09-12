@@ -14,6 +14,7 @@ import {
   quizSummary,
   personaMarkdown,
 } from "../quiz.ts";
+import { resolveVaultDir } from "../../../packages/vault-dir/index.ts";
 
 const SID = "chr";
 const PARENT = "r";
@@ -39,13 +40,6 @@ type MenuContext = {
 
 function errorMessage(error: unknown): string {
   return (error as { readonly message: string }).message;
-}
-
-// vault/PERSONA.md: каталог = ASSISTANT_VAULT_DIR ?? "vault", относительный — от cwd
-// (как канал agent/channels/telegram.ts:182; оба процесса стартуют из /home/shima/iva).
-function vaultDir() {
-  const raw = process.env.ASSISTANT_VAULT_DIR ?? "vault";
-  return raw.startsWith("/") ? raw : join(process.cwd(), raw);
 }
 
 // Экран одного вопроса «i/10» + 4 кнопки-ответа (2×2, индекс = позиция в QUIZ_ANSWERS).
@@ -144,7 +138,7 @@ export default {
     if (verb === "apply") {
       const code = st.data.quiz?.code;
       if (!code) return ctx.show(st, SID); // нечего применять — вернуться в интро
-      const dir = vaultDir();
+      const dir = resolveVaultDir(process.cwd());
       try {
         await writeFileAtomic(
           join(dir, "PERSONA.md"),

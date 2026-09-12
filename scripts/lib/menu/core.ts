@@ -19,6 +19,7 @@ import {
   readInterviewRecovery,
 } from "../core-interview.ts";
 import { isRunning, chatKeyOf } from "#lib/run-status.ts";
+import { resolveVaultDir } from "../../../packages/vault-dir/index.ts";
 
 const SID = "core";
 const PARENT = "r";
@@ -85,11 +86,6 @@ type MenuContext = {
 
 function errorMessage(error: unknown): string {
   return (error as { readonly message: string }).message;
-}
-
-function vaultDir() {
-  const raw = process.env.ASSISTANT_VAULT_DIR ?? "vault";
-  return raw.startsWith("/") ? raw : join(process.cwd(), raw);
 }
 
 function identityId(value: unknown, fallback: string | number): string {
@@ -196,7 +192,10 @@ function recoveryRecord(
 async function readMatchingRecovery(
   source: CallbackIdentity,
 ): Promise<RecoveryRecord | null> {
-  return recoveryRecord(await readInterviewRecovery(vaultDir()), source);
+  return recoveryRecord(
+    await readInterviewRecovery(resolveVaultDir(process.cwd())),
+    source,
+  );
 }
 
 async function admitOrRetry(update: SyntheticUpdate, ctx: MenuContext) {
@@ -210,7 +209,9 @@ async function admitOrRetry(update: SyntheticUpdate, ctx: MenuContext) {
 
 async function coreExcerpt() {
   try {
-    const text = (await readFile(join(vaultDir(), "CORE.md"), "utf8")).trim();
+    const text = (
+      await readFile(join(resolveVaultDir(process.cwd()), "CORE.md"), "utf8")
+    ).trim();
     if (!text) return null;
     return text.length > EXCERPT_LIMIT
       ? `${text.slice(0, EXCERPT_LIMIT).trimEnd()}…`
@@ -317,7 +318,7 @@ async function finish(
     ? { version: 1, source, update }
     : undefined;
   try {
-    await saveInterview(vaultDir(), qa, record);
+    await saveInterview(resolveVaultDir(process.cwd()), qa, record);
   } catch (error) {
     const message = errorMessage(error);
     return ctx.flows.screen(
