@@ -121,9 +121,17 @@ void test("BLOCKER: a late result from the previous Routine occurrence must not 
     "routine",
     deps({ send: () => Promise.resolve(success()), runTurn: completed("") }),
   );
-  assert.equal((await list())[0]?.delivered, true, "второй срок завершился успешно");
+  assert.equal(
+    (await list())[0]?.delivered,
+    true,
+    "второй срок завершился успешно",
+  );
 
-  finishFirst({ ok: false, fellBack: false, error: "first occurrence failed late" });
+  finishFirst({
+    ok: false,
+    fellBack: false,
+    error: "first occurrence failed late",
+  });
   await firstRun;
   const [final] = await list();
   assert.equal(final?.firedAt, secondOccurrence.firedAt);

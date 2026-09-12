@@ -32,10 +32,8 @@ beforeEach(() => {
 });
 after(() => rmSync(TEMP_ROOT, { recursive: true, force: true }));
 
-const STORE_URL = new URL(
-  "../../agent/lib/reminder-store.ts",
-  import.meta.url,
-).href;
+const STORE_URL = new URL("../../agent/lib/reminder-store.ts", import.meta.url)
+  .href;
 const WORKER = `
   import { existsSync, writeFileSync } from "node:fs";
   writeFileSync(process.env.QA_READY, "ready");
@@ -65,8 +63,8 @@ function worker(ready: string, go: string, now: number): Promise<string[]> {
     );
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code !== 0) reject(new Error(`worker exited ${code}: ${stderr}`));
@@ -135,14 +133,14 @@ void test("a kill after the external side effect cannot repeat a one-shot row", 
     schedule: { kind: "at", atMs: now },
   });
   let externalSends = 0;
-  const killed = async () => {
+  const killed = () => {
     externalSends++;
-    return {
+    return Promise.resolve({
       skipped: false,
       ok: false,
       code: null,
-      signal: "SIGKILL" as NodeJS.Signals,
-    };
+      signal: "SIGKILL" as const,
+    });
   };
   await runReminderTick({ nowMs: now, runJob: killed, log: () => {} });
   await runReminderTick({
