@@ -26,7 +26,8 @@ gws gmail +triage                              # непрочитанные: о�
 gws gmail +send --to a@b.com --subject "Тема" --body "Текст"
 gws gmail +reply --message-id ID --body "Ответ"
 gws calendar +agenda                           # ближайшие события (в таймзоне Google-аккаунта)
-gws calendar +insert --json '{"summary":"Созвон","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'
+gws calendar events insert --params '{"calendarId":"primary"}' --json '{"summary":"Созвон","start":{"dateTime":"2026-09-12T18:00:00+05:00"},"end":{"dateTime":"2026-09-12T18:30:00+05:00"},"reminders":{"useDefault":false,"overrides":[{"method":"popup","minutes":30}]}}'   # событие с напоминанием
+# хелпер +insert принимает только --summary/--start/--end (--json нет), напоминания задать не умеет
 gws drive +upload ./file.pdf --name "Отчёт"
 gws sheets +read --spreadsheet ID --range 'Sheet1!A1:C10'
 gws sheets +append --spreadsheet ID --values "Alice,95"
