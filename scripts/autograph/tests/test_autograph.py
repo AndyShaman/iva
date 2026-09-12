@@ -931,7 +931,8 @@ def main():
              and future_graph['stats']['broken_links'] == 0
              and future_graph['stats']['managed_orphans'] == 0,
              str(future_graph['stats']))
-        fixes, applied, ambiguous = fix_broken_links(rollup_vault, future_graph, apply=False)
+        fixes, applied, ambiguous, _skipped = fix_broken_links(
+            rollup_vault, future_graph, apply=False)
         test("graph fix ignores an expected future parent",
              fixes == [] and applied == 0 and ambiguous == [])
         legacy_graph = build_graph(
@@ -1994,7 +1995,7 @@ def main():
              f"got: {anchor_only}")
 
         # 7.11 resolve_link strips anchor (graph.py)
-        from graph import resolve_link, fix_broken_links, build_graph
+        from graph import resolve_link, fix_broken_links, build_graph, LinkRepairError
         from dedup import merge_content, append_history
         from daily import (
             build_vault_index as build_daily_index,
@@ -2021,7 +2022,8 @@ def main():
         synthetic_graph = {
             'broken_link_list': [{'source': 'notes/source', 'target': 'visa'}]
         }
-        fixes, applied, _ambiguous = fix_broken_links(fix_vault, synthetic_graph, apply=True)
+        fixes, applied, _ambiguous, _skipped = fix_broken_links(
+            fix_vault, synthetic_graph, apply=True)
         updated_source = source_note.read_text()
         test("graph fix suggests unique stem target",
              len(fixes) == 1 and fixes[0]['new'] == 'docs/visa',
@@ -2046,7 +2048,7 @@ def main():
             f'См. [[  {fix_title.lower()} ]], [[{fix_title}|инструменты]],'
             f' [[{fix_title}#Related]].\n')
         title_graph = build_graph(fix_title_vault, schema)
-        title_fixes, title_applied, title_ambiguous = fix_broken_links(
+        title_fixes, title_applied, title_ambiguous, title_skipped = fix_broken_links(
             fix_title_vault, title_graph, apply=True)
         repaired_a = linking_card.read_text()
         test("graph fix applies H1-title links and reports no ambiguity",
@@ -2071,7 +2073,7 @@ def main():
         ambiguous_source.write_text('См. [[Проект]].\n')
         source_before = ambiguous_source.read_bytes()
         ambiguous_graph = build_graph(ambiguous_vault, schema)
-        ambiguous_fixes, ambiguous_applied, ambiguous_list = fix_broken_links(
+        ambiguous_fixes, ambiguous_applied, ambiguous_list, _ambiguous_skipped = fix_broken_links(
             ambiguous_vault, ambiguous_graph, apply=True)
         test("graph fix leaves ambiguous H1-title links alone",
              ambiguous_fixes == [] and ambiguous_applied == 0
@@ -2090,6 +2092,111 @@ def main():
              and 'Ambiguous:    1' in ambiguous_out
              and 'cards/src: [[Проект]] -> cards/p1, cards/p2' in ambiguous_out,
              f"got: code={ambiguous_code}, out={ambiguous_out!r}, err={ambiguous_err!r}")
+
+        # 7.12c ночной fix --apply не трогает дословные записи: дневной транскрипт,
+        # append-only ## History и код. Такие ссылки не обещаются как Fixable, а
+        # называются отдельной строкой, а файлы остаются байт в байт.
+        protected_vault = tmp / 'graph-fix-protected-vault'
+        (protected_vault / 'cards/ideas').mkdir(parents=True, exist_ok=True)
+        (protected_vault / 'summaries/daily').mkdir(parents=True, exist_ok=True)
+        protected_title = 'Для разработки — рубрика инструментов'
+        (protected_vault / 'cards/ideas/dev-tools.md').write_text(
+            f'# {protected_title}\n\n- тело\n')
+        protected_files = {
+            'summaries/daily/2026-09-12.md':
+                f'# День\n\n- Шима сказал: «[[{protected_title}]]»\n',
+            'cards/hist.md':
+                f'# Карточка\n\n- тело\n\n## History\n\n- 2026-08-01: [[{protected_title}]]\n',
+            'cards/fence.md':
+                f'# Пример\n\n```md\n[[{protected_title}]]\n```\n\nИнлайн: `[[{protected_title}]]`.\n',
+        }
+        open_card = protected_vault / 'cards/open.md'
+        open_card.write_text(f'# Открытая\n\n- см. [[{protected_title}]]\n')
+        for rel, text in protected_files.items():
+            path = protected_vault / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        protected_before = {
+            rel: (protected_vault / rel).read_bytes() for rel in protected_files
+        }
+        protected_graph = build_graph(protected_vault, schema)
+        (protected_fixes, protected_applied, protected_ambiguous,
+         protected_skipped) = fix_broken_links(
+            protected_vault, protected_graph, apply=True)
+        test("graph fix repairs the free-text link beside protected ones",
+             protected_applied == 1 and len(protected_fixes) == 1
+             and open_card.read_text()
+             == '# Открытая\n\n- см. [[cards/ideas/dev-tools]]\n',
+             f"got: applied={protected_applied}, fixes={protected_fixes}, "
+             f"file={open_card.read_text()!r}")
+        test("graph fix leaves daily transcripts and append-only History byte for byte",
+             all((protected_vault / rel).read_bytes() == protected_before[rel]
+                 for rel in protected_files),
+             str({rel: (protected_vault / rel).read_text() for rel in protected_files}))
+        test("graph fix reports protected links instead of promising them",
+             protected_ambiguous == []
+             and sorted((item['source'], item['reason'])
+                        for item in protected_skipped) == [
+                            ('cards/fence', 'code'),
+                            ('cards/fence', 'code'),
+                            ('cards/hist', 'history'),
+                            ('summaries/daily/2026-09-12', 'summaries')],
+             f"got: {protected_skipped}")
+        protected_code, protected_out, protected_err = run(
+            [sys.executable, str(SCRIPTS_DIR / 'graph.py'), 'fix',
+             str(protected_vault), '--apply'])
+        test("graph.py fix prints the protected block",
+             protected_code == 0
+             and 'Skipped (protected): 4' in protected_out
+             and '(summaries)' in protected_out
+             and '(history)' in protected_out
+             and '(code)' in protected_out,
+             f"got: code={protected_code}, out={protected_out!r}, err={protected_err!r}")
+
+        # 7.12d формы токена, которые понимает резолвер: .md и префикс vault/ тоже
+        # чинятся, иначе Fixable обещает то, чего замена не делает.
+        suffix_vault = tmp / 'graph-fix-suffix-vault'
+        (suffix_vault / 'cards').mkdir(parents=True, exist_ok=True)
+        suffix_title = 'Рубрика инструментов'
+        (suffix_vault / 'cards/target.md').write_text(
+            f'# {suffix_title}\n\n- тело\n')
+        suffix_source = suffix_vault / 'cards/a.md'
+        suffix_source.write_text(
+            f'# A\n\n- [[{suffix_title}.md]]\n- [[vault/{suffix_title}]]\n')
+        suffix_graph = build_graph(suffix_vault, schema)
+        (suffix_fixes, suffix_applied, _suffix_ambiguous,
+         suffix_skipped) = fix_broken_links(suffix_vault, suffix_graph, apply=True)
+        test("graph fix rewrites the .md and vault/ target forms",
+             len(suffix_fixes) == 2 and suffix_applied == 2 and suffix_skipped == []
+             and suffix_source.read_text()
+             == '# A\n\n- [[cards/target]]\n- [[cards/target]]\n',
+             f"got: fixes={suffix_fixes}, applied={suffix_applied}, "
+             f"file={suffix_source.read_text()!r}")
+
+        # 7.12e обещанная и не переписанная ссылка — отказ выполнения, а не тишина:
+        # резолвер срезает и обратный слэш, а замена ищет буквальный токен байт в байт.
+        missed_vault = tmp / 'graph-fix-missed-vault'
+        (missed_vault / 'cards').mkdir(parents=True, exist_ok=True)
+        (missed_vault / 'cards/target.md').write_text(
+            f'# {suffix_title}\n\n- тело\n')
+        (missed_vault / 'cards/a.md').write_text(
+            f'# A\n\n- [[{suffix_title}\\]]\n')
+        missed_graph = build_graph(missed_vault, schema)
+        try:
+            fix_broken_links(missed_vault, missed_graph, apply=True)
+            missed_error = None
+        except LinkRepairError as error:
+            missed_error = str(error)
+        test("graph fix refuses to stay silent about a link it could not rewrite",
+             missed_error is not None and 'cards/a' in missed_error,
+             f"got: {missed_error!r}")
+        missed_code, _missed_out, missed_err = run(
+            [sys.executable, str(SCRIPTS_DIR / 'graph.py'), 'fix',
+             str(missed_vault), '--apply'])
+        test("graph.py fix exits non-zero on a link it could not rewrite",
+             missed_code != 0
+             and 'promised a fix and rewrote nothing' in missed_err,
+             f"got: code={missed_code}, err={missed_err!r}")
 
         # 7.13 nested hub notes are not orphans
         hub_vault = tmp / 'graph-hub-vault'
