@@ -55,6 +55,34 @@ interface SupersedeSkip {
   reason: "invalid_utf8" | "malformed_frontmatter" | "read_error";
 }
 
+/** Причины, которые эмитит scripts/autograph/supersede.py (CardSkip.reason). */
+const SUPERSEDE_REASONS = new Set([
+  "invalid_utf8",
+  "malformed_frontmatter",
+  "read_error",
+]);
+
+/**
+ * Чем запись отчёта supersede не похожа на запись отчёта supersede, или null.
+ *
+ * Наружу отдаётся только имя поля и, если причина похожа на причину, она сама:
+ * значение `path` - путь карточки владельца, в журнал он не идёт.
+ */
+function supersedeSkipProblem(item: unknown): string | null {
+  if (!isRecord(item)) return "is not an object";
+  if (typeof item.path !== "string") return 'has no "path" string';
+  if (typeof item.reason !== "string") return 'has no "reason" string';
+  if (!SUPERSEDE_REASONS.has(item.reason))
+    return /^[a-z0-9_]{1,40}$/.test(item.reason)
+      ? `has an unknown "reason" ${item.reason}`
+      : 'has an unknown "reason"';
+  return null;
+}
+
+function isSupersedeSkip(item: unknown): item is SupersedeSkip {
+  return supersedeSkipProblem(item) === null;
+}
+
 type HealthHistoryState =
   | { state: "missing" }
   | { state: "valid"; entries: HealthHistoryEntry[] }
@@ -321,16 +349,26 @@ if (supersede.status === 0) {
       console.error("brain: supersede report is not a supersede report");
       failures.push("supersede");
     } else {
-      const skipped = parsed.skipped.filter(
-        (item): item is SupersedeSkip =>
-          isRecord(item) &&
-          typeof item.path === "string" &&
-          (item.reason === "invalid_utf8" ||
-            item.reason === "malformed_frontmatter" ||
-            item.reason === "read_error"),
-      );
+      // Запись, не подходящую под известную форму, НЕЛЬЗЯ отфильтровать в ноль: ноль
+      // означал бы «пропущенных карточек нет», шаг зелёный и алерт погашен, тогда как
+      // на деле отчёт написан не тем, кого мы читаем. Провал шага - как и у отчёта,
+      // который вовсе не отчёт. В журнал идут только номер записи и имя поля или
+      // причина: путь карточки - данные владельца, им в журнале не место.
+      const wrong = parsed.skipped
+        .map((item, index) => ({ index, problem: supersedeSkipProblem(item) }))
+        .filter((entry) => entry.problem !== null);
+      const skipped = parsed.skipped.filter(isSupersedeSkip);
+      for (const entry of wrong)
+        console.error(
+          `brain: supersede report entry ${entry.index} ${entry.problem}`,
+        );
       for (const item of skipped) supersedeSkippedPaths.add(item.path);
-      if (skipped.length) {
+      // Пока в отчёте есть чужая запись, про пропущенные карточки не утверждается
+      // ничего: ни алерта (счёт был бы неполон), ни его гашения (гашение сказало бы
+      // «всё чисто»). Шаг провален, владелец увидит его в общем алерте ночи.
+      if (wrong.length) {
+        failures.push("supersede");
+      } else if (skipped.length) {
         const count = skipped.length;
         const essence = createHash("sha256")
           .update(JSON.stringify(skipped))

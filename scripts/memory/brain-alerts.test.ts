@@ -182,6 +182,85 @@ test("every brain alert goes through the throttle and carries both locales", () 
   assert.match(source, /Supersede пропустил нечитаемые карточки\./u);
 });
 
+// Щель B-6: отчёт-не-объект шаг уже валит, а запись ЧУЖОЙ формы внутри списка
+// отфильтровывалась в ноль — шаг зелёный, алерт гасится, владелец ничего не узнаёт.
+// Сегодня supersede.py эмитит ровно три причины, поэтому гвард стоит на границе разбора.
+for (const [what, entry, field] of [
+  [
+    "чужие имена полей",
+    { file: "cards/private-name.md", why: "нипочему" },
+    "path",
+  ],
+  ["нет пути", { reason: "read_error" }, "path"],
+  ["путь не строка", { path: 42, reason: "read_error" }, "path"],
+  [
+    "неизвестная причина",
+    { path: "cards/x.md", reason: "moon_phase" },
+    "reason",
+  ],
+  ["запись не объект", "cards/x.md", "is not an object"],
+] as const) {
+  test(`Supersede report entry with ${what} fails the step instead of counting zero`, (t) => {
+    const home = mkdtempSync(join(tmpdir(), "iva-supersede-shape-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const vault = join(home, "vault");
+    const dataDir = join(home, "data");
+    const bin = join(home, "bin");
+    mkdirSync(join(vault, "cards"), { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(vault, "CORE.md"), "# CORE\n");
+    writeFileSync(
+      join(vault, "cards", "ok.md"),
+      "---\ntype: note\n---\n\n# Ok\n\nfacts\n",
+    );
+
+    const uv = join(bin, "uv");
+    writeFileSync(
+      uv,
+      `#!/bin/sh
+/bin/mkdir -p .graph
+printf '%s\\n' '${JSON.stringify({ skipped: [entry] })}' > .graph/supersede-report.json
+exit 0
+`,
+    );
+    chmodSync(uv, 0o755);
+
+    const run = spawnSync(process.execPath, ["scripts/memory/brain.ts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        PATH: bin,
+        ASSISTANT_VAULT_DIR: vault,
+        ASSISTANT_DATA_DIR: dataDir,
+        ASSISTANT_TIMEZONE: "UTC",
+        AGENT_LANGUAGE: "en",
+      },
+    });
+
+    assert.equal(run.status, 1, run.stderr);
+    assert.match(
+      run.stderr,
+      new RegExp(`supersede report entry 0 .*${field}`, "u"),
+      run.stderr,
+    );
+    // Шаг именно провален: он назван в общем алерте ночи, а не просто промолчал.
+    assert.match(
+      run.stderr,
+      /Nightly memory care failed at: [^.]*supersede/u,
+      run.stderr,
+    );
+    // Ноль пропущенных карточек больше не объявляется: шаг провален, а не чист.
+    assert.doesNotMatch(
+      run.stderr,
+      /Supersede skipped unreadable Cards\./u,
+      run.stderr,
+    );
+    // Путь карточки — данные владельца, в журнал он не идёт, как и у соседних проверок.
+    assert.doesNotMatch(run.stderr, /private-name/u, run.stderr);
+  });
+}
+
 test("Supersede skip report raises one actionable throttled Alert without Card data", (t) => {
   const home = mkdtempSync(join(tmpdir(), "iva-supersede-alert-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
