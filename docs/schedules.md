@@ -38,8 +38,10 @@ Only a non-empty answer is sent to your Telegram chat. The outcome of the turn
 - `iva jobs ack <name>` closes an open failure you decided not to fix. A later
   successful run closes one by itself.
 - If the agent cannot wake at all (the turn fails every time), one message per day
-  reaches the owner: "N scheduled jobs failed in the last 24h and the agent is not
-  responding; run: iva doctor". `data/jobs-watchdog.json` remembers the last one.
+  reaches the owner: "scheduled jobs failed in the last 24h: N; the agent is not
+  responding; run: iva doctor". A table nobody can read is the same case and gets
+  its own reason, because the agent cannot wake with a fact it cannot read.
+  `data/jobs-watchdog.json` remembers the last message.
 
 ## If something broke anyway
 

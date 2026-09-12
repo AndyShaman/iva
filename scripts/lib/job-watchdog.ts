@@ -66,29 +66,46 @@ export function watchdogMessage(
   failures: readonly OpenFailure[],
   tr: Translate,
 ): string {
+  // Число двоеточием, а не согласованием: «1 провалов» владелец читает как есть.
   return tr(
-    `${failures.length} scheduled job(s) failed in the last 24h and the agent is not responding; run: iva doctor`,
-    `за сутки ${failures.length} провалов расписаний, агент не отвечает; iva doctor`,
+    `scheduled jobs failed in the last 24h: ${failures.length}; the agent is not responding; run: iva doctor`,
+    `за сутки провалов расписаний: ${failures.length}; агент не отвечает; iva doctor`,
   );
 }
 
-/** Текст к отправке или null: либо провал свежий и агент молчит, либо уже отправляли. */
+/**
+ * Таблица фактов не читается: агент в этом состоянии тоже не просыпается (пробуждение
+ * начинается со чтения строки), поэтому страховка обязана сказать владельцу — иначе она
+ * мертва ровно там, где заведена (слепая приёмка T20).
+ */
+export function watchdogUnreadableMessage(tr: Translate): string {
+  return tr(
+    "the schedule facts table cannot be read, so the agent cannot wake with a fact; run: iva doctor",
+    "таблица фактов расписаний не читается, агент не может проснуться с фактом; iva doctor",
+  );
+}
+
+/**
+ * Текст к отправке или null. `facts === null` — таблица не читается: это отдельная причина
+ * с тем же суточным дросселем. Дроссель проверяется первым: он один на обе причины.
+ */
 export function watchdogDecision({
   facts,
   now,
   lastSentAt,
   tr,
 }: {
-  readonly facts: readonly JobFact[];
+  readonly facts: readonly JobFact[] | null;
   readonly now: number;
   readonly lastSentAt: number | null;
   readonly tr: Translate;
 }): string | null {
+  if (lastSentAt !== null && now - lastSentAt < WATCHDOG_SEND_INTERVAL_MS)
+    return null;
+  if (facts === null) return watchdogUnreadableMessage(tr);
   const failures = openJobFailures(facts, now);
   if (failures.length === 0) return null;
   if (agentTurnSeen(facts, now)) return null;
-  if (lastSentAt !== null && now - lastSentAt < WATCHDOG_SEND_INTERVAL_MS)
-    return null;
   return watchdogMessage(failures, tr);
 }
 
@@ -109,8 +126,25 @@ export async function runJobWatchdog(
     deps.log ??
     ((...args: unknown[]) => console.log(new Date().toISOString(), ...args));
   const stateFile = watchdogStateFile(deps.dataDir);
-  const facts = readFactsSync(jobFactsFile(deps.dataDir));
-  const state = readWatchdogState(stateFile);
+  // Ни таблица, ни собственное состояние не имеют права уронить страховку: нечитаемая
+  // таблица — это её повод сработать, а испорченный дроссель значит «не отправляли»
+  // (следующая удачная отправка перезапишет файл).
+  let facts: JobFact[] | null = null;
+  try {
+    facts = readFactsSync(jobFactsFile(deps.dataDir));
+  } catch (error) {
+    log(
+      `watchdog: facts table unreadable — ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let state: WatchdogState | null = null;
+  try {
+    state = readWatchdogState(stateFile);
+  } catch (error) {
+    log(
+      `watchdog: state unreadable, treating as never sent — ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const message = watchdogDecision({
     facts,
     now,

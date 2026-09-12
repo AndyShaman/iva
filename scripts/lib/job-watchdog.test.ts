@@ -43,7 +43,7 @@ function dir(): string {
 test("провал есть, ходов нет — одно сообщение с числом и doctor", () => {
   assert.equal(
     watchdogMessage([{ source: "job", name: "x", at: NOW, reason: "r" }], tr),
-    "за сутки 1 провалов расписаний, агент не отвечает; iva doctor",
+    "за сутки провалов расписаний: 1; агент не отвечает; iva doctor",
   );
   const message = watchdogDecision({
     facts: [fact()],
@@ -51,7 +51,7 @@ test("провал есть, ходов нет — одно сообщение �
     lastSentAt: null,
     tr,
   });
-  assert.match(message ?? "", /1 провалов/u);
+  assert.match(message ?? "", /провалов расписаний: 1/u);
   assert.match(message ?? "", /iva doctor/u);
 });
 
@@ -158,6 +158,60 @@ test("неудачная отправка не отмечается — след
   });
   assert.match(retried ?? "", /провалов/u);
   assert.equal(readWatchdogState(watchdogStateFile(dataDir)), null);
+});
+
+test("нечитаемая таблица: сторож говорит о ней, и тоже раз в сутки", async () => {
+  // Слепая приёмка T20 (F2): при чужом корне таблицы агент проснуться не может, и сторож
+  // раньше падал до всякого решения — страховка умирала ровно в своём состоянии.
+  const dataDir = dir();
+  writeFileSync(jobFactsFile(dataDir), JSON.stringify({ "memory-daily": {} }));
+  const sent: string[] = [];
+  const first = await runJobWatchdog({
+    dataDir,
+    tr,
+    send: (text) => {
+      sent.push(text);
+      return Promise.resolve(true);
+    },
+    now: () => NOW,
+    log: () => {},
+  });
+  assert.match(first ?? "", /таблица фактов расписаний не читается/u);
+  assert.match(first ?? "", /iva doctor/u);
+  assert.equal(sent.length, 1);
+
+  const second = await runJobWatchdog({
+    dataDir,
+    tr,
+    send: () => {
+      throw new Error("must not send twice");
+    },
+    now: () => NOW + HOUR,
+    log: () => {},
+  });
+  assert.equal(second, null);
+});
+
+test("битое состояние сторожа не глушит сообщение о провале", async () => {
+  // Состояние — это только дроссель. Если оно испорчено, страховка обязана сработать (и
+  // перезаписать файл), а не молчать вместе с ним.
+  const dataDir = dir();
+  await recordFact(jobFactsFile(dataDir), fact(), NOW);
+  writeFileSync(watchdogStateFile(dataDir), "{ not json");
+  const sent: string[] = [];
+  const message = await runJobWatchdog({
+    dataDir,
+    tr,
+    send: (text) => {
+      sent.push(text);
+      return Promise.resolve(true);
+    },
+    now: () => NOW,
+    log: () => {},
+  });
+  assert.match(message ?? "", /провалов расписаний: 1/u);
+  assert.equal(sent.length, 1);
+  assert.equal(readWatchdogState(watchdogStateFile(dataDir))?.lastSentAt, NOW);
 });
 
 test("битое состояние сторожа — явная ошибка, нет файла — null", () => {
