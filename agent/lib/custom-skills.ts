@@ -15,7 +15,7 @@
 // скиллов сразу (eve ловит его и пропускает резолвер целиком). Битая запись пропускается
 // одной строкой в лог, остальные скиллы отдаются.
 import type { Dirent } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { dataDir } from "./data-dir.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
@@ -140,6 +140,11 @@ function describe(name: string, markdown: string): Described {
   return { description, truncatedFrom: null };
 }
 
+// Потолок одного файла скилла: тело и соседи читаются на каждом ходу, поэтому
+// без потолка один гигант тормозит ход и раздувает контекст. Настоящие скиллы —
+// десятки килобайт (самый большой встроенный — 56 КБ), запас четырёхкратный.
+const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
 /** Соседние файлы пакета. Пути, которые eve не примет, и нечитаемые файлы отбрасываются. */
 async function packageFiles(
   packageDir: string,
@@ -164,6 +169,23 @@ async function packageFiles(
     // SKILL.md eve генерирует сам из markdown и бросает, если он пришёл файлом.
     if (path === "SKILL.md") continue;
     if (path.includes("\\")) continue; // eve примет только POSIX-путь
+    let size: number;
+    try {
+      const fileStat = await lstat(absolute);
+      if (!fileStat.isFile()) continue;
+      size = fileStat.size;
+    } catch (error) {
+      log(
+        `[skills] custom skill ${name} file ${path} skipped: ${reason(error)}`,
+      );
+      continue;
+    }
+    if (size > MAX_SKILL_FILE_BYTES) {
+      log(
+        `[skills] custom skill ${name} file ${path} skipped: ${size} bytes, cap ${MAX_SKILL_FILE_BYTES}`,
+      );
+      continue;
+    }
     try {
       files[path] = await readFile(absolute);
     } catch (error) {
@@ -187,6 +209,32 @@ async function readOne(
     kind === "package"
       ? join(dir, entryName, "SKILL.md")
       : join(dir, entryName);
+  const source = kind === "package" ? join(entryName, "SKILL.md") : entryName;
+  // Читать только обычный файл: блочное/символьное устройство и FIFO без писателя
+  // отдают бесконечный поток — readFile ждёт EOF, которого нет, и виснет весь ход
+  // (eve ждёт резолвер без дедлайна). stat идёт за симлинком, как и чтение.
+  try {
+    const target = await stat(markdownPath);
+    if (!target.isFile()) {
+      log(`[skills] ${label} ${name} skipped: ${source} is not a regular file`);
+      return null;
+    }
+    if (target.size > MAX_SKILL_FILE_BYTES) {
+      log(
+        `[skills] ${label} ${name} skipped: ${source} is ${target.size} bytes, cap ${MAX_SKILL_FILE_BYTES}`,
+      );
+      return null;
+    }
+  } catch (error) {
+    log(
+      `[skills] ${label} ${name} skipped: ${
+        code(error) === "ENOENT" && kind === "package"
+          ? "no SKILL.md"
+          : reason(error)
+      }`,
+    );
+    return null;
+  }
   let markdown: string;
   try {
     markdown = await readFile(markdownPath, "utf8");
@@ -202,7 +250,6 @@ async function readOne(
   }
   const { description, truncatedFrom } = describe(name, markdown);
   if (truncatedFrom !== null) {
-    const source = kind === "package" ? join(entryName, "SKILL.md") : entryName;
     const key = `description-cap\u0000${label}\u0000${name}\u0000${source}\u0000${truncatedFrom}`;
     if (!reportedDiagnostics.has(key)) {
       reportedDiagnostics.add(key);
