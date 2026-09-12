@@ -266,6 +266,13 @@ const AUTH_FIXTURES: AuthCase[] = [
     prev: STORED,
   },
   {
+    // The endpoint may answer without a token at all. The stored one has to survive on both
+    // sides: the login half writes the file of the very same shape the refresh writes back.
+    name: "an answer without access_token keeps the stored one",
+    tokens: { access_token: "" },
+    prev: { ...STORED, access_token: "at-stored" },
+  },
+  {
     name: "refresh: the response rotates id_token and refresh_token",
     tokens: {
       id_token: claimToken({

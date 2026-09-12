@@ -149,7 +149,9 @@ export function toAuth(
     : { accountId: prev.accountId, planType: prev.planType };
   return {
     id_token: idToken,
-    access_token: tokens.access_token,
+    // Пустой ответ не смеет стереть уже записанный токен: файл входа обновляется только
+    // на непустое значение (PBT-DS1-P F2).
+    access_token: tokens.access_token || prev.access_token || "",
     refresh_token: tokens.refresh_token || prev.refresh_token,
     accountId: accountId as string | null,
     planType: planType as string | null,
