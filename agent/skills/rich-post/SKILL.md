@@ -1,6 +1,5 @@
 ---
-description: >-
-  Send a Telegram rich-media post to ANOTHER allowlisted chat via the bot (Bot API 10.1 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. Use when the owner asks to post somewhere other than the current conversation (the digest chat, for example), or when a post needs inline images between paragraphs. NOT for a report or an answer to the current chat: those are the plain reply of the turn, and the host already sends rich messages for them (see the red-banner rule in the persona).
+description: "Send a rich Telegram post to ANOTHER allowlisted chat; not for the current chat reply or plain reports."
 ---
 
 # rich-post — Telegram rich messages via the bot
