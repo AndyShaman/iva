@@ -603,7 +603,8 @@ export function createDoctorCommand(
     // динамически: на урезанной установке их может не быть, и тогда проверка честно
     // пропускается (как очередь моста ниже).
     let remindersModule: {
-      list: typeof import("../../agent/lib/reminder-store.ts").list;
+      reminderFile: typeof import("../../agent/lib/reminder-store.ts").reminderFile;
+      parseReminderTable: typeof import("../../agent/lib/reminder-store.ts").parseReminderTable;
     } | null = null;
     let tickModule: {
       readTickPulse: typeof import("../../agent/lib/reminder-tick.ts").readTickPulse;
@@ -637,7 +638,18 @@ export function createDoctorCommand(
         okN++;
       }
       try {
-        const failed = (await remindersModule.list()).filter(
+        // Таблицу читаем сами и разбираем экспортированным `parseReminderTable`: стор
+        // уносит непарсящийся JSON в карантин (`loadJsonStrict`, json-store.ts:46-58),
+        // а доктор — и пакет diagnose, зовущий его, — не переносит данные владельца.
+        const file = remindersModule.reminderFile();
+        const rows = existsSync(file)
+          ? remindersModule.parseReminderTable(
+              file,
+              JSON.parse(readFileSync(file, "utf8")),
+              now(),
+            )
+          : [];
+        const failed = rows.filter(
           (row) =>
             row.error !== null &&
             row.firedAt !== null &&

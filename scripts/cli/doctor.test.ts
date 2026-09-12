@@ -212,6 +212,7 @@ async function remindersEvents(
     now,
     pulseAgoMs,
     rows = [],
+    brokenTable,
   }: {
     now: number;
     pulseAgoMs: number | null;
@@ -221,6 +222,7 @@ async function remindersEvents(
       error: string | null;
       delivered?: boolean | null;
     }>;
+    brokenTable?: string;
   },
 ): Promise<Array<[string, string]>> {
   const data = join(root, "data");
@@ -231,21 +233,22 @@ async function remindersEvents(
   process.env.ASSISTANT_DATA_DIR = data;
   writeFileSync(
     join(data, "reminders.json"),
-    JSON.stringify({
-      schemaVersion: 2,
-      rows: rows.map((row) => ({
-        id: row.id,
-        text: `напоминание ${row.id}`,
-        schedule: { kind: "at", atMs: now - 60_000 },
-        nextRunAtMs: now - 60_000,
-        createdAt: now - 120_000,
-        status: "fired",
-        firedAt: row.firedAt,
-        delivered:
-          row.delivered === undefined ? row.error === null : row.delivered,
-        error: row.error,
-      })),
-    }),
+    brokenTable ??
+      JSON.stringify({
+        schemaVersion: 2,
+        rows: rows.map((row) => ({
+          id: row.id,
+          text: `напоминание ${row.id}`,
+          schedule: { kind: "at", atMs: now - 60_000 },
+          nextRunAtMs: now - 60_000,
+          createdAt: now - 120_000,
+          status: "fired",
+          firedAt: row.firedAt,
+          delivered:
+            row.delivered === undefined ? row.error === null : row.delivered,
+          error: row.error,
+        })),
+      }),
   );
   const pulseFile = join(data, "reminders.tick");
   if (pulseAgoMs === null) {
@@ -370,7 +373,7 @@ test("doctor показывает провалы напоминаний за с�
     "успешную строку не показываем",
   );
   // Незаписанный факт — не провал доставки: строка доктора называет его иначе.
-  const marker = fresh.find(([, message]) => message.includes("#r4"));
+  const marker = fresh.find(([, message]) => message.includes(hash8("r4")));
   assert.ok(marker, JSON.stringify(fresh));
   assert.match(marker[1], /the delivery fact was not recorded/u);
   assert.equal(
@@ -379,7 +382,7 @@ test("doctor показывает провалы напоминаний за с�
     "невидимый факт назван провалом доставки",
   );
   // А записанный факт с ошибкой позднего шага — не «не дошло».
-  const later = fresh.find(([, message]) => message.includes("#r5"));
+  const later = fresh.find(([, message]) => message.includes(hash8("r5")));
   assert.ok(later, JSON.stringify(fresh));
   assert.match(later[1], /went out, a later step failed/u);
   assert.equal(/did not go out/u.test(later[1]), false);
@@ -406,6 +409,33 @@ test("doctor показывает провалы напоминаний за с�
         kind === "warn" && /has not ticked yet/u.test(message),
     ),
     JSON.stringify(none),
+  );
+});
+
+test("doctor читает битую таблицу, не унося файл владельца в карантин", async (t) => {
+  const root = await sandbox(t);
+  const now = Date.now();
+  const events = await remindersEvents(root, {
+    now,
+    pulseAgoMs: 30_000,
+    brokenTable: "{not json",
+  });
+  assert.ok(
+    events.some(
+      ([kind, message]) =>
+        kind === "warn" && message.startsWith("reminders: table unreadable"),
+    ),
+    JSON.stringify(events),
+  );
+  const data = join(root, "data");
+  assert.ok(
+    existsSync(join(data, "reminders.json")),
+    "доктор перенёс файл владельца",
+  );
+  assert.deepEqual(
+    readdirSync(data).filter((name) => name.includes(".corrupt-")),
+    [],
+    "карантин создан",
   );
 });
 
