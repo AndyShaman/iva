@@ -1,13 +1,8 @@
-/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+/* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations. */
 // Пробуждение агента после запуска расписания (T20 п.2): пустой ответ ничего не шлёт,
 // провальный — уходит владельцу, провал самого хода — факт в таблице.
 import assert from "node:assert/strict";
-import {
-  chmodSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";

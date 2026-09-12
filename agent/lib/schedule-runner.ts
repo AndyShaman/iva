@@ -316,7 +316,7 @@ export async function runScheduledJob(
   let startedAt = now();
   // Провал записи обязательного факта: причину обязан увидеть тот, кто ждёт промис
   // (waitUntil расписаний), поэтому она выезжает отклонением, а не полем результата.
-  let factFailure: unknown = null;
+  let factFailure: Error | null = null;
   try {
     if (statusPath) {
       const admitted = await withStatusLock(statusPath, (acquired) => {
@@ -558,7 +558,7 @@ export async function runScheduledJob(
         log(
           `schedule-runner: ${name} fact not recorded — ${errorMessage(error)}`,
         );
-        factFailure = error;
+        factFailure = error instanceof Error ? error : new Error(String(error));
       }
       if (recorded && wake) {
         try {

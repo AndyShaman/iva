@@ -1,12 +1,7 @@
-/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+/* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations. */
 // Дневной сторож (T20 п.4): одно сообщение в сутки, когда провалы есть, а агент молчит.
 import assert from "node:assert/strict";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
