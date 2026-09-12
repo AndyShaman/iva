@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 234;
+const EXPECTED_PRODUCTION_COUNT = 235;
 const EXPECTED_INVENTORY_SHA256 =
-  "c5f5d5a21314cc1bc550c49ed71c8014d16024d3809f135f25b9d2f0e0a04eee";
+  "6f2e632ef3c51b3f3737c546eaa96ef69b2d90ff123726b7f27695624260aeaf";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -121,6 +121,11 @@ const EXPECTED_INVENTORY_SHA256 =
 // blind spot stays 26.
 // The turn-policy menu added `scripts/lib/menu/turn-policy.ts` at 100% scoped coverage.
 // Removing the old Telegram routing helper leaves a net one-path increase, still 26 blind.
+// The rich-replies switch came last, one path: `agent/lib/telegram-rich-replies.ts`, the
+// module the channel reads once at import to decide whether a reply may go out as a rich
+// message. Scoped coverage over `scripts/telegram-rich-replies.test.ts` reports it at 100%
+// lines, 100% branches and 100% functions - both modes and the startup refusal on a junk
+// value are the test's subject - so the blind spot stays 26.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
