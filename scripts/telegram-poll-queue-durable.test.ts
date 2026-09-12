@@ -722,8 +722,10 @@ test("an allowed callback without a stable ingress key fails closed", (t: TestCo
   const dataDir = makeDataDir(t, "unownable-callback");
   const result = runHarness("unownable-callback", dataDir);
 
-  assert.deepEqual(result.requestedOffsets, [100, 100]);
-  assert.deepEqual(result.offset, { offset: 100 });
+  // Неопознаваемый апдейт подтверждается и не блокирует offset навсегда (H2, main
+  // cefd33f): «fails closed» здесь про доставку — она пустая, а не про замерший вход.
+  assert.deepEqual(result.requestedOffsets, [100, 102]);
+  assert.deepEqual(result.offset, { offset: 102 });
   assert.deepEqual(result.deliveries, []);
   assert.deepEqual(ownedUpdates(result), []);
 });
