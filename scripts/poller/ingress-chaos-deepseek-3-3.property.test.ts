@@ -47,10 +47,14 @@ function messageUpdate(
   };
 }
 
-/** Результат обработки: сместился ли offset и был ли заблокирован вход. */
+/**
+ * Результат обработки: сместился ли offset, был ли заблокирован вход и какие строки
+ * ушли в журнал.
+ */
 async function run(
   update: Update,
   offsets: number[] = [],
+  lines: string[] = [],
 ): Promise<{ offset: number; ingressBlocked: boolean }> {
   return processTelegramUpdate(update, OFFSET, null, {
     handleControlImpl: () => Promise.resolve(false),
@@ -58,7 +62,9 @@ async function run(
       offsets.push(nextOffset);
       return Promise.resolve();
     },
-    logImpl: () => {},
+    logImpl: (...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    },
   });
 }
 
@@ -98,6 +104,22 @@ await test("апдейт без опознаваемого отправител�
       },
     ),
     { seed: 20_260_920, numRuns: 1 },
+  );
+});
+
+// Контракт починки: апдейт, который приём навсегда не может опознать, подтверждается
+// и оставляет в журнале одну строку с update_id и причиной - молча ничего не пропадает.
+await test("НАХОДКА H2: неподтверждаемый апдейт оставляет строку в журнале", async () => {
+  const lines: string[] = [];
+  const result = await run(anonymousAdmin, [], lines);
+  assert.equal(result.ingressBlocked, false);
+  assert.ok(
+    lines.some(
+      (line) =>
+        line.includes(String(anonymousAdmin.update_id)) &&
+        line.includes("no durable ingress key"),
+    ),
+    `журнал не назвал апдейт: ${JSON.stringify(lines)}`,
   );
 });
 

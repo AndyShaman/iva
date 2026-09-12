@@ -194,11 +194,15 @@ export async function processTelegramUpdate(
     return { offset: nextOffset, ingressBlocked: false };
   }
   const admitted = await admitImpl(update);
-  if (admitted === "write-failed" || admitted === "unownable") {
-    if (admitted === "unownable") {
-      logImpl(`update ${update.update_id} has no durable ingress key`);
-    }
+  // write-failed транзиентен: диск может ожить, повтор обязателен и вход ждёт.
+  if (admitted === "write-failed") {
     return { offset, ingressBlocked: true };
+  }
+  // unownable структурен и постоянен: повтор не сделает апдейт опознаваемым, а
+  // задержанный offset крутит один и тот же батч вечно. Подтверждаем и идём дальше;
+  // строка в журнале называет update_id и причину.
+  if (admitted === "unownable") {
+    logImpl(`update ${update.update_id} has no durable ingress key`);
   }
   const nextOffset = update.update_id + 1;
   if (admitted === "terminal-drop") {
