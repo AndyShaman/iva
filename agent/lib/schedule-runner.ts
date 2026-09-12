@@ -513,7 +513,11 @@ export async function runScheduledJob(
     });
 
     const finishedAt = now();
-    const ok = outcome.code === 0 && !outcome.error;
+    // Успех запуска — это ещё и записанный факт: без строки в таблице агента никто не
+    // разбудит, а «последний успех» в статусе скажет, что всё в порядке (слепая приёмка
+    // T20 по v6). Поэтому исход считается ниже, после попытки записи.
+    const childOk = outcome.code === 0 && !outcome.error;
+    let factError_: unknown = null;
     const codeDesc = outcome.code ?? "n/a";
     const signalDesc = outcome.signal ? `, signal=${outcome.signal}` : "";
     log(`schedule-runner: ${name} finished (code=${codeDesc}${signalDesc})`);
@@ -536,8 +540,8 @@ export async function runScheduledJob(
             name,
             startedAt,
             finishedAt,
-            ok,
-            error: factError(outcome, ok),
+            ok: childOk,
+            error: factError(outcome, childOk),
             exitCode: outcome.code,
             tail: outcome.errTail,
             acked: false,
@@ -550,6 +554,7 @@ export async function runScheduledJob(
         log(
           `schedule-runner: ${name} fact not recorded — ${errorMessage(error)}`,
         );
+        factError_ = error;
       }
       if (recorded && wake) {
         try {
@@ -573,6 +578,9 @@ export async function runScheduledJob(
         }
       }
     }
+
+    // Запуск успешен, только если ребёнок вышел нулём И факт лёг в таблицу.
+    const ok = childOk && factError_ === null;
 
     if (statusPath) {
       const completed = await withStatusLock(statusPath, (acquired) => {
@@ -618,6 +626,9 @@ export async function runScheduledJob(
             lastFinishedAt: finishedAt,
             lastExitCode: outcome.code,
             ...(ok ? { lastSuccessAt: finishedAt } : {}),
+            // Роли файлов: здесь — гварды («идёт сейчас», «последний успех») и след того,
+            // что запуск вообще был (scripts/lib/notice-policy.ts). Исход запуска и его
+            // история живут в data/jobs.json — второго ответа на «как прошло» тут нет.
           },
         });
         return true;
@@ -632,7 +643,11 @@ export async function runScheduledJob(
       ok,
       code: outcome.code,
       signal: outcome.signal,
-      ...(outcome.error === undefined ? {} : { error: outcome.error }),
+      ...(outcome.error !== undefined
+        ? { error: outcome.error }
+        : factError_ !== null
+          ? { error: factError_ }
+          : {}),
     };
   } catch (error) {
     try {

@@ -3,7 +3,7 @@
 // --env-file=.env, а пробуждение подменено шпионом.
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -240,6 +240,43 @@ void test("wake:false пишет факт, но не будит", async () => {
 
   assert.equal((await readFacts(factsPath)).length, 1);
   assert.equal(woken, 0);
+});
+
+void test("факт не записался — запуск не успешный, причина в журнале", async () => {
+  // Проверка v6 (HIGH-1): раннер глотал отказ записи, возвращал ok:true и писал
+  // lastSuccessAt, хотя строки в таблице нет и пробуждение не пошло.
+  const root = await scaffold();
+  await writeFile(join(root, "ok.ts"), "process.exit(0);\n");
+  const statusPath = join(root, "data/rollup-status.json");
+  await mkdir(join(root, "data"), { recursive: true });
+  const lines: string[] = [];
+
+  const result = await runScheduledJob({
+    name: "memory-daily",
+    argv: ["ok.ts"],
+    root,
+    nodeBin: process.execPath,
+    statusPath,
+    // Путь, по которому записи не быть: каталог данных — это файл.
+    factsPath: join(root, "ok.ts", "jobs.json"),
+    wakeImpl: () => {},
+    log: (...args) => lines.push(args.map(String).join(" ")),
+  });
+
+  assert.equal(result.ok, false, "запуск без факта считается успешным");
+  assert.ok(
+    lines.some((line) => /fact not recorded/u.test(line)),
+    `в журнале нет причины: ${lines.join(" | ")}`,
+  );
+  const status = JSON.parse(await readFile(statusPath, "utf8")) as Record<
+    string,
+    { lastSuccessAt?: number }
+  >;
+  assert.equal(
+    status["memory-daily"]?.lastSuccessAt,
+    undefined,
+    "последний успех записан при потерянном факте",
+  );
 });
 
 void test("без factsPath ни факта, ни пробуждения (доставка напоминаний)", async () => {

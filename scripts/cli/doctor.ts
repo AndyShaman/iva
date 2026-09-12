@@ -668,6 +668,8 @@ export function createDoctorCommand(
         // A recent success doesn't mean the MOST RECENT attempt was clean — e.g. it
         // succeeded, then a later catch-up retry failed and hasn't run again since.
         // Surface that even when the staleness check above is satisfied.
+        // Это взгляд гвардов (data/rollup-status.json), а не история: чем кончился каждый
+        // запуск, говорит раздел расписаний выше по таблице фактов (data/jobs.json).
         if (
           typeof entry.lastExitCode === "number" &&
           entry.lastExitCode !== 0
