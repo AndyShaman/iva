@@ -91,7 +91,11 @@ export async function processMediaPart(
         cached = await getTelegramMediaCacheEntry(media.fileUniqueId);
       } catch (error) {
         // Кэш факультативен: сбой чтения не должен блокировать обработку медиа.
-        console.error("[telegram] не смог прочитать кэш медиа:", error);
+        // Причина одной строкой: объект Error в журнале оставил бы стек.
+        console.error(
+          "[telegram] не смог прочитать кэш медиа:",
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
     let rel = cached?.path;

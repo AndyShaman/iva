@@ -4,6 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../lib/fs-atomic.js";
 import { resolveVaultDir } from "@iva/vault-dir";
+import { vaultDirErrorText } from "../lib/vault-error.ts";
 
 // Host-native запись файла. Переопределяет встроенный write_file eve: пишет реальный
 // файл на VPS через каноническую атомарную запись, создавая родительские директории.
@@ -78,7 +79,14 @@ export default defineTool({
     content: z.string().describe("Содержимое (UTF-8)"),
   }),
   async execute({ path, content }) {
-    const verdict = cardVerdict(path);
+    let verdict: CardVerdict;
+    try {
+      verdict = cardVerdict(path);
+    } catch (error) {
+      const text = vaultDirErrorText(error);
+      if (text !== null) return { ok: false, path, error: text };
+      throw error;
+    }
     if ("undecidable" in verdict) {
       const error = `не могу проверить ${join(resolveVaultDir(process.cwd()), "cards")}: ${verdict.undecidable}`;
       console.error(`[write_file] ${error}`);

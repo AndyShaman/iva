@@ -35,14 +35,6 @@ const BLIND_SPOT: ReadonlyArray<{
     path: "agent/instructions/05-language.ts",
     why: "динамика eve; язык проверен через ходы",
   },
-  {
-    path: "agent/instructions/20-core.ts",
-    why: "динамика eve; CORE читают тесты памяти",
-  },
-  {
-    path: "agent/instructions/25-persona.ts",
-    why: "динамика eve; персона проверена квизом",
-  },
   // Тонкие тулы: тривиальные обёртки, поведение держат тесты поверхностей.
   {
     path: "agent/tools/glob.ts",

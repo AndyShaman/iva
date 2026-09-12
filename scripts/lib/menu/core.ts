@@ -19,7 +19,10 @@ import {
   readInterviewRecovery,
 } from "../core-interview.ts";
 import { isRunning, chatKeyOf } from "#lib/run-status.ts";
-import { resolveVaultDir } from "../../../packages/vault-dir/index.ts";
+import {
+  VaultDirError,
+  resolveVaultDir,
+} from "../../../packages/vault-dir/index.ts";
 
 const SID = "core";
 const PARENT = "r";
@@ -207,17 +210,27 @@ async function admitOrRetry(update: SyntheticUpdate, ctx: MenuContext) {
   }
 }
 
-async function coreExcerpt() {
+async function coreExcerpt(): Promise<{
+  text: string | null;
+  error: string | null;
+}> {
   try {
     const text = (
       await readFile(join(resolveVaultDir(process.cwd()), "CORE.md"), "utf8")
     ).trim();
-    if (!text) return null;
-    return text.length > EXCERPT_LIMIT
-      ? `${text.slice(0, EXCERPT_LIMIT).trimEnd()}…`
-      : text;
-  } catch {
-    return null; // файла нет / нет доступа — ядро считаем пустым
+    if (!text) return { text: null, error: null };
+    return {
+      text:
+        text.length > EXCERPT_LIMIT
+          ? `${text.slice(0, EXCERPT_LIMIT).trimEnd()}…`
+          : text,
+      error: null,
+    };
+  } catch (error) {
+    // Неверная настройка вольта — это не «ядро пусто»: экран обязан назвать причину.
+    if (error instanceof VaultDirError)
+      return { text: null, error: error.message };
+    return { text: null, error: null }; // файла нет / нет доступа — ядро пусто
   }
 }
 
@@ -375,9 +388,14 @@ export default {
   async render(st: MenuState, ctx: MenuContext) {
     const excerpt = await coreExcerpt();
     const head = ctx.tr("💾 Memory core", "💾 Ядро памяти");
-    const body = excerpt
-      ? `${ctx.tr("Current core:", "Текущее ядро:")}\n\n${excerpt}`
-      : ctx.tr("The memory core is empty.", "Ядро памяти пусто.");
+    const body = excerpt.error
+      ? ctx.tr(
+          `Vault is misconfigured: ${excerpt.error}`,
+          `Хранилище не настроено: ${excerpt.error}`,
+        )
+      : excerpt.text
+        ? `${ctx.tr("Current core:", "Текущее ядро:")}\n\n${excerpt.text}`
+        : ctx.tr("The memory core is empty.", "Ядро памяти пусто.");
     const hint = ctx.tr(
       "The interview asks 6 questions; Iva turns your answers into the core.",
       "Интервью — 6 вопросов; ответы ива сама превратит в ядро.",

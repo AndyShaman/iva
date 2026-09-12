@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { resolveVaultDir } from "@iva/vault-dir";
+import { vaultDirErrorText } from "../lib/vault-error.ts";
 
 // Host-native чтение файла. Переопределяет встроенный read_file eve: читает реальный
 // файл на VPS через node:fs/promises (UTF-8). Самодостаточно (eve/tools, zod, node-builtins).
@@ -50,7 +51,22 @@ export default defineTool({
     limit: z.number().int().positive().optional().describe("Максимум строк"),
   }),
   async execute({ path, offset, limit }) {
-    const raw = await readFile(resolvePath(path), "utf8");
+    let raw: string;
+    try {
+      raw = await readFile(resolvePath(path), "utf8");
+    } catch (error) {
+      const text = vaultDirErrorText(error);
+      if (text !== null)
+        return {
+          path,
+          content: "",
+          lines: 0,
+          truncated: false,
+          ok: false,
+          error: text,
+        };
+      throw error;
+    }
 
     // Без offset/limit — отдаём файл целиком (с потолком по символам).
     if (offset === undefined && limit === undefined) {

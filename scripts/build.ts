@@ -24,7 +24,7 @@ import {
 } from "./lib/custom-layer.ts";
 import { resolveDataDir } from "./lib/data-dir.ts";
 import { classifyRoot, isEntrypoint } from "./lib/version-layout.ts";
-import { resolveVaultDir } from "../packages/vault-dir/index.ts";
+import { vaultDirOrExit } from "./lib/vault-boundary.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const BUILD_ROOT = join(ROOT, ".iva-build");
@@ -51,10 +51,7 @@ function dataDir(): string {
 }
 
 function copySourceTree(staging: string): void {
-  const privateRoots = [
-    resolve(dataDir()),
-    resolveVaultDir(ROOT, process.env.ASSISTANT_VAULT_DIR),
-  ];
+  const privateRoots = [resolve(dataDir()), vaultDirOrExit(ROOT)];
   const isPrivateRoot = (source: string): boolean => {
     const absolute = resolve(source);
     return privateRoots.some(

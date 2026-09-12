@@ -138,8 +138,8 @@ export default {
     if (verb === "apply") {
       const code = st.data.quiz?.code;
       if (!code) return ctx.show(st, SID); // нечего применять — вернуться в интро
-      const dir = resolveVaultDir(process.cwd());
       try {
+        const dir = resolveVaultDir(process.cwd());
         await writeFileAtomic(
           join(dir, "PERSONA.md"),
           personaMarkdown(code, ctx.getLang()),

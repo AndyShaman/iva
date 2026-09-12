@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { embedTexts, cosine, hasEmbeddingKey } from "../lib/embeddings.js";
 import { cardIndex, cardTitle } from "../lib/card-index.js";
 import { resolveVaultDir } from "@iva/vault-dir";
+import { vaultDirErrorText } from "../lib/vault-error.ts";
 
 // node:sqlite — встроенный модуль (Node 24+). В ESM нет глобального require, поэтому
 // поднимаем его через createRequire; грузим лениво внутри bm25Search (с fallback, если нет).
@@ -463,7 +464,7 @@ function rejectLongQuery(detail: string): {
   };
 }
 
-export async function searchMemory({
+async function searchMemoryInner({
   query,
   limit,
   scope,
@@ -471,7 +472,14 @@ export async function searchMemory({
   query: string;
   limit?: number;
   scope?: string[];
-}): Promise<{ count: number; engine?: string; hits: Hit[]; note?: string }> {
+}): Promise<{
+  count: number;
+  engine?: string;
+  hits: Hit[];
+  note?: string;
+  ok?: boolean;
+  error?: string;
+}> {
   {
     if (query.length > MAX_QUERY_CHARS)
       return rejectLongQuery(`${query.length} знаков`);
@@ -628,3 +636,36 @@ export default defineTool({
   }),
   execute: searchMemory,
 });
+
+/**
+ * Точка входа тула: неверная настройка каталога вольта — отказ `ok:false` с текстом
+ * резолвера, а не исключение на границе фреймворка.
+ */
+export async function searchMemory(input: {
+  query: string;
+  limit?: number;
+  scope?: string[];
+}): Promise<{
+  count: number;
+  engine?: string;
+  hits: Hit[];
+  note?: string;
+  ok?: boolean;
+  error?: string;
+}> {
+  try {
+    return await searchMemoryInner(input);
+  } catch (error) {
+    const text = vaultDirErrorText(error);
+    if (text !== null)
+      return {
+        count: 0,
+        engine: "rejected",
+        hits: [],
+        note: text,
+        ok: false,
+        error: text,
+      };
+    throw error;
+  }
+}

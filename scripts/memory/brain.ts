@@ -30,12 +30,15 @@ import { notificationChat } from "../lib/notification-chat.ts";
 import { redactNotice } from "../lib/notice.ts";
 import { resolveDataDir } from "../lib/data-dir.ts";
 import { resolveTimeZone } from "../lib/timezone.ts";
-import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
+import { vaultDirOrExit } from "../lib/vault-boundary.ts";
 
-const VAULT = resolveVaultDir(process.cwd());
+let vaultCache: string | null = null;
+// Лениво: неверная настройка вольта всплывает на первом использовании, где её ловит
+// граница процесса — одна строка причины и код 1, а не стек на импорте модуля.
+const VAULT = (): string => (vaultCache ??= vaultDirOrExit());
 const DATA_DIR = resolveDataDir(process.cwd());
 // The autograph code lives in THIS repo, not in the vault: the vault is user data only.
-// Absolute paths, because every script is spawned with cwd = VAULT (they take "." as the vault).
+// Absolute paths, because every script is spawned with cwd = vault (they take "." as the vault).
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPTS = resolve(ROOT, "scripts/autograph");
 const BOT = process.env.TELEGRAM_BOT_TOKEN;
@@ -114,8 +117,8 @@ function validIsoDate(value: string): boolean {
   return day >= 1 && day <= (days[month - 1] ?? 0);
 }
 
-if (!existsSync(VAULT)) {
-  console.error(`brain: vault not found: ${VAULT}`);
+if (!existsSync(VAULT())) {
+  console.error(`brain: vault not found: ${VAULT()}`);
   process.exit(1);
 }
 
@@ -131,7 +134,7 @@ function localDate(): string {
 // Run a command in the vault directory. Does not throw — returns status/output.
 // Null status (signal kill, spawn error) is a failure, never a success: an uv
 // killed mid-step otherwise counted as a passed step.
-function run(cmd: string, args: string[], cwd = VAULT) {
+function run(cmd: string, args: string[], cwd = VAULT()) {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
   if (out) console.log(`$ ${cmd} ${args.join(" ")}\n${out}`);
@@ -195,7 +198,7 @@ const cleared = (key: string): void => alertResolved(DATA_DIR, key);
 
 // Health score is read from the history that graph.py health appends after each run.
 function readHealthHistory(): HealthHistoryState {
-  const p = resolve(VAULT, ".graph/health-history.json");
+  const p = resolve(VAULT(), ".graph/health-history.json");
   let raw: Buffer;
   try {
     raw = readFileSync(p);
@@ -253,14 +256,14 @@ const today = localDate();
 // Language of every line below. Resolved once per run: the nightly pass is minutes long,
 // and a translator is a function, so no translated string is frozen in a module constant.
 const T = await noticeTranslator();
-console.log(`=== brain for ${today} (vault: ${VAULT}) ===`);
+console.log(`=== brain for ${today} (vault: ${VAULT()}) ===`);
 
 // ── 0. Schema location: vault root, with a one-time migration off the legacy path ──
 // Up to 0.3.2 the per-vault schema sat in vault/.claude/skills/autograph/schema.json (a
 // leftover of the Claude-skill layout). It is user config, so it now lives at the vault
 // root; the legacy copy is left in place (never delete user data), just no longer read.
-const VAULT_SCHEMA = resolve(VAULT, "schema.json");
-const LEGACY_SCHEMA = resolve(VAULT, ".claude/skills/autograph/schema.json");
+const VAULT_SCHEMA = resolve(VAULT(), "schema.json");
+const LEGACY_SCHEMA = resolve(VAULT(), ".claude/skills/autograph/schema.json");
 if (!existsSync(VAULT_SCHEMA) && existsSync(LEGACY_SCHEMA)) {
   copyFileSync(LEGACY_SCHEMA, VAULT_SCHEMA);
   console.log(`brain: schema migrated to the vault root: ${VAULT_SCHEMA}`);
@@ -326,9 +329,9 @@ maint("moc.generate", [`${SCRIPTS}/moc.py`, "generate", "."]);
 const supersedeSkippedPaths = new Set<string>();
 const supersedeRepairCommand =
   `cd ${shellQuote(ROOT)} && ` +
-  `uv run scripts/autograph/supersede.py ${shellQuote(VAULT)}`;
+  `uv run scripts/autograph/supersede.py ${shellQuote(VAULT())}`;
 const supersedeReportPath = shellQuote(
-  resolve(VAULT, ".graph/supersede-report.json"),
+  resolve(VAULT(), ".graph/supersede-report.json"),
 );
 const supersede = maint("supersede", [`${SCRIPTS}/supersede.py`, "."]);
 if (supersede.status === 0) {
@@ -338,7 +341,7 @@ if (supersede.status === 0) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(
-      readFileSync(resolve(VAULT, ".graph/supersede-report.json"), "utf8"),
+      readFileSync(resolve(VAULT(), ".graph/supersede-report.json"), "utf8"),
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -400,7 +403,7 @@ maint("dedup", [`${SCRIPTS}/dedup.py`, ".", "--dry-run"]);
 maint("link_cleanup", [`${SCRIPTS}/link_cleanup.py`, "."]);
 
 // Плагин: пересобрать сайдкар эмбеддингов для hybrid-поиска (только если включён). Запускаем
-// из корня проекта (cwd), а не из VAULT — скрипт лежит в scripts/, ключ читается из .env.
+// из корня проекта (cwd), а не из VAULT() — скрипт лежит в scripts/, ключ читается из .env.
 if (process.env.MEMORY_SEARCH_MODE === "hybrid") {
   // Use process.execPath, not bare "node": the systemd unit's PATH does not include the
   // nvm node dir, so spawning "node" by name fails with ENOENT and falsely reports a failure.
@@ -455,7 +458,7 @@ if (!cards) {
 
 // ── 1b. CORE guard: CORE must stay small (always-on floor stays flat) ──
 // This runs before git add/commit below, so a repaired CORE is included in the nightly backup.
-const corePath = resolve(VAULT, "CORE.md");
+const corePath = resolve(VAULT(), "CORE.md");
 // Забываем проблему только там, где её реально проверили: без authored tree размер CORE
 // измерить нечем, и «почищено» было бы выдумкой. Запись при этом ничего не блокирует — как
 // только дерево вернётся, ближайшая ночь либо снова скажет, либо очистит.
@@ -502,7 +505,7 @@ if (coreChecked && !coreClamped) cleared("core-cap");
 // the files - guessing would rewrite the user's text.
 const unclosed = cards
   ? cards
-      .scanUnclosedFenceCards(VAULT)
+      .scanUnclosedFenceCards(VAULT())
       .filter((path) => !supersedeSkippedPaths.has(path))
   : [];
 if (unclosed.length) {
@@ -573,7 +576,7 @@ if (history.state === "valid" && history.entries.length >= 2) {
 let oversized: Array<{ path: string; size: number }>;
 try {
   oversized = scanOversizeWorkingTreeFiles({
-    vaultPath: VAULT,
+    vaultPath: VAULT(),
     runGit: (args: string[]) => run("git", args),
   });
 } catch (error) {
@@ -581,10 +584,10 @@ try {
   const message = T(
     `The file-size check before the backup failed (${detail}). The memory backup is on hold, ` +
       "so today's memory is not saved off the server yet. On the server run df -h for free space. " +
-      `Then run: cd ${VAULT} && git status`,
+      `Then run: cd ${VAULT()} && git status`,
     `Проверка размеров файлов перед бэкапом не прошла (${detail}). Бэкап памяти отложен, ` +
       "сегодняшняя память ещё не сохранена вне сервера. Выполни на сервере df -h — сколько места. " +
-      `Потом выполни: cd ${VAULT} && git status`,
+      `Потом выполни: cd ${VAULT()} && git status`,
   );
   console.warn(`brain: ${message}`);
   await alert("backup-scan", "unreadable", message);
@@ -594,7 +597,7 @@ cleared("backup-scan");
 
 if (oversized.length) {
   recordSkippedOversize(
-    resolve(VAULT, ".graph/enforce-report.json"),
+    resolve(VAULT(), ".graph/enforce-report.json"),
     oversized.length,
   );
   const lines = oversized.map(({ path, size }) =>
@@ -635,7 +638,7 @@ function ensureRemote(): string {
     "iva-vault",
     "--private",
     "--source",
-    VAULT,
+    VAULT(),
     "--remote",
     "origin",
     "--push",
@@ -675,7 +678,7 @@ cleared("vault-remote");
 // Перед `git add -A`: в .gitignore вольта должны быть шаблоны временных файлов атомарной
 // записи, иначе огрызок убитого писателя уедет в историю памяти как карточка. Идемпотентно
 // и только дозаписью — см. ensureVaultGitignore.
-if (ensureVaultGitignore(VAULT))
+if (ensureVaultGitignore(VAULT()))
   console.log("brain: added temp-file patterns to the vault .gitignore");
 
 run("git", ["add", "-A"]);
@@ -689,13 +692,13 @@ if (push.status !== 0) {
       ? T(
           "Memory backup rejected: the vault history holds a file too big for GitHub. Nothing is " +
             "lost, but new memory stays on the server only. Clean the history by hand on the " +
-            `server, in ${VAULT}.\n` +
+            `server, in ${VAULT()}.\n` +
             "1. Start a clean branch: git checkout --orphan vault-clean\n" +
             '2. Commit the current files: git add -A && git commit -m "vault"\n' +
             "3. Replace the remote history: git push --force origin vault-clean:main",
           "Бэкап памяти отклонён: в истории vault лежит слишком большой файл. Ничего не потеряно, " +
             "но новая память остаётся только на сервере. Почисти историю вручную на сервере, " +
-            `в ${VAULT}.\n` +
+            `в ${VAULT()}.\n` +
             "1. Заведи чистую ветку: git checkout --orphan vault-clean\n" +
             '2. Закоммить текущие файлы: git add -A && git commit -m "vault"\n' +
             "3. Замени историю на remote: git push --force origin vault-clean:main",
@@ -703,15 +706,15 @@ if (push.status !== 0) {
       : error.kind === "auth"
         ? T(
             "Memory backup failed: git has no access to the repo. New memory stays on the server " +
-              `only. On the server run: gh auth login. Then check: cd ${VAULT} && git push`,
+              `only. On the server run: gh auth login. Then check: cd ${VAULT()} && git push`,
             "Бэкап памяти не прошёл: у git нет доступа к репозиторию. Новая память остаётся только " +
-              `на сервере. Выполни на сервере: gh auth login. Потом проверь: cd ${VAULT} && git push`,
+              `на сервере. Выполни на сервере: gh auth login. Потом проверь: cd ${VAULT()} && git push`,
           )
         : T(
             `Memory backup failed: ${error.firstLine}. New memory stays on the server only. ` +
-              `On the server run: cd ${VAULT} && git push`,
+              `On the server run: cd ${VAULT()} && git push`,
             `Бэкап памяти не прошёл: ${error.firstLine}. Новая память остаётся только на сервере. ` +
-              `Выполни на сервере: cd ${VAULT} && git push`,
+              `Выполни на сервере: cd ${VAULT()} && git push`,
           );
   console.warn(`brain: ${message}`);
   await alert("backup-push", error.kind, message);

@@ -593,6 +593,7 @@ function runBrainWithoutTree(
     "notice.ts",
     "notification-chat.ts",
     "timezone.ts",
+    "vault-boundary.ts",
   ])
     copyFileSync(
       join(ROOT, "scripts/lib", name),

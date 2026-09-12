@@ -24,9 +24,12 @@ import {
   hasEmbeddingKey,
 } from "../../agent/lib/embeddings.ts";
 import { embedText } from "../../agent/lib/card-index.ts";
-import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
+import { vaultDirOrExit } from "../lib/vault-boundary.ts";
 
-const VAULT = resolveVaultDir(process.cwd());
+let vaultCache: string | null = null;
+// Лениво: неверная настройка вольта всплывает на первом использовании, где её ловит
+// граница процесса — одна строка причины и код 1, а не стек на импорте модуля.
+const VAULT = (): string => (vaultCache ??= vaultDirOrExit());
 const SCOPE = ["cards", "summaries", "weekly", "monthly", "yearly"];
 const IGNORE = new Set([
   ".git",
@@ -65,7 +68,7 @@ function walk(dir: string, out: string[]): void {
 
 const files: string[] = [];
 for (const d of SCOPE) {
-  const abs = join(VAULT, d);
+  const abs = join(VAULT(), d);
   try {
     if (statSync(abs).isDirectory()) walk(abs, files);
   } catch {
@@ -90,7 +93,7 @@ interface EmbedIndex {
   hashes: Record<string, string>;
 }
 
-const INDEX_PATH = join(VAULT, ".index", "embeddings.json");
+const INDEX_PATH = join(VAULT(), ".index", "embeddings.json");
 
 function loadPrevious(): EmbedIndex | null {
   try {
@@ -130,7 +133,7 @@ const index: EmbedIndex = {
 // на неизменившихся файлах, а платим мы за вызов модели.
 const pending: Array<{ path: string; text: string }> = [];
 for (const file of files) {
-  const path = relative(VAULT, file).split(sep).join("/");
+  const path = relative(VAULT(), file).split(sep).join("/");
   const text = embedText(file, readFileSync(file, "utf8"));
   // Битая карточка не останавливает ночной индекс: её пропускают с именем в журнале.
   if (text === null) continue;
@@ -158,11 +161,11 @@ if (pending.length) {
 
 // Запись через tmp+rename: оборванная посреди записи ночь не должна оставить обрезанный
 // JSON вместо рабочего индекса (ADR-0002 — данные не теряются).
-mkdirSync(join(VAULT, ".index"), { recursive: true });
+mkdirSync(join(VAULT(), ".index"), { recursive: true });
 const tmp = `${INDEX_PATH}.tmp`;
 writeFileSync(tmp, JSON.stringify(index), "utf8");
 renameSync(tmp, INDEX_PATH);
 console.log(
-  `embed-index: wrote ${Object.keys(index.vectors).length} vectors → ${VAULT}/.index/embeddings.json`,
+  `embed-index: wrote ${Object.keys(index.vectors).length} vectors → ${VAULT()}/.index/embeddings.json`,
 );
 process.exit(0);
