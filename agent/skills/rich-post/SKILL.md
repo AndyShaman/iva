@@ -137,9 +137,11 @@ HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
 - Use `rich_message.markdown` OR `rich_message.html`, exactly one.
 - Channels/groups: the bot must be admin with permission to send media (and
   the target still has to be allowlisted).
-- The host DOES call sendRichMessage on normal replies (`agent/lib/outbox.ts`,
+- The host calls sendRichMessage on normal replies by default (`agent/lib/outbox.ts`,
   `needsRichMessage`), so tables and task lists in an ordinary answer already
-  render. This command exists for the other chat, not for a nicer reply.
+  render; with `TELEGRAM_RICH_REPLIES=never` they stay on the HTML path, while
+  `iva post` still sends rich. This command exists for the other chat, not for a
+  nicer reply.
 - `iva post` goes out through the same Outbox and the same outbound gate as every
   other message, so a leaked secret is redacted on the way. That is a safety net,
   not a licence: everything you post must be text you wrote in this turn, not a
