@@ -423,6 +423,36 @@ export function createDoctorCommand(
       }
     }
 
+    // Таблица фактов (T20 §5): последний запуск каждого имени и незакрытые провалы.
+    // Стоит выше раннего выхода systemd: jobs.json есть на любой установке, и на
+    // macOS это единственный след сломанного расписания.
+    // Историю держит jobs.json, rollup-status.json — только «последний успех» и гварды;
+    // пульс минутного диспетчера говорит раздел напоминаний ниже.
+    try {
+      const report = await scheduleFactsReport(dataDirectory, now());
+      for (const line of report.lastRuns) {
+        if (line.includes(": провал")) {
+          warn(`расписание ${line} — check: iva doctor, iva jobs ack <name>`);
+          warnN++;
+        } else {
+          ok(`расписание ${line}`);
+          okN++;
+        }
+      }
+      for (const failure of report.openFailures)
+        warn(
+          `незакрытый провал: ${failure.name} (${failure.reason}) — закрыть: iva jobs ack ${failure.name}`,
+        );
+      if (report.openFailures.length > 0) warnN++;
+    } catch (error) {
+      if (!authoredTreeMissing(error)) {
+        warn(
+          `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        warnN++;
+      }
+    }
+
     if (!hasSystemd()) {
       warn(
         "systemd unavailable (not Linux) — skipping service and timer checks",
@@ -592,34 +622,6 @@ export function createDoctorCommand(
       } else {
         ok(`${service} has no failed state`);
         okN++;
-      }
-    }
-
-    // Таблица фактов (T20 §5): последний запуск каждого имени и незакрытые провалы.
-    // Историю держит jobs.json, rollup-status.json — только «последний успех» и гварды;
-    // пульс минутного диспетчера говорит раздел напоминаний ниже.
-    try {
-      const report = await scheduleFactsReport(dataDirectory, now());
-      for (const line of report.lastRuns) {
-        if (line.includes(": провал")) {
-          warn(`расписание ${line} — check: iva doctor, iva jobs ack <name>`);
-          warnN++;
-        } else {
-          ok(`расписание ${line}`);
-          okN++;
-        }
-      }
-      for (const failure of report.openFailures)
-        warn(
-          `незакрытый провал: ${failure.name} (${failure.reason}) — закрыть: iva jobs ack ${failure.name}`,
-        );
-      if (report.openFailures.length > 0) warnN++;
-    } catch (error) {
-      if (!authoredTreeMissing(error)) {
-        warn(
-          `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,
-        );
-        warnN++;
       }
     }
 

@@ -1781,3 +1781,46 @@ test("doctor names a failed schedule run and its open failure", async (t) => {
     "незакрытый провал назван с командой закрытия",
   );
 });
+
+// T30 §2: раздел расписаний виден и без systemd (jobs.json есть на любой установке).
+test("doctor без systemd печатает раздел расписаний по таблице фактов", async (t) => {
+  const root = await sandbox(t);
+  const data = join(root, "data");
+  mkdirSync(data, { recursive: true });
+  const { jobFactsFile, recordFact } = await import("#lib/job-facts.ts");
+  const finishedAt = Date.now() - 1000;
+  await recordFact(
+    jobFactsFile(data),
+    {
+      name: "memory-daily",
+      startedAt: finishedAt - 1000,
+      finishedAt,
+      ok: false,
+      error: "exited 1",
+      exitCode: 1,
+      tail: "rollup daily: no report",
+      acked: false,
+      wake: null,
+    },
+    finishedAt,
+  );
+  const { events } = await doctorOutput(root);
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /расписание memory-daily: провал \(exited 1\)/u.test(message),
+    ),
+    `раздела расписаний без systemd нет: ${JSON.stringify(events)}`,
+  );
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /незакрытый провал: memory-daily .*iva jobs ack memory-daily/u.test(
+          message,
+        ),
+    ),
+    "незакрытый провал не назван",
+  );
+});
