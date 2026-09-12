@@ -5,6 +5,7 @@ autograph graph — vault graph analysis, link repair, backlinks, orphans.
 Commands:
   graph.py health <vault-dir> [schema.json] [--as-of YYYY-MM-DD] — health score + report
   graph.py fix <vault-dir> [schema.json] [--apply] [--as-of YYYY-MM-DD] — fix broken links
+    (repairs unique path/stem/H1-title targets; ambiguous H1 titles are listed, not touched)
   graph.py backlinks <vault-dir> <target>           — incoming links
   graph.py orphans <vault-dir>                      — files with no incoming links
 
@@ -25,7 +26,8 @@ from collections import defaultdict
 from common import (
     load_schema, parse_frontmatter, walk_vault, rel_path,
     extract_wikilinks, infer_domain, get_domain_map, IGNORE_DIRS,
-    build_link_index, normalize_link_target, resolve_link_target, is_hub_path,
+    build_link_index, normalize_link_target, normalize_title,
+    resolve_link_target, is_hub_path,
     read_card, write_card
 )
 
@@ -126,6 +128,7 @@ def build_graph(vault_dir: Path, schema: dict, today: date | None = None) -> dic
     all_links = []      # (source, raw_target, resolved_target)
     broken_links = []   # (source, raw_target)
     future_links = []   # (source, raw_target)
+    title_links = []    # (source, raw_target), resolved by H1 only
 
     for md in files:
         rp = rel_path(md, vault_dir)
@@ -148,10 +151,14 @@ def build_graph(vault_dir: Path, schema: dict, today: date | None = None) -> dic
         links = extract_wikilinks(body if body else content)
         for target, display in links:
             target_clean = normalize_link_target(target)
-            resolved, _ = resolve_link_target(target_clean, link_index)
+            resolved, strategy = resolve_link_target(target_clean, link_index)
             if resolved:
                 outgoing.append(resolved)
                 all_links.append((rp_noext, target_clean, resolved))
+                # Такая ссылка не битая, но её цель — заголовок: H1 поменяется, и
+                # ссылка порвётся. fix доводит её до пути (title_link_list).
+                if strategy == 'unique_title':
+                    title_links.append((rp_noext, target_clean))
             elif any(target.lower().endswith(ext) for ext in EMBED_EXTS):
                 # A Markdown note may legitimately end in an attachment-like suffix
                 # (voice.ogg.md). Resolution must win before the embed exemption.
@@ -263,6 +270,7 @@ def build_graph(vault_dir: Path, schema: dict, today: date | None = None) -> dic
         'dead_end_list': sorted(dead_ends),
         'broken_link_list': [{'source': s, 'target': t} for s, t in broken_links],
         'future_link_list': [{'source': s, 'target': t} for s, t in future_links],
+        'title_link_list': [{'source': s, 'target': t} for s, t in title_links],
         'nodes': {k: {'domain': v['domain'], 'type': v['type'], 'has_description': v['has_description'],
                        'managed': v['managed'], 'outgoing': v['outgoing'], 'incoming': v['incoming']}
                   for k, v in nodes.items()},
@@ -385,19 +393,47 @@ def update_history(vault_dir: Path, stats: dict):
 
 
 # ─── FIX BROKEN LINKS ─────────────────────────────────────
-def fix_broken_links(vault_dir: Path, graph: dict, apply: bool = False) -> list:
-    """Suggest and optionally apply fixes for broken links."""
+def fix_broken_links(vault_dir: Path, graph: dict, apply: bool = False) -> tuple[list, int, list]:
+    """Suggest and optionally apply fixes for broken links.
+
+    Returns (fixes, applied, ambiguous): ambiguous H1 titles are reported with their
+    candidates and left untouched — guessing one of them would rewrite a Card wrongly.
+    """
     link_index = build_link_index(vault_dir)
 
+    # Единственный список стратегий, которые fix имеет право применить: ровно один
+    # кандидат. ambiguous_* сюда не попадают никогда.
+    allowed = ('unique_suffix', 'unique_stem', 'unique_title')
+
     fixes = []
+    ambiguous = []
     for bl in graph['broken_link_list']:
         src = bl['source']
         target = bl['target']
         resolved, strategy = resolve_link_target(target, link_index)
-        if resolved and strategy in ('unique_suffix', 'unique_stem'):
+        if resolved and strategy in allowed:
             fixes.append({
                 'source': src,
                 'old': target,
+                'new': resolved,
+                'strategy': strategy
+            })
+        elif strategy == 'ambiguous_title':
+            ambiguous.append({
+                'source': src,
+                'target': target,
+                'candidates': link_index['ambiguous_title'][
+                    normalize_title(normalize_link_target(target))]
+            })
+
+    # Ссылка по заголовку резолвится, поэтому в битых её нет. Путь вместо заголовка
+    # переживёт правку H1, и fix — тот проход, который доводит её до канонической формы.
+    for tl in graph.get('title_link_list', []):
+        resolved, strategy = resolve_link_target(tl['target'], link_index)
+        if resolved and strategy in allowed:
+            fixes.append({
+                'source': tl['source'],
+                'old': tl['target'],
                 'new': resolved,
                 'strategy': strategy
             })
@@ -413,18 +449,23 @@ def fix_broken_links(vault_dir: Path, graph: dict, apply: bool = False) -> list:
             content = read_card(src_path)
             if content is None:
                 continue
+            # Резолвер срезает пробелы вокруг цели, поэтому и замена ищет её с ними:
+            # иначе [[ Заголовок ]] считается битой, но не чинится. subn считает именно
+            # переписанные ссылки: две ссылки на одну цель различаются anchor/alias
+            # и обе попадают под общий токен цели.
             pattern = re.compile(
-                r'\[\[' + re.escape(normalize_link_target(fix['old'])) + r'(?P<anchor>#[^\]|]+)?(?P<alias>\|[^\]]+)?\]\]'
+                r'\[\[[ \t]*' + re.escape(normalize_link_target(fix['old']))
+                + r'[ \t]*(?P<anchor>#[^\]|]+)?(?P<alias>\|[^\]]+)?\]\]'
             )
-            if pattern.search(content):
-                content = pattern.sub(
-                    lambda m: f"[[{fix['new']}{m.group('anchor') or ''}{m.group('alias') or ''}]]",
-                    content
-                )
+            content, rewritten = pattern.subn(
+                lambda m: f"[[{fix['new']}{m.group('anchor') or ''}{m.group('alias') or ''}]]",
+                content
+            )
+            if rewritten:
                 write_card(src_path, content)
-                applied += 1
-        return fixes, applied
-    return fixes, 0
+                applied += rewritten
+        return fixes, applied, ambiguous
+    return fixes, 0, ambiguous
 
 
 # ─── BACKLINKS ─────────────────────────────────────────────
@@ -582,12 +623,15 @@ def main():
     elif cmd == 'fix':
         graph = build_graph(vault_dir, schema, today=as_of)
         apply = '--apply' in args
-        fixes, applied = fix_broken_links(vault_dir, graph, apply=apply)
+        fixes, applied, ambiguous = fix_broken_links(vault_dir, graph, apply=apply)
         mode = 'APPLIED' if apply else 'DRY RUN'
         print(f"\n  Broken links: {len(graph['broken_link_list'])}")
         print(f"  Fixable:      {len(fixes)}")
         if apply:
             print(f"  Applied:      {applied}")
+        print(f"  Ambiguous:    {len(ambiguous)}  (left as is)")
+        for a in ambiguous[:20]:
+            print(f"    {a['source']}: [[{a['target']}]] -> {', '.join(a['candidates'])}")
         for f in fixes[:20]:
             print(f"    {f['source']}: {f['old']} → {f['new']}")
 
