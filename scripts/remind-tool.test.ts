@@ -3,18 +3,24 @@ import {
   existsSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import type { ToolContext } from "eve/tools";
 
-import type { RemindAddAnswer } from "../agent/tools/remind_add.ts";
-import type { RemindListAnswer } from "../agent/tools/remind_list.ts";
-import type { RemindRemoveAnswer } from "../agent/tools/remind_remove.ts";
+import type {
+  RemindAdded,
+  RemindFailure,
+  RemindListed,
+  RemindRemoved,
+} from "../agent/tools/remind.ts";
 
 // Тесты тулов живут в scripts/: файл рядом с тулами eve счёл бы ещё одним тулом и сборка
 // упала бы. Хук резолвинга идёт первым — тулы тянут соседей NodeNext-спецификаторами.
@@ -22,29 +28,34 @@ import "./lib/ts-esm-hooks.ts";
 
 const NOW = Date.UTC(2026, 8, 12, 5, 0, 0); // 10:00 в Asia/Tashkent
 
-const dataDir = mkdtempSync(join(tmpdir(), "iva-remind-tools-"));
+const dataDir = mkdtempSync(join(tmpdir(), "iva-remind-tool-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
 process.env.ASSISTANT_TIMEZONE = "Asia/Tashkent";
 process.env.TELEGRAM_DIGEST_CHAT_ID = "555";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "";
 
-const { default: remindAdd } = await import("../agent/tools/remind_add.ts");
-const { default: remindList } = await import("../agent/tools/remind_list.ts");
-const { default: remindRemove } =
-  await import("../agent/tools/remind_remove.ts");
+const { default: remind } = await import("../agent/tools/remind.ts");
 const { list, reminderFile } = await import("../agent/lib/reminder-store.ts");
 
 // Второй аргумент execute — контекст хода; тестам тулов он не нужен, а eve типизирует
-// ответ тула как «значение или поток». Тулы напоминаний отвечают значением, и обёртки
+// ответ тула как «значение или поток». Тул напоминаний отвечает значением, и обёртки
 // возвращают вызывающему именно его.
 const ctx = {} as unknown as ToolContext;
 
-const addReminder = (input: Parameters<typeof remindAdd.execute>[0]) =>
-  remindAdd.execute(input, ctx) as Promise<RemindAddAnswer>;
+type Input = Parameters<typeof remind.execute>[0];
+
+const addReminder = (input: Omit<Input, "action">) =>
+  remind.execute({ ...input, action: "add" }, ctx) as Promise<
+    RemindAdded | RemindFailure
+  >;
 const listReminders = () =>
-  remindList.execute({}, ctx) as Promise<RemindListAnswer>;
-const removeReminder = (input: Parameters<typeof remindRemove.execute>[0]) =>
-  remindRemove.execute(input, ctx) as Promise<RemindRemoveAnswer>;
+  remind.execute({ action: "list" }, ctx) as Promise<
+    RemindListed | RemindFailure
+  >;
+const removeReminder = (input: Omit<Input, "action">) =>
+  remind.execute({ ...input, action: "remove" }, ctx) as Promise<
+    RemindRemoved | RemindFailure
+  >;
 
 function resetState(): void {
   process.env.ASSISTANT_TIMEZONE = "Asia/Tashkent";
@@ -71,7 +82,7 @@ function frozenNow(t: TestContext): void {
   t.mock.timers.enable({ apis: ["Date"], now: NOW });
 }
 
-void test("remind_add stores a one-time reminder and answers with the owner-zone time", async (t) => {
+void test("add stores a one-time reminder and answers with the owner-zone time", async (t) => {
   resetState();
   frozenNow(t);
 
@@ -132,7 +143,7 @@ void test("remind_add stores a one-time reminder and answers with the owner-zone
   assert.equal(fallback.reminder.timezone, "UTC");
 });
 
-void test("remind_add stores a repeating reminder with the first run computed by code", async (t) => {
+void test("add stores a repeating reminder with the first run computed by code", async (t) => {
   resetState();
   frozenNow(t);
 
@@ -260,4 +271,84 @@ void test("list and remove", async (t) => {
   const neither = await addReminder({ text: "x" });
   if (neither.ok) assert.fail("expected exactly one of at or cron");
   assert.match(neither.error, /give exactly one of at or cron/u);
+});
+
+void test("action decides what the call does, and each action needs its own fields", async (t) => {
+  resetState();
+  frozenNow(t);
+
+  // Поля разового напоминания при action: "list" не создают строку: ход решает action,
+  // а не набор переданных полей.
+  const listedWithAddFields = await remind.execute(
+    { action: "list", text: "не ставить", at: "in 30m" },
+    ctx,
+  );
+  assert.deepEqual(listedWithAddFields, {
+    ok: true,
+    count: 0,
+    now: "2026-09-12 10:00",
+    timezone: "Asia/Tashkent",
+    reminders: [],
+    scheduler: {
+      alive: false,
+      last_tick_at: null,
+      warning:
+        "the reminders dispatcher has not ticked yet on this server; the reminder is stored and fires once it runs - tell the user",
+    },
+  });
+  assert.equal((await list()).length, 0);
+
+  // Снятие по id не ставит напоминание, даже если пришли поля add.
+  const added = await addReminder({ text: "снять", at: "in 1h" });
+  if (!added.ok) assert.fail(added.error);
+  const removed = await remind.execute(
+    { action: "remove", id: added.reminder.id, text: "ещё", at: "in 2h" },
+    ctx,
+  );
+  assert.deepEqual(removed, {
+    ok: true,
+    removed: { id: added.reminder.id, text: "снять" },
+  });
+  assert.equal((await list()).length, 0);
+
+  const noText = await addReminder({ at: "in 30m" });
+  if (noText.ok) assert.fail("expected a missing text error");
+  assert.match(noText.error, /action add needs text/u);
+  assert.equal((await list()).length, 0);
+
+  const noId = await removeReminder({});
+  if (noId.ok) assert.fail("expected a missing id error");
+  assert.match(noId.error, /action remove needs id/u);
+});
+
+void test("the three old tool names are gone from the code, the instructions and the docs", () => {
+  const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
+  // Датированные записи не переименовываются: CHANGELOG и docs/adr фиксируют решение тем
+  // языком, каким его приняли, и дописываются разделом «Обновление».
+  const skipDirs = new Set(["node_modules", ".git", "adr"]);
+  const textFile = /\.(?:ts|mjs|md|txt|html|json)$/u;
+  const oldName = /remind_(?:add|list|remove)/u;
+
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory())
+        return skipDirs.has(entry.name) ? [] : walk(path);
+      return entry.isFile() && textFile.test(entry.name) ? [path] : [];
+    });
+
+  const files = ["agent", "scripts", "docs"]
+    .map((dir) => join(root, dir))
+    .flatMap(walk)
+    .concat(join(root, "CONTEXT.md"));
+
+  const offenders = files.filter((file) => {
+    if (statSync(file).size > 2_000_000) return false;
+    return oldName.test(readFileSync(file, "utf8"));
+  });
+  assert.deepEqual(
+    offenders.map((file) => file.slice(root.length)),
+    [],
+    "три тула напоминаний свёрнуты в один remind с полем action",
+  );
 });
