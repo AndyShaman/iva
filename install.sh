@@ -536,6 +536,13 @@ done
 # Does the terminal actually open? (in a Docker build the /dev/tty node exists, but open gives ENXIO).
 have_tty() { (: < /dev/tty) 2>/dev/null; }
 
+# Один разбор ответа на все вопросы мастера: пробелы по краям и хвостовая пунктуация
+# пункта меню («2.», «2)», «да.») не меняют ответ. Разбор один на все вопросы, чтобы
+# «да» и «2.» понимались одинаково везде.
+answer_token() {
+  printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:].)]*$//'
+}
+
 # y/n question with a default; input source: stdin-tty → /dev/tty → default.
 prompt_yes_no() {
   local question="$1" default="${2:-no}" suffix answer=""
@@ -544,11 +551,14 @@ prompt_yes_no() {
   elif [ "$IS_INTERACTIVE" = true ]; then read -r -p "$question $suffix " answer || answer=""
   elif have_tty; then printf '%s %s ' "$question" "$suffix" > /dev/tty; IFS= read -r answer < /dev/tty || answer=""
   else answer=""; fi
-  answer="$(printf '%s' "$answer" | tr -d '[:space:]')"
+  answer="$(answer_token "$answer")"
   if [ -z "$answer" ]; then
     case "$default" in [yY]*|1|true) return 0 ;; *) return 1 ;; esac
   fi
-  case "$answer" in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+  case "$answer" in
+    [yY]|[yY][eE][sS]|[дД]|[дД][аА]) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # Language is the VERY FIRST question, before any system work. Bilingual prompt, default English.
@@ -575,7 +585,7 @@ pick_language() {
     elif have_tty; then printf '  > ' > /dev/tty; IFS= read -r ans < /dev/tty || ans=""
     else ans=""; fi
   fi
-  case "$(printf '%s' "$ans" | tr -d '[:space:]')" in
+  case "$(answer_token "$ans")" in
     2|ru|RU|[Рр]ус*) IVA_LANG=ru ;;
     1|en|EN) IVA_LANG=en ;;
     *) IVA_LANG="$default_lang" ;;

@@ -41,6 +41,8 @@ writeFileSync(
     `INSTALL_DIR="${join(work, "no-install")}"`,
     "have_tty() { return 1; }",
     't() { if [ "${IVA_LANG:-en}" = ru ]; then printf "%s" "$2"; else printf "%s" "$1"; fi; }',
+    // Общий разбор ответа мастер берёт из одного места - его вынимаем первым.
+    functionBody("answer_token"),
     functionBody("prompt_yes_no"),
     functionBody("pick_language"),
     'case "${1:-}" in',
