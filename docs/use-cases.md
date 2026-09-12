@@ -75,7 +75,7 @@ The author's own install has grown past 80 skills: Iva runs a Telegram channel, 
 
 ## Honest limits
 
-Everything that arrives on its own runs on a schedule: digests and reminders are crons and timers on your server, which Iva sets up when you ask. Without a schedule and without a message from you she won't text first — spontaneous initiative is not a thing she has. The model and voice transcription are cloud APIs you choose and pay for directly, with no markup. The userbot mode (acting from your personal account) is a beta, at your own risk.
+Everything that arrives on its own runs on a schedule: digests are schedules inside Iva, and reminders live in her own table on your server, which she fills when you ask (see [Reminders](reminders.md)). Without a schedule and without a message from you she won't text first — spontaneous initiative is not a thing she has. The model and voice transcription are cloud APIs you choose and pay for directly, with no markup. The userbot mode (acting from your personal account) is a beta, at your own risk.
 
 ## Try it
 
