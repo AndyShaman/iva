@@ -249,7 +249,7 @@ await test("пакет на фикстуре данных: все разделы
     assert.ok(text.includes(section), `нет раздела ${section}`);
   assert.match(
     text,
-    /- redaction: 7 values from \.env, pattern rules always on/u,
+    /- redaction: 4 values from \.env, pattern rules always on/u,
     "пакет обязан сказать, чем и по какому списку он вырезал",
   );
   assert.match(text, /- iva: 9\.9\.9 \(git abc1234\)/);
@@ -257,9 +257,15 @@ await test("пакет на фикстуре данных: все разделы
   assert.match(text, /- node: v\d+/);
   assert.match(text, /Node \d+\.\d+\.\d+/, "в пакете вывод настоящего доктора");
   assert.match(text, /Summary: \d+ ok/);
-  assert.ok(
-    text.includes("update-2026-09-12T10-00-00-000Z.log"),
-    "нет journalctl — взят новейший файл журнала",
+  assert.match(
+    text,
+    /^- data dir: .*\/data$/mu,
+    "слово data в пути каталога обязано остаться: это конфиг, а не секрет",
+  );
+  assert.match(
+    text,
+    /newest log file data\/logs\/update-2026-09-12T10-00-00-000Z\.log/u,
+    "нет journalctl — взят новейший файл журнала, и путь к нему не разъеден",
   );
   assert.match(
     text,
@@ -349,7 +355,7 @@ await test("секрет, записанный .env доктором во вре
     !text.includes(freshBearer),
     "секрет, записанный доктором во время прогона, уехал в пакет",
   );
-  assert.match(text, /- redaction: 7 values from \.env/u);
+  assert.match(text, /- redaction: 4 values from \.env/u);
 });
 
 await test("без .env пакет говорит об этом, а шаблонные правила всё равно работают", async (t) => {
@@ -414,7 +420,7 @@ await test("битые данные не мешают пакету: раздел
   assert.deepEqual(printed, [`Diagnose package: ${path}`]);
   const text = readFileSync(path, "utf8");
   assert.match(text, /- reminders\.json unreadable: /);
-  assert.match(text, /the turn journal has nothing/);
+  assert.match(text, /- no data\/trace — the turn journal has nothing/);
   assert.match(text, /journalctl unavailable \(no journalctl on this host\)/);
   assert.match(text, /## Custom layer \(file names only\)\n- \(none\)/);
 });

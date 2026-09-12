@@ -47,13 +47,18 @@ export function reminderIdHash(id: string): string {
 /** Потолок кода ошибки хода: код — короткое слово, а не текст. */
 const TRACE_CODE_CHARS = 60;
 /**
- * Имя ключа, значение которого режется целиком, какой бы длины оно ни было: секреты —
- * это ключи, токены, пароли и личные id, и трёхзначный PIN прячется ровно так же, как
- * длинный ключ. Пробелы не значат ничего: значение режется как есть.
+ * Имя ключа, значение которого режется целиком, какой бы длины оно ни было. Решают ИМЕНА,
+ * а не вид значения: трёхзначный PIN под `PIN_ID` прячется так же, как длинный ключ, а
+ * `ASSISTANT_DATA_DIR=data`, `MODEL_PROVIDER=ollama` и `ASSISTANT_TIMEZONE=Asia/Almaty` —
+ * конфиг, и вырезать их по длине нельзя: слово `data` пропадало из путей и списков самого
+ * пакета (слепая приёмка T21, раунд 2). `HASH` добавлен к списку владельца по описи
+ * `agent/skills/security-defense/outbound-sensitive-keys.json`: `TELEGRAM_API_HASH` —
+ * секрет, а в перечисленные слова его имя не попадает. `ID` ищется словом, а не подстрокой:
+ * иначе `MODEL_PROVIDER` («proVIDer») и любой другой конфиг с этими буквами внутри считался
+ * бы секретом — ровно та ошибка, из-за которой `data` вырезался из путей пакета.
  */
-const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|ID/u;
-/** На трёх знаках кончается конфиг (`ru`), поэтому значение длиннее трёх — уже секрет. */
-const SHORT_VALUE_LIMIT = 3;
+const SECRET_KEY =
+  /(?:^|_)(?:ID|IDS)(?:_|$)|KEY|TOKEN|SECRET|PASSWORD|PASS|AUTH|BEARER|HASH/iu;
 /** Ключи со списком личных id: их значения делятся по запятой и пробелам. */
 const CHAT_ID_KEY = /(?:_CHAT_ID|_USER_IDS|_API_ID)$/u;
 /**
@@ -69,7 +74,7 @@ const TELEGRAM_TOKEN_RE = /\d{5,}:[A-Za-z0-9_-]{25,}/gu;
  * Голые длинные числа не трогаем: тогда пакет превратился бы в кашу из времён и размеров.
  */
 const TELEGRAM_ID_RE =
-  /((?:tg|chat|chatId|chat_id|userId|user_id|from|to)[:=]\s*)\d{5,}/giu;
+  /((?:tg|chat|chatId|chat_id|userId|user_id|from|to)(?::|=|%3A|%3D)\s*)\d{5,}/giu;
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gu;
 /** Файлы журнала хода: имя дня — единственный контракт каталога (docs/trace.md). */
 const TRACE_DAY_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/u;
@@ -91,6 +96,12 @@ function escapeRegExp(value: string): string {
 function secretForms(secret: string): string[] {
   return [
     secret,
+    // Многострочное значение (кавычка в `.env`) приезжает в журнал и построчно: каждая
+    // непустая строка — такая же форма секрета, как целое значение (слепая приёмка T21).
+    ...secret
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
     encodeURIComponent(secret),
     JSON.stringify(secret).slice(1, -1),
     Buffer.from(secret, "utf8").toString("base64"),
@@ -126,13 +137,10 @@ export function redact(text: string, secrets: readonly string[]): string {
 /**
  * Какие значения `.env` считать секретами. Имена ключей берутся из самого файла: список
  * не угадывается по виду значения. Режется значение целиком, если имя ключа похоже на
- * секрет (KEY, TOKEN, SECRET, PASSWORD, ID) — любой длины, — и любое значение длиннее
- * трёх знаков: на трёх знаках кончается конфиг (`ru`), а короткий PIN или код доступа
- * короче не бывает. Ветвь CHAT_ID_KEY делит список на части: личные id пишут через запятую.
- *
- * Цена решения названа владельцем и принята: короткое значение вроде `data` режется по
- * всему пакету, и путь к каталогу данных показывается пометкой. Утёкший ключ дороже
- * читаемости, а что именно вырезано, пакет говорит первой строкой.
+ * секрет (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, BEARER, ID, HASH) — любой длины;
+ * значения остальных ключей (DIR, MODEL, TIMEZONE, LANG, URL и прочие) не режутся вовсе,
+ * чтобы слово `data` не исчезало из путей пакета. Ветвь CHAT_ID_KEY делит список на части:
+ * личные id пишут через запятую.
  */
 export function secretValuesFromEnv(env: Record<string, string>): string[] {
   const values: string[] = [];
@@ -148,8 +156,7 @@ export function secretValuesFromEnv(env: Record<string, string>): string[] {
       );
       continue;
     }
-    if (SECRET_KEY.test(key) || value.length > SHORT_VALUE_LIMIT)
-      values.push(value);
+    if (SECRET_KEY.test(key)) values.push(value);
   }
   return values;
 }
