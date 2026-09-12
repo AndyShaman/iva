@@ -1,5 +1,6 @@
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
+import { createDiagnoseCommand } from "./diagnose.ts";
 import { createDoctorCommand } from "./doctor.ts";
 import { createNotifyCommand } from "./notify.ts";
 import { createPluginCommands } from "./plugin.ts";
@@ -67,6 +68,7 @@ export function createCliMain(root: string) {
   const services = createServiceCommands(runtime, systemdLifecycle);
   const cmdConfig = createConfigCommand(runtime, systemdLifecycle);
   const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle);
+  const cmdDiagnose = createDiagnoseCommand(runtime, systemdLifecycle);
   const trace = createTraceCommands(runtime);
   const cmdNotify = createNotifyCommand(runtime);
   const cmdRemind = createRemindCommand(runtime);
@@ -106,6 +108,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva login${C.x} [--browser]  sign in to an OpenAI subscription (ChatGPT) for MODEL_PROVIDER=codex
   ${C.c}iva rollback${C.x}       go back to the previous version (symlink flip + restart)
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
+  ${C.c}iva diagnose${C.x}       collect one package of evidence for a bug report (no secrets)
   ${C.c}iva plugin${C.x} <cmd>     plugins: add|list|update|enable|disable|remove|sync|marketplace
   ${C.c}iva status${C.x}         status of services and nightly timers
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
@@ -132,6 +135,7 @@ ${C.b}Commands:${C.x}
     config: cmdConfig,
     login: account.cmdLogin,
     doctor: cmdDoctor,
+    diagnose: cmdDiagnose,
     plugin: plugin.cmdPlugin,
     trace: trace.cmdTrace,
     status: services.cmdStatus,

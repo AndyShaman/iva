@@ -157,6 +157,7 @@ void test("main composition exposes the exact legacy command key set without exe
     "config",
     "login",
     "doctor",
+    "diagnose",
     "plugin",
     "trace",
     "status",
