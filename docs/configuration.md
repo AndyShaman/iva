@@ -53,13 +53,14 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 
 ## Telegram
 
-| Variable                        | Default   | Notes                                                                                                                      |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`            | —         | From [@BotFather](https://t.me/BotFather).                                                                                 |
-| `TELEGRAM_BOT_USERNAME`         | —         | Your bot's username. The wizard verifies the token via `getMe` and detects this itself.                                    |
-| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | —         | Shared secret between the long-poll bridge and the local webhook. Any long random string.                                  |
-| `TELEGRAM_ALLOWED_USER_IDS`     | _(empty)_ | Comma-separated numeric user IDs allowed to talk to Iva.                                                                   |
-| `TELEGRAM_DIGEST_CHAT_ID`       | —         | Chat that receives the morning digest, nightly memory reports and one-time stable update offers. Usually your own chat ID. |
+| Variable                        | Default   | Notes                                                                                                                                                                                                                                                 |
+| ------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`            | —         | From [@BotFather](https://t.me/BotFather).                                                                                                                                                                                                            |
+| `TELEGRAM_BOT_USERNAME`         | —         | Your bot's username. The wizard verifies the token via `getMe` and detects this itself.                                                                                                                                                               |
+| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | —         | Shared secret between the long-poll bridge and the local webhook. Any long random string.                                                                                                                                                             |
+| `TELEGRAM_ALLOWED_USER_IDS`     | _(empty)_ | Comma-separated numeric user IDs allowed to talk to Iva.                                                                                                                                                                                              |
+| `TELEGRAM_DIGEST_CHAT_ID`       | —         | Chat that receives the morning digest, nightly memory reports and one-time stable update offers. Usually your own chat ID.                                                                                                                            |
+| `TELEGRAM_RICH_REPLIES`         | `auto`    | `auto` sends a reply as a Telegram rich message when it contains a table, task list, `<details>` or block formula; `never` keeps every current-chat reply on the ordinary HTML/plain path. Any other value stops startup. `iva post` is not affected. |
 
 The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard auto-discovers your ID the moment you message the bot; or ask [@userinfobot](https://t.me/userinfobot). Why fail-closed matters: [security.md](./security.md).
 
