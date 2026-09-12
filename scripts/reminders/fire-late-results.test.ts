@@ -229,3 +229,62 @@ void test("T34b-v2: упавшая запись факта не даёт вто�
   }
   assert.deepEqual(sent, ["забрать посылку"], `дубль: ${JSON.stringify(sent)}`);
 });
+
+void test("T35: проснувшийся агент молчит, когда строка ушла к новому срабатыванию", async () => {
+  // Находка 2 из T35: фенс по firedAt в агентской ветке (fire.ts ~:202) не держал
+  // ни один тест. Строка уходит к N+1, пока доставка N ещё решает; резерв N обязан
+  // молчать и назвать причину в журнале, а не выстрелить в чужой срок.
+  const now = 1_800_000_000_000;
+  await add({
+    id: "moved-on-late",
+    text: "проверить отчёт",
+    schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
+  const [first] = await fireDue(now, 10);
+  assert.ok(first);
+
+  let releaseSend!: (ack: Ack) => void;
+  const gate = new Promise<Ack>((resolve) => {
+    releaseSend = resolve;
+  });
+  const sent: string[] = [];
+  let calls = 0;
+  const send = (_bot: string, _chat: string, text: unknown): Promise<Ack> => {
+    calls += 1;
+    sent.push(String(text));
+    return calls === 1 ? gate : Promise.resolve(success());
+  };
+  const lines: string[] = [];
+  const log = (...args: unknown[]) => {
+    lines.push(args.map((value) => String(value)).join(" "));
+  };
+
+  const firing = runReminderFire(
+    "moved-on-late",
+    deps({
+      send,
+      runTurn: completed("Агентское резервное сообщение"),
+      log,
+    }),
+  );
+  await waitFor(() => calls === 1);
+  // Строка уходит к N+1, пока ветка доставки N не отдала итог.
+  const [second] = await fireDue(first.nextRunAtMs, 10);
+  assert.ok(second);
+  assert.notEqual(second.firedAt, first.firedAt);
+  releaseSend({ ok: false, fellBack: false, error: "telegram 500" });
+  await firing;
+
+  assert.deepEqual(
+    sent,
+    ["проверить отчёт"],
+    `резерв старого срока выстрелил в строку нового: ${JSON.stringify(sent)}`,
+  );
+  assert.ok(
+    lines.some((line) =>
+      line.includes(`row moved to firedAt=${second.firedAt}`),
+    ),
+    `журнал не назвал причину: ${lines.join(" | ")}`,
+  );
+});
