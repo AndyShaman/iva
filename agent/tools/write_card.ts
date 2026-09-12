@@ -182,74 +182,56 @@ function today(): string {
 
 export default defineTool({
   description:
-    "Создать или обновить типизированную карточку памяти в vault. Явно выбери " +
-    "ADD, UPDATE, SUPERSEDE или NOOP; без operation старые вызовы определяются автоматически. " +
-    "Используй ЭТО (не write_file) " +
-    "для карточек — гарантирует валидный тип и схему. type строго один из: " +
-    Object.keys(CARD_TYPE_DIR).join(", ") +
-    ". Поля вне схемы недопустимы. Summary (день/неделя/…) НЕ создавай — их пишет ночной rollup.",
+    "Создать или обновить карточку памяти в vault; для карточек — ЭТО, не write_file. " +
+    "Поля вне схемы недопустимы. Без operation операция — по карточке. " +
+    "Summary (день/неделя/…) НЕ создавай — их пишет rollup.",
   inputSchema: z.object({
     operation: z
       .enum(["ADD", "UPDATE", "SUPERSEDE", "NOOP"])
       .optional()
       .describe(
-        "ADD создаёт новую карточку; UPDATE добавляет непротиворечивый факт в ## Log; " +
-          "SUPERSEDE заменяет текущую истину; NOOP ничего не пишет.",
+        "ADD — новая; UPDATE — факт в ## Log; SUPERSEDE — замена истины; NOOP — ничего.",
       ),
     type: z
       .preprocess(normalizeType, z.enum(CARD_TYPES))
-      .describe(
-        "Тип карточки (строго из списка; алиасы вроде person/company → contact применяются автоматически)",
-      ),
-    title: singleLine("title").describe(
-      "Имя/заголовок сущности (пойдёт в имя файла и заголовок)",
-    ),
+      .describe("Тип; алиасы person/company → contact"),
+    title: singleLine("title").describe("Заголовок сущности"),
     description: singleLine("description")
       .max(
         DESC_CAP,
         `description слишком длинное: максимум ${DESC_CAP} символов; сократи его и повтори вызов`,
       )
-      .describe("Краткая выжимка что/зачем (1–2 фразы, для поиска)"),
+      .describe("Выжимка что/зачем, 1–2 фразы"),
     tags: z
       .array(singleLine("tag"))
       .min(1)
       .max(6)
       .describe("2–5 тегов, lowercase-kebab"),
-    status: singleLine("status")
-      .optional()
-      .describe("Статус жизненного цикла (валидируется по типу)"),
-    domain: singleLine("domain")
-      .optional()
-      .describe("Домен (work/personal/…), опционально"),
+    status: singleLine("status").optional().describe("Валидируется по типу"),
+    domain: singleLine("domain").optional().describe("Домен (work/personal/…)"),
     related: z
       .array(singleLine("related"))
       .optional()
-      .describe("Вики-цели связей [[...]] (vault-пути или слаги), опционально"),
+      .describe("Связи [[…]]: пути/слаги"),
     body: nonBlank("body").describe(
-      "Тело карточки в markdown: только факты, без заголовков H1/H2 — заголовок, " +
-        "## History, ## Log и ## Related ведёт сам тул и отклоняет их в body",
+      "Тело в markdown: только факты, без H1/H2 и ## History/Log/Related — их ведёт тул",
     ),
     history_entry: z
       .string()
       .optional()
       .describe(
-        "ТОЛЬКО для SUPERSEDE: одна строка о прежней истине, переносимая в ## History, " +
-          "в формате 'YYYY-MM-DD: факт' (своя дата сохраняется; без неё ставится сегодняшняя). " +
-          "На ADD отбрасывается как шум, на UPDATE/NOOP непустое значение — ошибка " +
-          "(пробельная пустота после trim() равна отсутствию поля).",
+        "ТОЛЬКО SUPERSEDE: строка в ## History, формат 'YYYY-MM-DD: факт' " +
+          "(без даты — сегодня; пусто = нет поля). ADD отбрасывает, UPDATE/NOOP с текстом — ошибка.",
       ),
     confidence: z
       .enum(["EXTRACTED", "INFERRED", "AMBIGUOUS"])
       .optional()
-      .describe(
-        "EXTRACTED — прямо сказано; INFERRED — выведено; по умолчанию EXTRACTED",
-      ),
+      .describe("EXTRACTED — прямо; INFERRED — вывод (default EXTRACTED)"),
     replace_body: z
       .boolean()
       .optional()
       .describe(
-        "Легаси-путь для вызова БЕЗ operation: заменить body целиком, ## History при этом " +
-          "приходит внутри body. С явным operation не нужен — SUPERSEDE и так заменяет body.",
+        "Легаси-путь без operation: body целиком, ## History — внутри body.",
       ),
   }),
   // eslint-disable-next-line @typescript-eslint/require-await -- Preserve the established Promise-returning Eve tool contract.

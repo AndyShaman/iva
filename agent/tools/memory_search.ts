@@ -569,27 +569,24 @@ export async function searchMemory({
 
 export default defineTool({
   description:
-    "Поиск по долговременной памяти (vault: карточки и саммари). BM25-ранжирование + graph-реранк. " +
-    "Используй ПЕРВЫМ на вопросы «что я знаю про X», «как звали…», «когда мы решили…» — вместо ручного " +
-    "grep. Возвращает топ-совпадения { file, score, status, confidence, snippet }; затем открывай " +
-    "1–3 лучших через read_file. status: superseded и confidence: INFERRED — читай осторожно (см. MAP).",
+    "Поиск по долговременной памяти (карточки и саммари) вместо grep — первым делом " +
+    "на «что я знаю про X», «как звали…», «когда решили…». Возвращает " +
+    "{ file, score, status, confidence, snippet }; открывай 1–3 лучших через read_file; " +
+    "superseded/INFERRED — осторожно.",
   inputSchema: z.object({
-    query: z
-      .string()
-      .min(1)
-      .describe("Запрос в свободной форме (слова/имена/темы)"),
+    query: z.string().min(1).describe("Запрос: слова/имена/темы"),
     limit: z
       .number()
       .int()
       .min(1)
       .max(20)
       .optional()
-      .describe("Сколько хитов вернуть (по умолчанию 8)"),
+      .describe("Хитов (по умолчанию 8)"),
     scope: z
       .array(z.string())
       .optional()
       .describe(
-        "Поддиректории vault для поиска (по умолчанию cards+summaries+weekly/monthly/yearly)",
+        "Поддиректории vault (по умолчанию cards, summaries, weekly/monthly/yearly)",
       ),
   }),
   execute: searchMemory,

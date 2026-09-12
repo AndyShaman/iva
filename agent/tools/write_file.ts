@@ -40,13 +40,12 @@ function isExistingCard(path: string): boolean {
 
 export default defineTool({
   description:
-    "Записать файл НАПРЯМУЮ на файловую систему хоста VPS (UTF-8). " +
-    "Родительские директории создаются автоматически (mkdir -p). " +
-    "Перезаписывает файл целиком. Возвращает { ok, path, bytes }. " +
-    "ИСКЛЮЧЕНИЕ: существующую карточку в vault/cards/** перезаписывать нельзя — используй write_card.",
+    "Записать файл (UTF-8) на хост; директории создаются, файл перезаписывается целиком. " +
+    "Возвращает { ok, path, bytes }. " +
+    "Карточку vault/cards/** нельзя — используй write_card.",
   inputSchema: z.object({
-    path: z.string().min(1).describe("Абсолютный путь к файлу на хосте"),
-    content: z.string().describe("Содержимое для записи (UTF-8)"),
+    path: z.string().min(1).describe("Абсолютный путь"),
+    content: z.string().describe("Содержимое (UTF-8)"),
   }),
   async execute({ path, content }) {
     if (isExistingCard(path)) {

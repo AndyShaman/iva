@@ -32,34 +32,15 @@ const save = (tasks: Task[]) => saveJsonAtomic(FILE, tasks);
 
 export default defineTool({
   description:
-    "Управление списком задач пользователя. action=add добавляет задачу (нужен text); " +
-    "list показывает задачи (по умолчанию незавершённые); done отмечает задачу выполненной (нужен id); " +
-    "remove удаляет задачу (нужен id).",
+    "Задачи: add (text, priority, due), list (includeDone; по умолчанию — незавершённые), " +
+    "done/remove (id).",
   inputSchema: z.object({
     action: z.enum(["add", "list", "done", "remove"]),
-    text: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Текст задачи (для action=add)"),
-    id: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("ID задачи (для done/remove)"),
-    priority: z
-      .enum(["low", "med", "high"])
-      .optional()
-      .describe("Приоритет (для add)"),
-    due: z
-      .string()
-      .optional()
-      .describe("Срок в свободной форме или ISO-дата (для add)"),
-    includeDone: z
-      .boolean()
-      .optional()
-      .describe("Показать и выполненные (для list)"),
+    text: z.string().min(1).optional().describe("Текст задачи"),
+    id: z.number().int().positive().optional().describe("ID задачи"),
+    priority: z.enum(["low", "med", "high"]).optional().describe("Приоритет"),
+    due: z.string().optional().describe("Срок: свободная форма или ISO-дата"),
+    includeDone: z.boolean().optional().describe("Показать и выполненные"),
   }),
   async execute({ action, text, id, priority, due, includeDone }) {
     // Мутации — под локом: параллельный ход (расписание + живой чат) на голом

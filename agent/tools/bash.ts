@@ -254,26 +254,16 @@ export function normalizeCwd(cwd?: string): { cwd?: string; error?: string } {
 
 export default defineTool({
   description:
-    "Выполнить shell-команду НАПРЯМУЮ на хосте VPS (без sandbox, полный доступ к реальной " +
-    "файловой системе и окружению). Возвращает { stdout, stderr, exitCode }. " +
-    "Очень большой вывод обрезается до последних ~30000 символов каждого потока " +
-    "(в этом случае добавляется пометка об усечении). " +
-    "Используй для запуска любых команд: git, ls, uv, systemctl --user и т.д. " +
-    "Команды, останавливающие сервис самой Ивы (iva restart/stop/update, " +
-    "systemctl … restart iva, pkill node), заблокированы — перезапуск инициирует " +
-    "только пользователь: /restart или /update в чате, iva restart в терминале.",
+    "Shell-команда на хосте (без sandbox): возвращает { stdout, stderr, exitCode }, " +
+    "вывод обрезается до последних ~30000 символов каждого потока. Блокируются команды, " +
+    "останавливающие сервис Ивы: iva restart/stop/update, " +
+    "systemctl … restart iva, pkill node.",
   inputSchema: z.object({
-    command: z
-      .string()
-      .min(1)
-      .describe("Shell-команда для выполнения на хосте"),
+    command: z.string().min(1).describe("Shell-команда"),
     cwd: z
       .string()
       .optional()
-      .describe(
-        "Рабочая директория: абсолютный host-путь; ~ разворачивается в HOME. " +
-          "/workspace на хосте не существует — не используй. Не уверен в пути — не указывай cwd.",
-      ),
+      .describe("Абсолютный host-путь; ~ → HOME; /workspace нет."),
     timeoutMs: z
       .number()
       .int()
@@ -287,8 +277,7 @@ export default defineTool({
       )
       .optional()
       .describe(
-        `Таймаут в миллисекундах, от ${MIN_TIMEOUT_MS} до ${MAX_TIMEOUT_MS} ms ` +
-          "(по умолчанию 120000)",
+        `Таймаут, мс: ${MIN_TIMEOUT_MS}…${MAX_TIMEOUT_MS} (по умолчанию 120000)`,
       ),
   }),
   async execute({ command, cwd, timeoutMs }) {

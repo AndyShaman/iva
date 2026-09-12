@@ -32,30 +32,21 @@ const cap = (s: string) =>
 
 export default defineTool({
   description:
-    "Прочитать UTF-8 файл НАПРЯМУЮ с файловой системы хоста VPS. " +
-    "Путь — абсолютный ИЛИ относительный от корня vault (так возвращает memory_search). " +
-    "По умолчанию возвращает всё содержимое; можно ограничить диапазон строк " +
-    "через offset (номер первой строки, 1-based) и limit (число строк). " +
-    "Возвращает { path, content, lines, truncated }.",
+    "Прочитать UTF-8 файл хоста. path — абсолютный или от корня vault. " +
+    "offset (1-based) и limit — диапазон строк; " +
+    "возвращает { path, content, lines, truncated }.",
   inputSchema: z.object({
     path: z
       .string()
       .min(1)
-      .describe(
-        "Абсолютный путь к файлу на хосте либо путь относительно корня vault (hits[].file)",
-      ),
+      .describe("Абсолютный или от корня vault (hits[].file)"),
     offset: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe("Номер первой возвращаемой строки (1-based)"),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Максимальное число строк для чтения"),
+      .describe("Первая строка, 1-based"),
+    limit: z.number().int().positive().optional().describe("Максимум строк"),
   }),
   async execute({ path, offset, limit }) {
     const raw = await readFile(resolvePath(path), "utf8");
