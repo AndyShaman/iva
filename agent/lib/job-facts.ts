@@ -263,7 +263,9 @@ export async function recordWake(
   onlyIfMissing = false,
 ): Promise<boolean> {
   return withFacts(file, async () => {
-    const facts = await readFacts(file);
+    // Чтение перед записью, как у recordFact: битую строку сначала откладываем рядом,
+    // иначе перезапись исхода хода унесла бы единственный след порчи (T30 №1).
+    const facts = await readFactsForWrite(file, Date.now());
     let found = false;
     const next = facts.map((fact) => {
       if (fact.name !== name || fact.startedAt !== startedAt) return fact;
@@ -282,7 +284,8 @@ export async function recordWake(
  */
 export async function ackFacts(file: string, name: string): Promise<number> {
   return withFacts(file, async () => {
-    const facts = await readFacts(file);
+    // Карантин битой строки — и здесь: ack перезаписывает таблицу целиком (T30 №1).
+    const facts = await readFactsForWrite(file, Date.now());
     const latest = latestFact(facts, name);
     // Незакрытый провал имени — это ровно последняя строка, если она провал.
     if (!latest || latest.ok || latest.acked) return 0;

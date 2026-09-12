@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -350,4 +351,35 @@ test("parseFacts пропускает строку с отрицательным
     0,
   );
   assert.equal(parseFacts([fact()], "x").length, 1);
+});
+
+// T30 №1/№2: писатели wake/ack тоже карантинят битую строку, и таблица создаётся 0600.
+test("T30 №1: recordWake и ackFacts откладывают битую строку, а не теряют её", async () => {
+  const root = dir();
+  const file = jobFactsFile(root);
+  const good = fact({ name: "good" });
+  writeFileSync(file, JSON.stringify([good, { name: 42 }]));
+  const changed = await recordWake(file, "good", good.startedAt, {
+    at: NOW,
+    status: "empty",
+    error: null,
+  });
+  assert.equal(changed, true);
+  const rows = readFactsSync(file);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].wake?.status, "empty");
+  const asideWake = readdirSync(root).filter((name) =>
+    name.startsWith("jobs.json.corrupt-"),
+  );
+  assert.equal(asideWake.length, 1, "recordWake не отложил битую строку");
+  assert.match(readFileSync(join(root, asideWake[0]), "utf8"), /"name": *42/u);
+
+  const failed = fact({ name: "digest", ok: false, error: "exited 1" });
+  writeFileSync(file, JSON.stringify([failed, { name: 43 }]));
+  assert.equal(await ackFacts(file, "digest"), 1);
+  assert.equal(readFactsSync(file)[0].acked, true);
+  const asideAck = readdirSync(root).filter((name) =>
+    name.startsWith("jobs.json.corrupt-"),
+  );
+  assert.ok(asideAck.length >= 1, "ackFacts не отложил битую строку");
 });
