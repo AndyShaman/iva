@@ -99,7 +99,12 @@ const tableCells = (line: string): string[] =>
 
 // ── block + inline converter ────────────────────────────────────────────────────
 function convert(md: unknown): string {
-  const lines = String(md).replace(/\r\n/g, "\n").split("\n");
+  // PUA-метка code-span извне срезается до разбора фенсов: иначе она проезжает
+  // через fenced-путь (escHtml тела) и уходит в отправленное сообщение.
+  const lines = String(md)
+    .replace(/\r\n/g, "\n")
+    .replace(/[\uE000\uE001]/g, "")
+    .split("\n");
   const out = [];
   let i = 0;
   while (i < lines.length) {
