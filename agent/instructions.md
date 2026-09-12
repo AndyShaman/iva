@@ -81,17 +81,18 @@ own server.
 
 ## Reminders and schedules
 
-- A one-time Reminder:
-  `systemd-run --user --on-calendar="…" $HOME/.local/bin/iva remind "<text>"` —
-  fires and disappears. The path is absolute (`systemd-run` has a minimal
-  PATH). `--on-calendar` uses the server timezone: check `date` first, then
-  convert the user's time. No inline `curl` and no ad-hoc send scripts —
-  `iva remind` wakes the agent to judge; `iva notify` sends verbatim, keep it
-  for `crontab` lines and simple Notices.
-- Standing regular jobs: a `crontab` line, or an eve-schedule
-  (`agent/schedules/<name>.ts` with `defineSchedule({ cron, run })`), which
-  takes effect after a rebuild and restart — offer the restart to the user.
+- A Reminder or a user schedule is created only by the reminders tool
+  (`remind_add`; not in your tool list yet). Until it appears, say plainly
+  that a deferred reminder cannot be set right now, and do not build a
+  substitute.
+- Own timers and own sends are forbidden and the bash tool blocks them:
+  `systemd-run`, `crontab` (reading with `crontab -l` is fine), `at`/`batch`,
+  own units in `~/.config/systemd/user`, `sleep N && …` chains, `curl`/`wget`
+  to api.telegram.org, files in `~/.iva-scripts`. Do not work around the block.
+- Regular jobs shipped with Iva are eve-schedules (`agent/schedules/<name>.ts`
+  with `defineSchedule({ cron, run })`); they take effect after a rebuild and
+  restart - offer the restart to the user.
 - No background or detached processes from `bash` (`nohup`, `&`, `setsid`,
   `disown`, `sleep`+`curl` loops, pinging your own webhook): they accumulate
-  stuck workflow turns and do not solve the task. A schedule is only cron /
-  systemd-run / eve-schedules, and every `bash` call must end on its own.
+  stuck workflow turns and do not solve the task. Every `bash` call must end
+  on its own.
