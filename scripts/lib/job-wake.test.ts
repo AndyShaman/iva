@@ -2,7 +2,12 @@
 // Пробуждение агента после запуска расписания (T20 п.2): пустой ответ ничего не шлёт,
 // провальный — уходит владельцу, провал самого хода — факт в таблице.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -173,4 +178,31 @@ test("точка входа wake.ts зовёт общий ход и шлёт о�
   assert.match(entry, /runJobWake\(/u);
   assert.match(entry, /runReminderTurn\(/u);
   assert.match(entry, /sendTelegramHtml\(/u);
+});
+
+// T30 №10: отказ записи исхода хода — failed, иначе сторож шлёт второе сообщение.
+test("T30 №10: отказ записи исхода — failed, а не answered", async () => {
+  const root = mkdtempSync(join(tmpdir(), "iva-wake-ro-"));
+  const facts = join(root, "jobs.json");
+  await recordFact(facts, fact(), NOW);
+  chmodSync(root, 0o555);
+  try {
+    const sent: string[] = [];
+    const status = await runJobWake("memory-daily", NOW - 1000, {
+      factsFile: facts,
+      tr: (en: string) => en,
+      runTurn: async () => ({ status: "completed", message: "готово" }),
+      send: async (text: string) => {
+        sent.push(text);
+        return true;
+      },
+      now: () => NOW,
+      log: () => {},
+    });
+    assert.equal(status, "failed", "отказ записи исхода выдан за ответ");
+    assert.equal(sent.length, 1);
+  } finally {
+    chmodSync(root, 0o755);
+    rmSync(root, { recursive: true, force: true });
+  }
 });

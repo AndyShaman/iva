@@ -87,13 +87,15 @@ export async function runJobWake(
   }
 
   if (message.length === 0) {
-    await recordOutcome(deps, name, startedAt, {
+    const recorded = await recordOutcome(deps, name, startedAt, {
       at: now(),
       status: "empty",
       error: null,
     });
     log(`wake: ${name} answered with an empty message`);
-    return "empty";
+    // Исход не записался — ход для сторожа не состоялся: иначе он видит wake=null и шлёт
+    // второе сообщение владельцу (T30 №10).
+    return recorded ? "empty" : "failed";
   }
 
   let sendError: string | null = null;
@@ -104,7 +106,7 @@ export async function runJobWake(
   }
   // Ответ, который не доехал, — провал хода, а не состоявшийся ответ: владелец не получил
   // ничего, и страховка обязана считать такой ход не бывшим (слепая приёмка T20 по v6).
-  await recordOutcome(deps, name, startedAt, {
+  const recorded = await recordOutcome(deps, name, startedAt, {
     at: now(),
     status: sendError === null ? "answered" : "failed",
     error: sendError,
@@ -114,6 +116,8 @@ export async function runJobWake(
       ? `wake: ${name} answered, but the owner did not get it: ${sendError}`
       : `wake: ${name} answered the owner`,
   );
+  // Несданный исход = ход не состоялся для сторожа (T30 №10).
+  if (!recorded) return "failed";
   return sendError === null ? "answered" : "failed";
 }
 
@@ -122,15 +126,18 @@ async function recordOutcome(
   name: string,
   startedAt: number,
   wake: JobWake,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await recordWake(deps.factsFile, name, startedAt, wake);
+    return true;
   } catch (error) {
-    // Ответ уже отправлен или ход уже провалился: несданная запись не меняет исход.
+    // Запись исхода не сдалась: для сторожа хода не было, поэтому вызывающий обязан
+    // вернуть failed, а не выдать отправку за состоявшийся ход (T30 №10).
     const log = deps.log ?? console.error;
     log(
       `wake: could not record the outcome of ${name}@${startedAt}:`,
       error instanceof Error ? error.message : error,
     );
+    return false;
   }
 }
