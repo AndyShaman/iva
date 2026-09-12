@@ -344,6 +344,16 @@ test("жизненный цикл и права 0600", async () => {
     }),
     /nextRunAtMs/,
   );
+  // Тот же срок снова отдал бы строку следующему тику: двойная доставка.
+  await assert.rejects(
+    complete("every-morning", {
+      nowMs: now,
+      status: "ok",
+      deliveredKey: "k5",
+      nextRunAtMs: now + 60_000,
+    }),
+    /nextRunAtMs must be a safe integer greater than 11060000/u,
+  );
 
   await assert.rejects(remove("nope"), /nope/);
   assert.equal(statSync(reminderFile()).mode & 0o777, 0o600);
