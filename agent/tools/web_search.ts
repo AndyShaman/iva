@@ -22,7 +22,14 @@ import { traceEnterToolScope } from "../lib/trace.ts";
 const SNIPPET_MAX = 500; // усечение сниппета, чтобы поиск не раздувал контекст
 const TITLE_MAX = 200;
 
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+// Обрезка по кодовым точкам: slice режет по коду UTF-16 и рвёт суррогатную пару
+// пополам — в выдачу уезжал одинокий суррогат («�» вместо эмодзи). Суррогатная пара —
+// один знак и целиком либо попадает в лимит, либо нет.
+const clip = (s: string, n: number): string => {
+  if (s.length <= n) return s;
+  const points = [...s];
+  return points.length > n ? `${points.slice(0, n).join("")}…` : s;
+};
 
 // ── мелкие безопасные геттеры (ответы провайдеров — нетипизированный JSON) ──
 const str = (v: unknown): string => (typeof v === "string" ? v : "");

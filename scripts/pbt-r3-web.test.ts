@@ -127,6 +127,18 @@ await test("НАХОДКА R3-3: обрезка заголовка и снипп
   assert.equal(hasLoneSurrogate(hit.snippet), false, "сниппет разорван");
 });
 
+// Лимит считается в знаках, а не в единицах UTF-16: 200 эмодзи — это 200 знаков,
+// и обрезки с «…» быть не должно (старый slice оставлял 100 знаков и хвост суррогата).
+await test("НАХОДКА R3-3: строка по лимиту в знаках не обрезается", async () => {
+  const title = "😀".repeat(200);
+  const result = await search({
+    results: [{ title, url: "https://example.com/1", content: "сниппет" }],
+  });
+  const hit = result.results?.[0];
+  assert.ok(hit);
+  assert.equal(hit.title, title, "заголовок обрезан или перекодирован");
+});
+
 await test(`НАХОДКА R3-3: свойство «обрезка выдачи не рвёт суррогат» (seed ${SEED})`, async () => {
   await fc.assert(
     fc.asyncProperty(fc.constant(null), async () => {
