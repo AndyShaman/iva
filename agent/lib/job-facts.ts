@@ -246,7 +246,9 @@ export async function recordFact(
 ): Promise<void> {
   await withFacts(file, async () => {
     const existing = await readFactsForWrite(file, now);
-    await saveJsonAtomic(file, [...rotated(existing, now), fact]);
+    await saveJsonAtomic(file, [...rotated(existing, now), fact], {
+      mode: 0o600,
+    });
   });
 }
 
@@ -273,7 +275,7 @@ export async function recordWake(
       found = true;
       return { ...fact, wake };
     });
-    if (found) await saveJsonAtomic(file, next);
+    if (found) await saveJsonAtomic(file, next, { mode: 0o600 });
     return found;
   });
 }
@@ -299,6 +301,7 @@ export async function ackFacts(file: string, name: string): Promise<number> {
           ? { ...fact, acked: true }
           : fact,
       ),
+      { mode: 0o600 },
     );
     return 1;
   });

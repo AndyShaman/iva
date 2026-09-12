@@ -383,3 +383,22 @@ test("T30 №1: recordWake и ackFacts откладывают битую стр�
   );
   assert.ok(asideAck.length >= 1, "ackFacts не отложил битую строку");
 });
+
+test("T30 №2: таблица фактов пишется с режимом 0600", async () => {
+  const root = dir();
+  const file = jobFactsFile(root);
+  await recordFact(file, fact(), NOW);
+  assert.equal(statSync(file).mode & 0o777, 0o600, "recordFact");
+  await recordWake(file, "memory-daily", NOW - 1000, {
+    at: NOW,
+    status: "empty",
+    error: null,
+  });
+  assert.equal(statSync(file).mode & 0o777, 0o600, "recordWake");
+  writeFileSync(
+    file,
+    JSON.stringify([fact({ name: "digest", ok: false, error: "exited 1" })]),
+  );
+  await ackFacts(file, "digest");
+  assert.equal(statSync(file).mode & 0o777, 0o600, "ackFacts");
+});
