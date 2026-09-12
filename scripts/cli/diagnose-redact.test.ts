@@ -8,6 +8,7 @@
 // fc.assert(prop, { seed: SEED, path }).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { parseEnv } from "node:util";
 import fc from "fast-check";
@@ -25,6 +26,11 @@ function secretForms(secret: string): string[] {
       .filter((line) => line.length > 0),
     secret,
     encodeURIComponent(secret),
+    // Percent-encoding регистронезависим: escape мог приехать строчными буквами.
+    encodeURIComponent(secret).replace(
+      /%([0-9A-F]{2})/gu,
+      (_match, hex: string) => `%${hex.toLowerCase()}`,
+    ),
     JSON.stringify(secret).slice(1, -1),
     Buffer.from(secret, "utf8").toString("base64"),
     Buffer.from(secret, "utf8").toString("base64url"),
@@ -95,6 +101,34 @@ await test("токен бота режется и внутри URL, а не то
   const out = redact(text, []);
   assert.ok(!out.includes(token), `токен уехал в пакет: ${out}`);
   assert.match(out, /bot<redacted>\/sendMessage/u);
+});
+
+await test("нижний регистр percent-escape режется так же, как верхний", () => {
+  // Percent-encoding регистронезависим: escape мог приехать строчными буквами, а буквы
+  // самого секрета — нет. Форма обязана ловить оба написания каждого %XX.
+  const secret = "Alpha/Beta+9090";
+  const encoded = encodeURIComponent(secret);
+  assert.equal(encoded, "Alpha%2FBeta%2B9090", "контроль: верхний hex");
+  const lowered = encoded.replace(
+    /%([0-9A-F]{2})/gu,
+    (_match, hex: string) => `%${hex.toLowerCase()}`,
+  );
+  assert.equal(lowered, "Alpha%2fBeta%2b9090", "контроль: строчный hex");
+
+  const out = redact(`q=${lowered} end`, [secret]);
+  assert.ok(!out.includes(lowered), `нижняя percent-форма выжила: ${out}`);
+  assert.ok(!out.includes(secret), `сырая форма выжила: ${out}`);
+});
+
+await test("строка без @ не тормозит: 100 КБ режутся быстрее 100 мс", () => {
+  // Квадратичный `EMAIL_RE` без `@` откатывается на каждой позиции: 64 КБ stderr
+  // вешали главный процесс на секунды (verify-ocr-v7 №3). Порог с запасом в десятки
+  // раз: линейной форме на 100 КБ нужны миллисекунды.
+  const text = "a.".repeat(50_000);
+  const started = performance.now();
+  redact(text, []);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 100, `100 КБ без @ резались ${elapsed.toFixed(1)} мс`);
 });
 
 await test("секрет режется в percent-encoded, JSON-экранированной и base64 формах", () => {

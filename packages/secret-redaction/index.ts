@@ -66,7 +66,14 @@ const TELEGRAM_TOKEN_RE = /\d{5,}:[A-Za-z0-9_-]{25,}/gu;
  */
 const TELEGRAM_ID_RE =
   /((?:tg|chat|chatId|chat_id|userId|user_id|from|to)(?::|=|%3A|%3D)\s*)\d{5,}/giu;
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gu;
+/**
+ * E-mail: адрес начинается на границе локальной части, а её длина и длина домена ограничены
+ * RFC (64 и 253 знака). Без якоря и потолков `+` на строке без `@` откатывался на каждой
+ * позиции — 64 КБ stderr занимали секунды в главном процессе (verify-ocr-v7 №3). Якорь
+ * снимает проход по позициям внутри длинной цепочки знаков, потолки — откат внутри адреса.
+ */
+const EMAIL_RE =
+  /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}/gu;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -106,8 +113,23 @@ function secretForms(secret: string): string[] {
  * не выживает» краснеет контрпримером вида `0!!!!` (проверено: при пороге 5 он красный).
  */
 const SHORT_FORM = 4;
+/**
+ * Знак hex внутри percent-escape: регистр роли не играет (`%2f` = `%2F`), поэтому каждая
+ * буква становится классом. Буквы самого секрета — не знаки escape, их регистр значим.
+ */
+function percentEscapePattern(char: string): string {
+  return /[0-9]/u.test(char)
+    ? char
+    : `[${char.toLowerCase()}${char.toUpperCase()}]`;
+}
 function formPattern(form: string): string {
-  const raw = escapeRegExp(form);
+  // Percent-форма приезжает и со строчными буквами hex (`%2f`): заменяем знаки escape на
+  // регистронезависимые классы после экранирования формы (а не регистронезависимым флагом
+  // на всю форму — тогда строчная форма секрета вроде `alpha%2fbeta` съедала бы чужой текст).
+  const raw = escapeRegExp(form).replace(
+    /%([0-9A-Fa-f]{2})/gu,
+    (_match, hex: string) => `%${[...hex].map(percentEscapePattern).join("")}`,
+  );
   return form.length < SHORT_FORM
     ? `(?<![\\p{L}\\p{N}])${raw}(?![\\p{L}\\p{N}])`
     : raw;
