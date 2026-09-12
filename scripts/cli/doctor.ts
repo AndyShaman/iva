@@ -36,7 +36,6 @@ import { ambiguousEnvLines } from "../lib/env-file.ts";
 // (scripts/authored-tree-guard.test.ts).
 import type { JobFact } from "#lib/job-facts.ts";
 import type { OpenFailure } from "#lib/open-failures.ts";
-import type { TickHeartbeat } from "#lib/reminder-tick.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -63,22 +62,20 @@ type RollupStatus = Record<string, RollupEntry | null | undefined>;
 export interface ScheduleFactsReport {
   readonly lastRuns: readonly string[];
   readonly openFailures: readonly OpenFailure[];
-  readonly pulse: "ok" | "stale" | "never";
 }
 
 /**
- * Раздел «расписания» по таблице фактов (T20 п.5): последний запуск каждого имени,
- * незакрытые провалы и пульс планировщика. Status-файл выше отвечает только за
- * «последний успех» и гварды, поэтому история берётся отсюда.
+ * Раздел «расписания» по таблице фактов (T20 п.5): последний запуск каждого имени и
+ * незакрытые провалы. Status-файл ниже отвечает только за «последний успех» и гварды,
+ * поэтому история берётся отсюда. Пульс минутного диспетчера говорит раздел напоминаний
+ * этой же команды — второго источника об одном и том же mtime здесь нет.
  */
 export async function scheduleFactsReport(
   dataDirectory: string,
   now: number,
-  heartbeat: TickHeartbeat | null,
 ): Promise<ScheduleFactsReport> {
   const { latestFact, readFactsSync } = await import("#lib/job-facts.ts");
   const { openJobFailures } = await import("#lib/open-failures.ts");
-  const { REMINDER_TICK_STALE_MS } = await import("#lib/reminder-tick.ts");
   const { SCHEDULE_CRON } = await import("#lib/schedule-table.ts");
   const facts = readFactsSync(join(dataDirectory, "jobs.json"));
   const names = [
@@ -95,13 +92,7 @@ export async function scheduleFactsReport(
         : `${name}: провал (${latest.error ?? "без причины"}), ${when}`,
     );
   }
-  const pulse =
-    heartbeat === null
-      ? "never"
-      : now - heartbeat.lastTickAtMs > REMINDER_TICK_STALE_MS
-        ? "stale"
-        : "ok";
-  return { lastRuns, openFailures: openJobFailures(facts, now), pulse };
+  return { lastRuns, openFailures: openJobFailures(facts, now) };
 }
 
 /** Сколько ждём `/health` прокси: он на loopback, и медленный ответ — уже симптом. */
@@ -587,21 +578,11 @@ export function createDoctorCommand(
       }
     }
 
-    // Таблица фактов (T20 §5): последний запуск каждого имени, незакрытые провалы и
-    // пульс планировщика. Историю держит jobs.json, rollup-status.json — только
-    // «последний успех» и гварды.
+    // Таблица фактов (T20 §5): последний запуск каждого имени и незакрытые провалы.
+    // Историю держит jobs.json, rollup-status.json — только «последний успех» и гварды;
+    // пульс минутного диспетчера говорит раздел напоминаний ниже.
     try {
-      const { readTickHeartbeat } = await import("#lib/reminder-tick.ts");
-      let heartbeat: TickHeartbeat | null = null;
-      try {
-        heartbeat = readTickHeartbeat();
-      } catch (error) {
-        warn(
-          `расписания: пульс не читается — ${error instanceof Error ? error.message : String(error)}`,
-        );
-        warnN++;
-      }
-      const report = await scheduleFactsReport(dataDirectory, now(), heartbeat);
+      const report = await scheduleFactsReport(dataDirectory, now());
       for (const line of report.lastRuns) {
         if (line.includes(": провал")) {
           warn(`расписание ${line} — check: iva doctor, iva jobs ack <name>`);
@@ -616,16 +597,6 @@ export function createDoctorCommand(
           `незакрытый провал: ${failure.name} (${failure.reason}) — закрыть: iva jobs ack ${failure.name}`,
         );
       if (report.openFailures.length > 0) warnN++;
-      if (report.pulse === "never") {
-        warn("расписания: планировщик напоминаний ещё не тикал");
-        warnN++;
-      } else if (report.pulse === "stale") {
-        warn("расписания: планировщик напоминаний не тикает");
-        warnN++;
-      } else {
-        ok("расписания: пульс планировщика в норме");
-        okN++;
-      }
     } catch (error) {
       warn(
         `расписания: таблица фактов не читается — ${error instanceof Error ? error.message : String(error)}`,

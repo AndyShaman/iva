@@ -31,7 +31,8 @@ Only a non-empty answer is sent to your Telegram chat. The outcome of the turn
 ## Where to look
 
 - `iva doctor` → the schedules section: the last run of every name (ok or
-  failure, when), open failures — and the scheduler pulse.
+  failure, when) and the open failures. The same command reports the minute
+  dispatcher's pulse in its reminders section.
 - Every agent turn carries a short "open failures of the last 24h" block, so the
   agent sees a broken schedule even before you ask.
 - `iva jobs ack <name>` closes an open failure you decided not to fix. A later

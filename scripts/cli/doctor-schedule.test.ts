@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
-// Раздел «расписания» доктора на таблице фактов (T20 п.5): последний запуск имени,
-// незакрытые провалы, пульс.
+// Раздел «расписания» доктора на таблице фактов (T20 п.5): последний запуск имени и
+// незакрытые провалы. Пульс минутного диспетчера говорит раздел напоминаний той же
+// команды (scripts/cli/doctor.ts), второго источника об одном mtime нет.
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,10 +37,7 @@ test("последний запуск каждого имени: ok и пров�
     fact({ name: "digest", ok: true, error: null, exitCode: 0 }),
     NOW,
   );
-  const report = await scheduleFactsReport(dir, NOW, {
-    lastTickAtMs: NOW - 1000,
-    claimed: 0,
-  });
+  const report = await scheduleFactsReport(dir, NOW);
   assert.deepEqual(report.lastRuns, [
     "digest: ok, 2026-09-13T10:00:01.000Z",
     "memory-daily: провал (exited 1), 2026-09-13T10:00:01.000Z",
@@ -48,30 +46,6 @@ test("последний запуск каждого имени: ok и пров�
     report.openFailures.map((entry) => entry.name),
     ["memory-daily"],
   );
-  assert.equal(report.pulse, "ok");
-});
-
-test("пульс: свежий, протухший, не было тика", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "t20-doctor-"));
-  assert.equal(
-    (
-      await scheduleFactsReport(dir, NOW, {
-        lastTickAtMs: NOW - 1000,
-        claimed: 0,
-      })
-    ).pulse,
-    "ok",
-  );
-  assert.equal(
-    (
-      await scheduleFactsReport(dir, NOW, {
-        lastTickAtMs: NOW - 10 * 60 * 1000,
-        claimed: 0,
-      })
-    ).pulse,
-    "stale",
-  );
-  assert.equal((await scheduleFactsReport(dir, NOW, null)).pulse, "never");
 });
 
 test("закрытый провал не считается открытым, имя без фактов не выводится", async () => {
@@ -81,10 +55,7 @@ test("закрытый провал не считается открытым, и
     fact({ ok: true, error: null, exitCode: 0 }),
     NOW,
   );
-  const report = await scheduleFactsReport(dir, NOW, {
-    lastTickAtMs: NOW,
-    claimed: 0,
-  });
+  const report = await scheduleFactsReport(dir, NOW);
   assert.deepEqual(report.openFailures, []);
   assert.equal(report.lastRuns.length, 1);
 });
