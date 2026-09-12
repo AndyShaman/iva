@@ -91,6 +91,24 @@ await test("НАХОДКА R3-4: чужой корень файла даёт д�
   );
 });
 
+await test("НАХОДКА R3-4: пропущенные записи называют себя в журнале", async (t) => {
+  reset(
+    '[null,{"id":"x","text":"junk","done":false},' +
+      '{"id":7,"text":"живая","priority":"med","due":null,"done":false,"createdAt":"2026-09-12T00:00:00.000Z"}]',
+  );
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  });
+  const answer = await call({ action: "list" });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.equal(answer.count, 1, JSON.stringify(answer));
+  assert.ok(
+    lines.some((line) => line.includes("tasks.json") && line.includes("2")),
+    JSON.stringify(lines),
+  );
+});
+
 await test(`НАХОДКА R3-4: свойство «мусорный tasks.json не ломает пространство id» (seed ${SEED})`, async () => {
   const junkFile = fc.constantFrom(
     "[null]",

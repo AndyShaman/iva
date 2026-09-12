@@ -26,9 +26,40 @@ interface Task {
 }
 
 // Нет файла → []. Битый JSON — НЕ пустой список: loadJsonStrict откладывает бэкап и
-// бросает (иначе следующий save молча уничтожил бы все задачи).
-const load = () => loadJsonStrict<Task[]>(FILE, []);
+// бросает (иначе следующий save молча уничтожил бы все задачи). Поверх этого — форма
+// записей: файл лежит в data/ и правится руками, а одна запись без целого id ломала
+// Math.max → NaN → "id": null у ВСЕХ новых задач, и закрыть их было нельзя (схема
+// требует целый положительный id). Записи не по форме пропускаются со строкой в журнал;
+// чужой корень (не массив) — явная ошибка: перезаписать его пустотой значит стереть данные.
+async function load(): Promise<Task[]> {
+  const raw = await loadJsonStrict<unknown>(FILE, []);
+  if (!Array.isArray(raw))
+    throw new Error(`${FILE} damaged (not an array) — fix or delete it`);
+  const tasks = raw.filter(isTask);
+  if (tasks.length !== raw.length)
+    console.warn(
+      `tasks.json: пропущено ${raw.length - tasks.length} записей не по форме, читаются остальные ${tasks.length}; файл починится следующей записью`,
+    );
+  return tasks;
+}
 const save = (tasks: Task[]) => saveJsonAtomic(FILE, tasks);
+
+function isTask(value: unknown): value is Task {
+  if (typeof value !== "object" || value === null) return false;
+  const task = value as Record<string, unknown>;
+  return (
+    typeof task.id === "number" &&
+    Number.isInteger(task.id) &&
+    task.id > 0 &&
+    typeof task.text === "string" &&
+    (task.priority === "low" ||
+      task.priority === "med" ||
+      task.priority === "high") &&
+    (task.due === null || typeof task.due === "string") &&
+    typeof task.done === "boolean" &&
+    typeof task.createdAt === "string"
+  );
+}
 
 export default defineTool({
   description:
