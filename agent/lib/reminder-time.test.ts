@@ -99,6 +99,15 @@ test("nextCronRunMs: refuses spam cadence and expressions that never fire", () =
       error instanceof ReminderTimeError &&
       /cron: never fires/u.test(error.message),
   );
+  // croner отбивает шаг с числовым префиксом; текст обязан вести к форме, которую он берёт.
+  assert.throws(
+    () => nextCronRunMs("0/7 * * * *", TASHKENT, NOW),
+    (error: unknown) =>
+      error instanceof ReminderTimeError &&
+      /stepping with numeric prefix[\s\S]*write the step as "\*\/7"/u.test(
+        error.message,
+      ),
+  );
   assert.throws(
     () => nextCronRunMs("0 9 * * *", "Mars/Olympus", NOW),
     (error: unknown) =>

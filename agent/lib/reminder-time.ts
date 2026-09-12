@@ -133,8 +133,11 @@ export function nextCronRunMs(
     return next.getTime();
   } catch (error) {
     if (error instanceof ReminderTimeError) throw error;
+    const text = error instanceof Error ? error.message : String(error);
+    // croner отвергает шаг с числовым префиксом («0/7»); подсказываем форму, которую он берёт.
+    const step = /stepping with numeric prefix \('\d+\/(\d+)'\)/u.exec(text);
     throw new ReminderTimeError(
-      `cron: ${error instanceof Error ? error.message : String(error)}`,
+      `cron: ${text}${step === null ? "" : `; write the step as "*/${step[1]}"`}`,
     );
   }
 }
