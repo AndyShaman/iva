@@ -110,11 +110,13 @@ function convert(md: unknown): string {
         body.push(lines[i++]);
       i++; // closing ``` (no-op if half-open / EOF)
       const inner = escHtml(body.join("\n"));
-      out.push(
-        lang
-          ? `<pre><code class="language-${lang}">${inner}</code></pre>`
-          : `<pre>${inner}</pre>`,
-      );
+      // Пустой забор ничего не показывает: пустое сообщение пользователю не нужно.
+      if (inner)
+        out.push(
+          lang
+            ? `<pre><code class="language-${lang}">${inner}</code></pre>`
+            : `<pre>${inner}</pre>`,
+        );
       continue;
     }
     // table: header row + separator → header bold, body rows joined with ·
@@ -406,18 +408,24 @@ export function mdToTelegramHtml(md: unknown): string {
 export function chunkMarkdown(md: unknown, limit = 3500): string[] {
   const text = String(md);
   if (text.length <= limit) return [text];
-  const paras: string[] = [];
-  for (const p of text.split(/\n{2,}/)) {
-    if (p.length <= limit) {
-      paras.push(p);
+  // Кусок несёт свой разделитель: "\n\n" между абзацами, "\n" между строками одного
+  // абзаца, "" внутри разрезанной строки. Раньше строки абзаца склеивались заново
+  // пустой строкой, и длинный блок кода приезжал с пустой строкой между каждой строкой.
+  const pieces: { text: string; sep: string }[] = [];
+  for (const paragraph of text.split(/\n{2,}/)) {
+    if (paragraph.length <= limit) {
+      pieces.push({ text: paragraph, sep: "\n\n" });
       continue;
     }
-    for (const line of p.split("\n")) {
+    let firstLine = true;
+    for (const line of paragraph.split("\n")) {
+      const sep = firstLine ? "\n\n" : "\n";
+      firstLine = false;
       if (line.length <= limit) {
-        paras.push(line);
+        pieces.push({ text: line, sep });
         continue;
       }
-      for (let j = 0; j < line.length; ) {
+      for (let j = 0; j < line.length;) {
         let end = Math.min(line.length, j + limit);
         // Не разрывать суррогатную пару: Telegram покажет «�» на стыке сообщений.
         if (
@@ -427,19 +435,21 @@ export function chunkMarkdown(md: unknown, limit = 3500): string[] {
         )
           end -= 1;
         if (end <= j) end = j + limit;
-        paras.push(line.slice(j, end));
+        pieces.push({ text: line.slice(j, end), sep: j === 0 ? sep : "" });
         j = end;
       }
     }
   }
   const chunks: string[] = [];
   let cur = "";
-  for (const p of paras) {
-    if (cur && cur.length + p.length + 2 > limit) {
+  for (const piece of pieces) {
+    const sep = cur === "" ? "" : piece.sep;
+    if (cur && cur.length + sep.length + piece.text.length > limit) {
       chunks.push(cur);
-      cur = "";
+      cur = piece.text;
+      continue;
     }
-    cur = cur ? `${cur}\n\n${p}` : p;
+    cur = cur ? `${cur}${sep}${piece.text}` : piece.text;
   }
   if (cur) chunks.push(cur);
   return chunks;
@@ -513,8 +523,9 @@ export function toTelegramHtmlChunks(md: unknown, limit = 4096): string[] {
     for (const src of chunkMarkdown(md, srcLimit)) {
       const html = mdToTelegramHtml(src);
       if (html.length <= cap) {
+        // Кусок, из которого ничего не отрендерилось (пустой забор, пробелы),
+        // не отправляем: пустое сообщение в чате - шум.
         if (html) result.push(html);
-        else if (src) result.push("");
       } else for (const piece of splitHtmlHard(html, cap)) result.push(piece);
     }
     return result.length ? result : [""];

@@ -83,9 +83,20 @@ await test("НАХОДКА 1 (сквозная): отправка длинног
 // отдельное сообщение `<pre></pre>` (пустой блок кода). Минимальный контрпример:
 // две строки, вместе чуть длиннее лимита.
 await test("НАХОДКА 2: длинный абзац не получает пустых строк между строками", () => {
-  const source = `${"x".repeat(LIMIT - 1)}\ny`;
+  // Минимальный контрпример из свойства: строка длиннее лимита и хвост, которые
+  // раньше склеивались в один чанк через "\n\n".
+  const source = `${"x".repeat(LIMIT + 1)}\n `;
   const chunks = chunkMarkdown(source, LIMIT);
-  assert.equal(chunks.join(""), source, "рез добавил символы в текст");
+  assert.equal(
+    chunks.some((chunk) => chunk.includes("\n\n")),
+    false,
+    "рез вставил пустую строку",
+  );
+  assert.equal(
+    chunks.join("").replace(/\n/g, ""),
+    source.replace(/\n/g, ""),
+    "рез потерял или переставил символы",
+  );
 });
 
 await test(`НАХОДКА 2: свойство «чанки - разбиение текста» (seed ${SEED})`, () => {
@@ -99,7 +110,17 @@ await test(`НАХОДКА 2: свойство «чанки - разбиение
         // Гарантированно длинный первый абзац: pre-условие здесь не нужно, иначе
         // генератор малых строк скипает почти все прогоны.
         const source = `${"x".repeat(LIMIT + extra)}\n${tail}`;
-        assert.equal(chunkMarkdown(source, LIMIT).join(""), source);
+        const chunks = chunkMarkdown(source, LIMIT);
+        // Пустых строк рез не добавляет, а текст (без переводов строк, которые
+        // остаются разделителями сообщений) сохраняет целиком и в порядке.
+        assert.equal(
+          chunks.some((chunk) => chunk.includes("\n\n")),
+          false,
+        );
+        assert.equal(
+          chunks.join("").replace(/\n/g, ""),
+          source.replace(/\n/g, ""),
+        );
       },
     ),
     { seed: SEED, numRuns: 200 },
