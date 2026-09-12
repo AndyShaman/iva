@@ -38,7 +38,11 @@ async function createAccountFixture(t: TestContext): Promise<AccountFixture> {
   // Деревья CLI — общим списком (scripts/fixtures/cli-tree.ts), а не своим перечнем:
   // списком забывают новый пакет (T20: packages/secret-redaction). scripts/lib копией —
   // тест правит в нём codex-oauth.ts, ссылкой это правило бы тронуло сам репозиторий.
-  await plantCliTree(ROOT, project, { copy: ["scripts/lib"] });
+  // cli и lib — копиями: симлинк cli увёл бы относительный `../lib` в настоящий
+  // репозиторий (Node резолвит символы ссылок), и правка codex-oauth.ts ниже не подействовала.
+  await plantCliTree(ROOT, project, {
+    copy: ["scripts/cli", "scripts/lib"],
+  });
   await symlink(
     join(ROOT, "node_modules"),
     join(project, "node_modules"),

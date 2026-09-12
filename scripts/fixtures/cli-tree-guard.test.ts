@@ -41,13 +41,14 @@ test("CLI-фикстуры берут деревья общим списком",
     if (file === HELPER) continue;
     const source = readFileSync(join(ROOT, file), "utf8");
     const copies = [...source.matchAll(COPY)].map((match) => match[1]);
+    // Признак CLI-фикстуры: сама копирует `bin/iva.mjs` или `scripts/cli`. Деревья
+    // `packages`/`deploy` копируют и сборщики — их этот гвард не судит.
     const buildsCliTree =
       copies.includes("bin/iva.mjs") ||
       copies.some(
         (path) => path === "scripts/cli" || path.startsWith("scripts/cli/"),
       );
     if (!buildsCliTree) continue;
-    if (source.includes("plantCliTree")) continue;
     offenders.push(`${file} -> ${copies.join(", ")}`);
   }
   assert.deepEqual(
