@@ -42,6 +42,14 @@ await test("два упавших хода одной сессии внутри 
 
   await notifyTelegramFailure("s-turns", null, data, send, { now: 1_150 });
   assert.equal(sent.length, 2);
+
+  // Обратный порядок того же сбоя: заявку первым взял session.failed (null),
+  // поэтому названный ход в окне молчит, а не объясняет ту же беду второй раз.
+  await notifyTelegramFailure("s-null-first", null, data, send, { now: 2_000 });
+  await notifyTelegramFailure("s-null-first", "turn_9", data, send, {
+    now: 2_050,
+  });
+  assert.equal(sent.length, 3);
 });
 
 await test("ход без имени считается по сессии и говорит об этом в журнал", async (t) => {
