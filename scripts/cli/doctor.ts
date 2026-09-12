@@ -31,12 +31,12 @@ import {
 } from "../lib/version-store.ts";
 import { hasEmbeddingSource } from "../lib/memory-mode.ts";
 import { ambiguousEnvLines } from "../lib/env-file.ts";
-// Типы authored tree стираются при компиляции; значения грузятся динамически внутри
-// вызовов: `iva doctor` работает и на установке, где agent/ нет (authored-tree-guard).
-type JobFact = import("#lib/job-facts.ts").JobFact;
-type OpenFailure = import("#lib/open-failures.ts").OpenFailure;
-type TickHeartbeat = import("#lib/reminder-tick.ts").TickHeartbeat;
-type ScheduleCronTable = typeof import("#lib/schedule-table.ts").SCHEDULE_CRON;
+// `import type` стирается при компиляции, значения authored tree грузятся динамически
+// внутри вызова: `iva doctor` работает и на установке, где agent/ нет
+// (scripts/authored-tree-guard.test.ts).
+import type { JobFact } from "#lib/job-facts.ts";
+import type { OpenFailure } from "#lib/open-failures.ts";
+import type { TickHeartbeat } from "#lib/reminder-tick.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -80,10 +80,9 @@ export async function scheduleFactsReport(
   const { openJobFailures } = await import("#lib/open-failures.ts");
   const { REMINDER_TICK_STALE_MS } = await import("#lib/reminder-tick.ts");
   const { SCHEDULE_CRON } = await import("#lib/schedule-table.ts");
-  const cronTable: ScheduleCronTable = SCHEDULE_CRON;
   const facts = readFactsSync(join(dataDirectory, "jobs.json"));
   const names = [
-    ...new Set([...Object.keys(cronTable), ...facts.map((f) => f.name)]),
+    ...new Set([...Object.keys(SCHEDULE_CRON), ...facts.map((f) => f.name)]),
   ].sort();
   const lastRuns: string[] = [];
   for (const name of names) {
