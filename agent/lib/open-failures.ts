@@ -103,6 +103,19 @@ function line(failure: OpenFailure): string {
   return `- Расписание ${failure.name}: ${when}, ${failure.reason} (закрыть: iva jobs ack ${failure.name})`;
 }
 
+/**
+ * Источник провалов не читается: битую таблицу агент получает текстом, а не исключением
+ * в ход. Он умеет bash и write_file, поэтому чинить её — его работа; хода, который
+ * молча падает из-за одной испорченной строки JSON, в этой схеме быть не должно.
+ */
+export function brokenFailureSourceMarkdown(error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  return [
+    "## Незакрытые провалы за сутки",
+    `- Источник провалов не читается: ${reason}. Почини сам (прочитать файл, вернуть массив строк), потом скажи владельцу, что было сломано.`,
+  ].join("\n");
+}
+
 /** Блок для промпта; провалов нет — пустая строка (инструкция тогда пустая). */
 export function openFailuresMarkdown(failures: readonly OpenFailure[]): string {
   if (failures.length === 0) return "";

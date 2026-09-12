@@ -2,7 +2,7 @@
 // «Незакрытые провалы за сутки» (T20 п.3): закрытие успехом и ack, окно суток,
 // напоминания рядом с расписаниями, пустой блок.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -163,6 +163,25 @@ test("openFailures читает факты с диска и напоминани
     "memory-daily",
     "reminder-r1",
   ]);
+});
+
+test("битая таблица фактов приходит в ход текстом, а не исключением", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "t20-broken-"));
+  writeFileSync(jobFactsFile(dir), "{");
+  const previous = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  try {
+    const instruction = await import("../instructions/40-open-failures.ts");
+    const resolve = instruction.default.events["turn.started"];
+    assert.ok(resolve, "инструкция слушает turn.started");
+    const resolved = await resolve(null, {} as never);
+    const markdown = (resolved as { markdown?: string } | null)?.markdown ?? "";
+    assert.match(markdown, /Источник провалов не читается/u);
+    assert.match(markdown, /jobs\.json/u);
+  } finally {
+    if (previous === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previous;
+  }
 });
 
 test("динамическая инструкция 40-open-failures несёт блок в ход", async () => {
