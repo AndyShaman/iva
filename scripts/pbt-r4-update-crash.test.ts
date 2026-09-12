@@ -330,6 +330,28 @@ await test("НАХОДКА R4-4: заявка с единственной коп
   assert.ok(!existsSync(claim), "заявка осталась");
 });
 
+// БЛОКЕР Б2 QA (раунд 2): возраст решает и для заявки с нашим pid. Заявка живёт
+// миллисекунды, поэтому заявка старше часа с нашим (повторно использованным) pid
+// брошена, и её recovery-копия не должна потеряться вместе с каталогом.
+await test("НАХОДКА R4-4: заявка с нашим pid старше часа убирается", () => {
+  const home = mkdtempSync(join(tmpdir(), "pbt-r4-shim-home-"));
+  const bin = mkdtempSync(join(tmpdir(), "pbt-r4-shim-bin-"));
+  const shim = join(bin, "iva");
+  const desired = shimScript(home, process.execPath, join(home, "data"));
+  const claim = join(bin, claimName(process.pid));
+  mkdirSync(claim, { recursive: true });
+  writeFileSync(join(claim, "previous"), desired, { mode: 0o755 });
+  const copyIno = statSync(join(claim, "previous")).ino;
+  const old = new Date(Date.now() - SHIM_CLAIM_TTL_MS - 60_000);
+  utimesSync(join(claim, "previous"), old, old);
+  utimesSync(claim, old, old);
+
+  refreshOwnedShim(shim, home, process.execPath, join(home, "data"));
+  assert.ok(!existsSync(claim), "брошенная заявка с нашим pid осталась");
+  assert.ok(existsSync(shim), "копия шима потеряна");
+  assert.equal(statSync(shim).ino, copyIno, "шим не возвращён из заявки");
+});
+
 // Жёсткий обрыв (kill -9) мог оставить заявку старого формата - без pid в имени.
 // Её судят по возрасту: брошенная больше часа назад убирается при следующем старте.
 await test("НАХОДКА R4-4: брошенная заявка старого формата старше часа убирается", () => {

@@ -345,10 +345,11 @@ function discardClaim(claim: string, shimPath: string): void {
  * Убрать заявки оборванных обновлений шима, чужие для этого процесса.
  *
  * Новый формат (`pid-uuid`) разбирается целиком, а не `parseInt` по префиксу: старые
- * имена вида `2avFo0` читались как pid 2 и сносились сразу (QA Б2). Для нового формата
- * заявку живого нашего процесса не трогаем, заявку мёртвого или чужого pid убираем;
- * заявку старше часа убираем даже при живом pid — столько заявка не живёт, pid
- * переиспользован. Старый формат без разделителя судим только по возрасту.
+ * имена вида `2avFo0` читались как pid 2 и сносились сразу (QA Б2). Возраст решает
+ * раньше живости: заявку старше часа убираем даже при живом pid, в том числе нашем,
+ * — столько заявка не живёт, pid переиспользован. Свежую заявку живого нашего
+ * процесса не трогаем, заявку мёртвого или чужого pid убираем. Старый формат без
+ * разделителя судим только по возрасту.
  */
 function sweepStaleShimClaims(directory: string, shimPath: string): void {
   const prefix = ".iva-shim-refresh-";
@@ -372,8 +373,9 @@ function sweepStaleShimClaims(directory: string, shimPath: string): void {
     let remove = false;
     if (parsed) {
       const owner = Number(parsed[1]);
-      if (owner === process.pid) continue; // Своя живая заявка: не трогаем.
       if (age >= SHIM_CLAIM_TTL_MS) remove = true;
+      else if (owner === process.pid)
+        continue; // Своя свежая заявка: не трогаем.
       else if (!processIsAlive(owner)) remove = true;
       else if (!isIvaProcess(processCommand(owner))) remove = true;
     } else if (age >= SHIM_CLAIM_TTL_MS) {
