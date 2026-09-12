@@ -10,7 +10,7 @@
 // `.scratch/work/reviews/pbt-deepseek-4-4-2026-09-12.md`.
 
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -165,7 +165,7 @@ await test("зелёное: правка пользователя в чекау�
   assert.ok(removed.includes("package.json"), JSON.stringify(removed));
 });
 
-// НАХОДКА R4-4 (шим). Обрыв между claim (шим унесён в `.iva-shim-refresh-<random>`)
+// НАХОДКА R4-4 (шим). Обрыв между claim (шим унесён в `.iva-shim-refresh-<pid>-<id>`)
 // и публикацией нового шима: повтор создаёт шим заново, но каталог-заявка с копией
 // прежнего шима остаётся в `~/.local/bin` навсегда - ни один путь её не убирает.
 await test("НАХОДКА R4-4: обрыв при обновлении шима не оставляет мусор рядом", () => {
@@ -173,7 +173,9 @@ await test("НАХОДКА R4-4: обрыв при обновлении шима
   const bin = mkdtempSync(join(tmpdir(), "pbt-r4-shim-bin-"));
   const shim = join(bin, "iva");
   const desired = shimScript(home, process.execPath, join(home, "data"));
-  const claim = mkdtempSync(join(bin, ".iva-shim-refresh-"));
+  // Заявка обрыва: имя несёт pid процесса, которого больше нет.
+  const claim = join(bin, `.iva-shim-refresh-${deadPid()}-${Date.now()}`);
+  mkdirSync(claim, { recursive: true });
   writeFileSync(join(claim, "previous"), desired, { mode: 0o755 });
 
   const repaired = refreshOwnedShim(
@@ -189,6 +191,30 @@ await test("НАХОДКА R4-4: обрыв при обновлении шима
     [],
     "каталог-заявка остался",
   );
+});
+
+// Зелёный control уборки: заявку живого процесса она не трогает (иначе снесла бы
+// работу параллельного обновления).
+await test("зелёное: заявку живого процесса уборка не трогает", () => {
+  const home = mkdtempSync(join(tmpdir(), "pbt-r4-shim-home-"));
+  const bin = mkdtempSync(join(tmpdir(), "pbt-r4-shim-bin-"));
+  const shim = join(bin, "iva");
+  const desired = shimScript(home, process.execPath, join(home, "data"));
+  writeFileSync(shim, desired, { mode: 0o755 });
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  try {
+    assert.ok(child.pid, "нет pid живого процесса");
+    const claim = join(bin, `.iva-shim-refresh-${child.pid}-live`);
+    mkdirSync(claim, { recursive: true });
+    writeFileSync(join(claim, "previous"), desired, { mode: 0o755 });
+    refreshOwnedShim(shim, home, process.execPath, join(home, "data"));
+    assert.ok(existsSync(claim), "заявка живого процесса удалена");
+  } finally {
+    child.kill("SIGKILL");
+  }
 });
 
 // Зелёные controls шима: чужой шим не трогается, чужой файл на месте остаётся.

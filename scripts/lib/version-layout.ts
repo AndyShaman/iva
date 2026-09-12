@@ -10,12 +10,13 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   writeSync,
@@ -272,12 +273,46 @@ function restoreClaim(claim: ClaimedShim, shimPath: string): boolean {
   }
 }
 
+/** Имя каталога-заявки: pid виден снаружи, по нему убираем осиротевшие заявки. */
+function claimDirectoryName(): string {
+  return `.iva-shim-refresh-${process.pid}-${randomUUID()}`;
+}
+
+/**
+ * Убрать заявки оборванных обновлений шима. Имя несёт pid: заявку живого процесса
+ * (в том числе свою) не трогаем, заявку мёртвого - убираем. Старый формат без pid
+ * остаётся: его мог оставить чужой процесс, которого уже нет рядом.
+ */
+function sweepStaleShimClaims(directory: string): void {
+  const prefix = ".iva-shim-refresh-";
+  let names: string[];
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const owner = Number.parseInt(name.slice(prefix.length), 10);
+    if (!Number.isInteger(owner) || owner <= 0 || owner === process.pid)
+      continue;
+    try {
+      process.kill(owner, 0);
+      continue; // Хозяин заявки ещё жив.
+    } catch {
+      // Процесса нет - заявка осиротела.
+    }
+    rmSync(join(directory, name), { recursive: true, force: true });
+  }
+}
+
 /** Move the exact inspected entry aside before publishing a replacement. */
 function claimOpenShim(
   shimPath: string,
   opened: Extract<OpenShim, { kind: "file" }>,
 ): ClaimedShim | null {
-  const directory = mkdtempSync(join(dirname(shimPath), ".iva-shim-refresh-"));
+  const directory = join(dirname(shimPath), claimDirectoryName());
+  mkdirSync(directory, { mode: 0o700 });
   const claim = { directory, path: join(directory, "previous") };
   try {
     renameSync(shimPath, claim.path);
@@ -397,6 +432,9 @@ export function refreshOwnedShim(
   dataDir: string,
 ): boolean {
   const desired = shimScript(home, node, dataDir);
+  // Заявки, оставшиеся от оборванных обновлений, убираем до всего остального: иначе
+  // они копятся в ~/.local/bin навсегда.
+  sweepStaleShimClaims(dirname(shimPath));
   const opened = openShim(shimPath);
   if (opened.kind === "foreign") return false;
   if (opened.kind === "file") {
