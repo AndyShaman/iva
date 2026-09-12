@@ -13,11 +13,13 @@ import { join, resolve } from "node:path";
 import test, { after, beforeEach } from "node:test";
 import { nextCronRunMs } from "#lib/reminder-time.ts";
 import type { Reminder } from "#lib/reminder-store.ts";
+import { formatZoned } from "#lib/zoned-time.ts";
 import {
   deliveredKeyOf,
   settleReminder,
   type SettleDeps,
 } from "./reminder-delivery.ts";
+import { ReminderTurnError } from "./reminder-turn.ts";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
 const root = mkdtempSync(join(tmpdir(), "iva-reminder-delivery-"));
@@ -167,6 +169,44 @@ test("a delivered turn with a refused send leaves the row open", async () => {
     null,
     "аренда снята: строка повторится по троттлингу",
   );
+
+  // Ход не состоялся: напоминание всё равно уходит — дословный текст и рядом причина.
+  await store.add({
+    id: "turn-failed",
+    text: "проверить дедлайн",
+    mode: "agent",
+    schedule: { kind: "at", atMs: t0 },
+    deliver: { chatId: "42" },
+  });
+  const failedRow = (await store.claimDue(t0, 10)).find(
+    (row) => row.id === "turn-failed",
+  );
+  assert.ok(failedRow);
+  const { send: sendOk, calls: okCalls } = makeSend(() => ({
+    ok: true,
+    fellBack: false,
+    error: "",
+  }));
+  const failingTurn = () =>
+    Promise.reject(new ReminderTurnError("no activity for 30000ms"));
+  assert.equal(
+    await settleReminder(
+      failedRow,
+      deps({ nowMs: t0, send: sendOk, runTurn: failingTurn }),
+    ),
+    "delivered",
+    "провал хода не глушит напоминание",
+  );
+  assert.equal(
+    okCalls[0].text,
+    "⏰ проверить дедлайн\n\n(the agent turn did not run: no activity for 30000ms)",
+    "фолбэк несёт и текст напоминания, и причину",
+  );
+  assert.deepEqual(
+    (await store.list()).map((row) => row.id),
+    ["turn-then-send"],
+    "доставленный фолбэк закрывает разовую строку",
+  );
 });
 
 test("the same deliveredKey is not sent twice", async () => {
@@ -223,6 +263,11 @@ test("the owner gets one Alert after two failures in a row, throttled for an hou
     schedule: { kind: "at", atMs: t0 },
     deliver: { chatId: "42" },
   });
+  const turnCalls: string[] = [];
+  const runTurn = (prompt: string) => {
+    turnCalls.push(prompt);
+    return Promise.reject(new Error("verbatim must not run a turn"));
+  };
   const errors = ["403 bot blocked", "403 bot blocked", "400 timeout"];
   const { send, calls } = makeSend((call) =>
     call.options?.trace?.source === "reminder-alert"
@@ -236,14 +281,19 @@ test("the owner gets one Alert after two failures in a row, throttled for an hou
 
   const [atT0] = await store.claimDue(t0, 10);
   assert.ok(atT0);
-  assert.equal(await settleReminder(atT0, deps({ nowMs: t0, send })), "failed");
+  assert.equal(
+    await settleReminder(atT0, deps({ nowMs: t0, send, runTurn })),
+    "failed",
+  );
   assert.equal(alertCallsOf(calls).length, 0, "первый провал — ещё без Alert");
+  assert.equal(turnCalls.length, 0, "verbatim не зовёт модель");
+  assert.equal(calls[0].text, "⏰ выпить воды", "вовремя — ровно текст строки");
 
   const [atT6] = await store.claimDue(t0 + 6 * minute, 10);
   assert.ok(atT6);
   assert.equal(atT6.lastStatus, "failed", "второй провал подряд");
   assert.equal(
-    await settleReminder(atT6, deps({ nowMs: t0 + 6 * minute, send })),
+    await settleReminder(atT6, deps({ nowMs: t0 + 6 * minute, send, runTurn })),
     "failed",
   );
   assert.equal(alertCallsOf(calls).length, 1, "второй провал — один Alert");
@@ -263,7 +313,10 @@ test("the owner gets one Alert after two failures in a row, throttled for an hou
   const [atT12] = await store.claimDue(t0 + 12 * minute, 10);
   assert.ok(atT12);
   assert.equal(
-    await settleReminder(atT12, deps({ nowMs: t0 + 12 * minute, send })),
+    await settleReminder(
+      atT12,
+      deps({ nowMs: t0 + 12 * minute, send, runTurn }),
+    ),
     "failed",
   );
   assert.equal(
@@ -287,11 +340,17 @@ test("the owner gets one Alert after two failures in a row, throttled for an hou
   assert.equal(
     await settleReminder(
       atT18,
-      deps({ nowMs: t0 + 18 * minute, send: sendOk }),
+      deps({ nowMs: t0 + 18 * minute, send: sendOk, runTurn }),
     ),
     "delivered",
   );
   assert.equal(okCalls.length, 1);
+  assert.equal(turnCalls.length, 0, "verbatim не зовёт модель и на успехе");
+  assert.equal(
+    okCalls[0].text,
+    `⏰ выпить воды\n\n(set for ${formatZoned(t0, "UTC")}, delivered late)`,
+    "опоздавшее напоминание называет назначенное время",
+  );
   assert.deepEqual(await store.list(), [], "успех снимает разовую строку");
   const resolved = JSON.parse(
     readFileSync(join(caseDir, "alert-state.json"), "utf8"),
