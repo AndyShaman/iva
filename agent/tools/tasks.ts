@@ -64,7 +64,7 @@ function isTask(value: unknown): value is Task {
 export default defineTool({
   description:
     "Задачи: add (text, priority, due), list (includeDone; по умолчанию — незавершённые), " +
-    "done/remove (id).",
+    "done/remove (id). Задачи не выдумываются из памяти: список ведёт тул.",
   inputSchema: z.object({
     action: z.enum(["add", "list", "done", "remove"]),
     text: z.string().min(1).optional().describe("Текст задачи"),
