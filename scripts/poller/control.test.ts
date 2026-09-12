@@ -1085,3 +1085,102 @@ test("adoption drops a pending input the target screen cannot handle", async () 
     globalThis.fetch = previousFetch;
   }
 });
+
+// Ожидание ввода принадлежит тому flow, который его поставил. Живой визард /model ждёт
+// API-ключ (secret) в СВОЁМ сообщении; тап по старой кнопке меню не имеет права забрать ни
+// это ожидание, ни общий слот — совпадение имени kind (у экрана поиска тоже есть
+// texts.apikey) владением не является. Иначе ключ уходит обычной доставкой в eve и
+// остаётся в чате.
+test("a stale menu tap cannot take the pending key away from the /model wizard", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const raw = init?.body;
+    calls.push({
+      method: url.split("/").at(-1) ?? "",
+      body:
+        typeof raw === "string"
+          ? (JSON.parse(raw) as Record<string, unknown>)
+          : {},
+    });
+    return Response.json({ ok: true, result: { message_id: 100 } });
+  };
+  try {
+    const wizard = flows.start(7, "42", "model", {
+      provider: "custom",
+      pendingBase: "https://api.example.test/v1",
+      step: "awaiting_key",
+      msgId: 100,
+      awaitText: { kind: "apikey", secret: true, data: {} },
+    });
+
+    const tapped = await handleControl(
+      {
+        update_id: 930,
+        callback_query: {
+          id: "cq-wizard-await",
+          from: trustedFrom,
+          message: { message_id: 55, date: 1, chat },
+          data: "iva_menu:srch:o",
+        },
+      },
+      recordingDeps().deps,
+    );
+
+    assert.equal(tapped, true);
+    assert.equal(flows.get(7, "42"), wizard, "слот визарда не вытеснен");
+    assert.equal(wizard.flow, "model");
+    assert.deepEqual(
+      wizard.awaitText,
+      { kind: "apikey", secret: true, data: {} },
+      "ожидание осталось у визарда",
+    );
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ["answerCallbackQuery"],
+      "тап только гасит кнопку: ни правок сообщений, ни рендера",
+    );
+    assert.equal(
+      typeof calls[0].body.text,
+      "string",
+      "в ack ушёл тост, а не тишина",
+    );
+
+    calls.length = 0;
+    const keyMessage = await handleControl(
+      {
+        update_id: 931,
+        message: {
+          message_id: 931,
+          date: 1,
+          chat,
+          from: trustedFrom,
+          text: "sk-real-secret-value",
+        },
+      },
+      recordingDeps().deps,
+    );
+
+    assert.equal(keyMessage, true, "ключ обработан визардом, а не доставкой");
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.method === "deleteMessage" && call.body.message_id === 931,
+      ),
+      "сообщение с ключом удалено из чата",
+    );
+  } finally {
+    const stale = flows.get(7, "42");
+    if (stale) {
+      stale.createdAt = 0;
+      flows.get(7, "42");
+    }
+    globalThis.fetch = previousFetch;
+  }
+});

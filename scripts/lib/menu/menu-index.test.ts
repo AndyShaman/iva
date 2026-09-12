@@ -381,6 +381,24 @@ test("stale: msgId mismatch на o-верб -> усыновляет новое �
   assert.equal(st.screen, "st");
 });
 
+// Владение ожиданием проверяется по СВОЕМУ ключу texts: унаследованный `Object.constructor`
+// обработчиком не является. Иначе ожидание с kind «constructor» считается своим, живое меню
+// вытесняется, а следующий обычный текст удаляется и поглощается.
+test("kind из прототипа texts не делает экран владельцем ожидания", async () => {
+  const { menu, flows, log } = setup();
+  const st = await menu.open(10, "20");
+  st.screen = "srch";
+  st.awaitText = { kind: "constructor", secret: true, data: {} };
+  const liveMsgId = st.msgId;
+
+  await menu.onCallback(cb("iva_menu:core:o", { messageId: liveMsgId + 45 }));
+
+  assert.equal(flows.get(10, "20"), st, "живое меню не вытеснено");
+  assert.equal(st.msgId, liveMsgId, "меню осталось за своим сообщением");
+  assert.equal(st.awaitText, null, "ожидание снято, а не перенесено");
+  assert.equal(log.render.at(-1), "r", "перерисован корень");
+});
+
 test("allowlist: чужой тап ack-нут и проглочен — без диспатча, стейт не тронут", async () => {
   const { menu, flows, calls, log } = setup();
   const st = await menu.open(10, "20");

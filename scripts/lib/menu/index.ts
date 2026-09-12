@@ -217,6 +217,15 @@ export function createMenu({
     return screens[sid] as MenuScreen | undefined;
   }
 
+  // Обработчик ввода экрана — тоже только по своему ключу: унаследованный
+  // Object.constructor функцией является, обработчиком ввода — нет.
+  function textHandlerAt(mod: MenuScreen | undefined, kind: string) {
+    const texts = mod?.texts;
+    if (!texts || !Object.hasOwn(texts, kind)) return undefined;
+    const handler: unknown = texts[kind];
+    return typeof handler === "function" ? texts[kind] : undefined;
+  }
+
   async function renderScreen(st: MenuState) {
     const mod = screenAt(st.screen);
     if (!mod || typeof mod.render !== "function") return;
@@ -241,16 +250,29 @@ export function createMenu({
     // Telegram уже не примет), а меню ниже открывается заново на корне. Верб x — закрытие,
     // у него свой финальный текст, тост там противоречил бы ему.
     let staleToast: string | null = null;
+    let foreignAwait = false;
     if (typeof cq.data === "string" && cq.data.startsWith(PREFIX)) {
       const early = parse(cq.data);
-      const known =
-        early.sid === "mdl" ||
-        early.sid === "thk" ||
-        Boolean(screenAt(early.sid));
+      const handoff = early.sid === "mdl" || early.sid === "thk";
+      const known = handoff || Boolean(screenAt(early.sid));
       if (!known && early.verb !== "x")
         staleToast = ctx.tr(
           "Menu expired — shown again.",
           "Меню устарело — открыто заново.",
+        );
+      // Ожидание ввода принадлежит тому flow, который его поставил: визард /model//think
+      // ждёт свой секрет в СВОЁМ сообщении. Меню не забирает ни это ожидание, ни общий
+      // слот — иначе ключ ушёл бы обычной доставкой в eve и остался в чате. Тап гасим
+      // тостом и больше ничего не делаем; хендофф mdl/thk и закрытие x идут своей
+      // дорогой и слот не портят.
+      const slot = chatId === undefined ? null : flows.get(chatId, userId);
+      foreignAwait = Boolean(
+        slot && slot.flow !== "menu" && isMenuAwaitText(slot.awaitText),
+      );
+      if (foreignAwait && !handoff && early.verb !== "x")
+        staleToast = ctx.tr(
+          "Finish the input you started, or send /menu again.",
+          "Заверши начатый ввод или отправь /menu заново.",
         );
     }
     // Гасим спиннер кнопки СРАЗУ (mirror handleWizardCallback :562) — дальше можно не спешить.
@@ -308,17 +330,24 @@ export function createMenu({
       return true;
     }
 
+    // Ждущий чужой flow (см. ранний тост): слот не наш, ожидание не наше — выходим.
+    if (foreignAwait) return true;
+
     let st = flows.get(chatId, userId);
     const fresh = Boolean(st && st.flow === "menu" && st.msgId === messageId);
     const mod = screenAt(sid);
-    // Ждущий ввод вытесняемого стейта переезжает на усыновляемое сообщение только если
-    // экран-получатель владеет его kind: обрабатывает ввод его же texts[kind].
+    // Ждущий ввод переезжает на усыновляемое сообщение только внутри СВОЕГО flow и только
+    // к экрану, который его принимает своим texts[kind]. Чужой flow сюда не доходит
+    // (выход выше), совпадение имени kind владением не считается.
     const keptAwait =
-      !fresh && NAV_VERBS.has(verb) && isMenuAwaitText(st?.awaitText)
+      !fresh &&
+      NAV_VERBS.has(verb) &&
+      st?.flow === "menu" &&
+      isMenuAwaitText(st.awaitText)
         ? st.awaitText
         : null;
     const carriesAwait =
-      keptAwait !== null && typeof mod?.texts?.[keptAwait.kind] === "function";
+      keptAwait !== null && textHandlerAt(mod, keptAwait.kind) !== undefined;
     // Мёртвый sid (кнопка из прошлой раскладки меню, мусор в callback_data) и ожидание,
     // которое экрану-получателю обработать нечем: меню открывается заново на корне, тост
     // «устарело» для мёртвого экрана уже ушёл в ack. Живое menu-состояние при этом НЕ
@@ -461,8 +490,8 @@ export function createMenu({
         );
       }
     }
-    const handler = screenAt(st.screen)?.texts?.[a.kind];
-    if (typeof handler !== "function") {
+    const handler = textHandlerAt(screenAt(st.screen), a.kind);
+    if (handler === undefined) {
       await flows.end(
         st,
         ctx.tr(
