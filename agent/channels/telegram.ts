@@ -264,8 +264,9 @@ const telegram = telegramChannel({
     // Ответ модели уходит через Outbox — он же переопределяет дефолтную plain-доставку
     // eve. Промежуточный текст перед tool-calls не шлём (зеркалим дефолт). Повторного
     // хода модели на сбой доставки нет — ход уже закрыт, реформат произойдёт на следующем
-    // сообщении (ошибка видна в логе/vault). Латентность засчитываем, только если ушло
-    // хотя бы одно сообщение и ни одно не потерялось.
+    // сообщении (ошибка видна в логе/vault). Латентность засчитываем, только если ни одно
+    // сообщение не потерялось: пустой рендер шов отдаёт с ok=false, поэтому проверки
+    // delivered у вызывающего больше нет.
     async "message.completed"(data, channel, ctx) {
       if (data.finishReason === "tool-calls" || !data.message) return;
       const message = data.message;
@@ -297,7 +298,7 @@ const telegram = telegramChannel({
             outboxTransport(channel.telegram, TELEGRAM_RICH_REPLIES),
           ),
       );
-      if (result.delivered > 0 && result.ok) recordDelivery(true);
+      if (result.ok) recordDelivery(true);
     },
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.
