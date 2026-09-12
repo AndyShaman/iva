@@ -132,22 +132,6 @@ async function ownerRulesEvents(
   return events;
 }
 
-async function bridgeBacklogEvents(
-  root: string,
-  options: {
-    now: number;
-    queue?: unknown;
-    queueRaw?: string;
-    statuses?: Array<{
-      chatKey: string;
-      status: { status?: string; updatedAt?: number };
-    }>;
-  },
-): Promise<Array<[string, string]>> {
-  // Примета по умолчанию — «bridge backlog:», второй фильтр тут был бы копией.
-  return systemdDoctorEvents(root, options);
-}
-
 /**
  * Доктор с живым systemd (стаб) и своим каталогом данных. Возвращает события команды,
  * отобранные по примете начала строки; пустая примета — все.
@@ -505,7 +489,7 @@ test("doctor warns about an old Telegram bridge backlog item", async (t) => {
   writeFileSync(join(root, ".env"), "present=true\n");
 
   assert.deepEqual(
-    await bridgeBacklogEvents(root, {
+    await systemdDoctorEvents(root, {
       now: 1_000_000,
       queue: {
         version: 1,
@@ -537,7 +521,7 @@ test("doctor names the .env lines the service and the CLI read differently", asy
   const root = await sandbox(t);
 
   assert.deepEqual(
-    await bridgeBacklogEvents(root, {
+    await systemdDoctorEvents(root, {
       now: 1_000_000,
       messagePrefix: ".env lines",
       envText: [
@@ -569,7 +553,7 @@ test("doctor stays silent when every .env line is unambiguous", async (t) => {
   const root = await sandbox(t);
 
   assert.deepEqual(
-    await bridgeBacklogEvents(root, {
+    await systemdDoctorEvents(root, {
       now: 1_000_000,
       messagePrefix: ".env lines",
       envText: "CUSTOM_API_KEY=sk-live_ABC-123\nIVA_PORT=8723\n",
@@ -582,7 +566,7 @@ test("doctor reports a clear bridge backlog when queue files are missing", async
   const root = await sandbox(t);
   writeFileSync(join(root, ".env"), "present=true\n");
 
-  assert.deepEqual(await bridgeBacklogEvents(root, { now: 1_000_000 }), [
+  assert.deepEqual(await systemdDoctorEvents(root, { now: 1_000_000 }), [
     ["ok", "bridge backlog: clear"],
   ]);
 });
@@ -591,7 +575,7 @@ test("doctor warns when a Telegram bridge queue file is corrupt", async (t) => {
   const root = await sandbox(t);
   writeFileSync(join(root, ".env"), "present=true\n");
   const queueFile = join(root, "data", "telegram-queue.json");
-  const events = await bridgeBacklogEvents(root, {
+  const events = await systemdDoctorEvents(root, {
     now: 1_000_000,
     queueRaw: "{not json",
   });
@@ -611,7 +595,7 @@ test("doctor treats a running chat without updatedAt as stuck", async (t) => {
   writeFileSync(join(root, ".env"), "present=true\n");
 
   assert.deepEqual(
-    await bridgeBacklogEvents(root, {
+    await systemdDoctorEvents(root, {
       now: 1_000_000,
       statuses: [{ chatKey: "1:", status: { status: "running" } }],
     }),
