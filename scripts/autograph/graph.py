@@ -367,8 +367,8 @@ def _write_history_durable(hist_path: Path, history: list) -> None:
         raise
 
 
-def update_history(vault_dir: Path, stats: dict):
-    """Append to health-history.json (max 90 entries)."""
+def update_history(vault_dir: Path, stats: dict, as_of: date) -> None:
+    """Upsert the health-history entry for as_of (max 90 entries)."""
     hist_path = vault_dir / '.graph' / 'health-history.json'
     try:
         raw = hist_path.read_bytes()
@@ -384,10 +384,17 @@ def update_history(vault_dir: Path, stats: dict):
                 or not all(_valid_history_entry(entry) for entry in history)):
             raise HealthHistoryCorrupt(
                 'health history is corrupt; left unchanged')
-    history.append({
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        **stats
-    })
+    # Одна запись на дату: ручной прогон того же дня заменяет результат, а не
+    # добавляет второй. Старые дубли за эту дату уходят вместе с ним.
+    entry = {'date': as_of.isoformat(), **stats}
+    dates = [existing['date'] for existing in history]
+    if entry['date'] in dates:
+        first = dates.index(entry['date'])
+        history = [existing for index, existing in enumerate(history)
+                   if existing['date'] != entry['date'] or index == first]
+        history[first] = entry
+    else:
+        history.append(entry)
     history = history[-90:]  # keep last 90
     _write_history_durable(hist_path, history)
 
@@ -576,6 +583,10 @@ def main():
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(1)
+    # Дата графа и дата записи истории — одна и та же: без --as-of это сегодня по
+    # TZ процесса, а не момент записи.
+    if as_of is None:
+        as_of = _local_today()
 
     if cmd == 'health':
         graph = build_graph(vault_dir, schema, today=as_of)
@@ -589,7 +600,7 @@ def main():
         (out_dir / 'report.md').write_text(
             generate_report(stats, graph['domains']))
         try:
-            update_history(vault_dir, stats)
+            update_history(vault_dir, stats, as_of)
         except HealthHistoryCorrupt as error:
             print(f"Error: {error}", file=sys.stderr)
             sys.exit(1)
