@@ -98,12 +98,14 @@ function localDate(): string {
 }
 
 // Run a command in the vault directory. Does not throw — returns status/output.
+// Null status (signal kill, spawn error) is a failure, never a success: an uv
+// killed mid-step otherwise counted as a passed step.
 function run(cmd: string, args: string[], cwd = VAULT) {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
   if (out) console.log(`$ ${cmd} ${args.join(" ")}\n${out}`);
   return {
-    status: r.status ?? (r.error ? 1 : 0),
+    status: r.status ?? 1,
     stdout: r.stdout ?? "",
     stderr: r.stderr ?? "",
   };
@@ -299,41 +301,56 @@ const supersedeReportPath = shellQuote(
 );
 const supersede = maint("supersede", [`${SCRIPTS}/supersede.py`, "."]);
 if (supersede.status === 0) {
-  const parsed: unknown = JSON.parse(
-    readFileSync(resolve(VAULT, ".graph/supersede-report.json"), "utf8"),
-  );
-  if (!isRecord(parsed) || !Array.isArray(parsed.skipped))
-    throw new Error("invalid supersede report");
-  const skipped = parsed.skipped.filter(
-    (item): item is SupersedeSkip =>
-      isRecord(item) &&
-      typeof item.path === "string" &&
-      (item.reason === "invalid_utf8" ||
-        item.reason === "malformed_frontmatter" ||
-        item.reason === "read_error"),
-  );
-  for (const item of skipped) supersedeSkippedPaths.add(item.path);
-  if (skipped.length) {
-    const count = skipped.length;
-    const essence = createHash("sha256")
-      .update(JSON.stringify(skipped))
-      .digest("hex");
-    await alert(
-      "supersede-unreadable",
-      essence,
-      T(
-        `Supersede skipped unreadable Cards. Conflicts in ${count} ${count === 1 ? "Card" : "Cards"} will not reach Rollup. ` +
-          `Run this command:\n${supersedeRepairCommand}\n` +
-          `Then open this report:\n${supersedeReportPath}\n` +
-          "Repair the listed Cards.",
-        `Supersede пропустил нечитаемые карточки. Противоречия в ${count} ${count === 1 ? "карточке" : "карточках"} не попадут в Rollup. ` +
-          `Выполни команду:\n${supersedeRepairCommand}\n` +
-          `Потом открой отчёт:\n${supersedeReportPath}\n` +
-          "Почини перечисленные карточки.",
-      ),
+  // Отчёт мог не записаться (обрыв посреди записи, стёртый .graph, чужой формат)
+  // при успешном коде шага: это провал шага с понятной причиной, а не падение
+  // ночи — дальше идёт общий путь провала (алерт maintenance со списком шагов).
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      readFileSync(resolve(VAULT, ".graph/supersede-report.json"), "utf8"),
     );
-  } else {
-    cleared("supersede-unreadable");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`brain: supersede report unreadable: ${detail}`);
+    failures.push("supersede");
+  }
+  if (parsed !== undefined) {
+    if (!isRecord(parsed) || !Array.isArray(parsed.skipped)) {
+      console.error("brain: supersede report is not a supersede report");
+      failures.push("supersede");
+    } else {
+      const skipped = parsed.skipped.filter(
+        (item): item is SupersedeSkip =>
+          isRecord(item) &&
+          typeof item.path === "string" &&
+          (item.reason === "invalid_utf8" ||
+            item.reason === "malformed_frontmatter" ||
+            item.reason === "read_error"),
+      );
+      for (const item of skipped) supersedeSkippedPaths.add(item.path);
+      if (skipped.length) {
+        const count = skipped.length;
+        const essence = createHash("sha256")
+          .update(JSON.stringify(skipped))
+          .digest("hex");
+        await alert(
+          "supersede-unreadable",
+          essence,
+          T(
+            `Supersede skipped unreadable Cards. Conflicts in ${count} ${count === 1 ? "Card" : "Cards"} will not reach Rollup. ` +
+              `Run this command:\n${supersedeRepairCommand}\n` +
+              `Then open this report:\n${supersedeReportPath}\n` +
+              "Repair the listed Cards.",
+            `Supersede пропустил нечитаемые карточки. Противоречия в ${count} ${count === 1 ? "карточке" : "карточках"} не попадут в Rollup. ` +
+              `Выполни команду:\n${supersedeRepairCommand}\n` +
+              `Потом открой отчёт:\n${supersedeReportPath}\n` +
+              "Почини перечисленные карточки.",
+          ),
+        );
+      } else {
+        cleared("supersede-unreadable");
+      }
+    }
   }
 }
 // dedup and link_cleanup — dry-run only (autograph policy: never apply automatically).
