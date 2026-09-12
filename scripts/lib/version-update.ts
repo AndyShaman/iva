@@ -158,8 +158,12 @@ function authored(customDir: string): string[] {
         .filter((path) => !isLiveInstructionPath(path))
         .sort()
     );
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new Error(
+      `cannot read Custom layer ${customDir}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -171,11 +175,16 @@ export function customOverlay(customDir: string): {
   const hash = createHash("sha256");
   const files: string[] = [];
   for (const path of authored(customDir)) {
+    const file = join(customDir, path);
     let body: Buffer;
     try {
-      body = readFileSync(join(customDir, path));
-    } catch {
-      continue; // Deleted between the listing and the read.
+      body = readFileSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; // Deleted between the listing and the read.
+      throw new Error(
+        `cannot read Custom layer file ${file}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
     files.push(path);
     hash.update(`${path}\0${body.length}\0`);
