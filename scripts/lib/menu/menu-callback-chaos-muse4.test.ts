@@ -121,7 +121,7 @@ function rig(screens?: Record<string, unknown>) {
 
 // F-MENU: тап по мёртвому экрану отвечает «устарело» тостом и перерисовывает
 // корень (а не усыновляет мёртвое состояние молча); data-тап по неизвестному sid —
-// честное «устарело» правкой, даже на свежем состоянии; усыновление не теряет
+// тост «устарело» и корень, даже на свежем состоянии; усыновление не теряет
 // живой awaitText (иначе следующий секрет ушёл бы мимо перехвата).
 await test("F-MENU: мёртвый экран — тост «устарело» и живой корень", async () => {
   const { calls, states, tap } = rig();
@@ -140,16 +140,25 @@ await test("F-MENU: мёртвый экран — тост «устарело» 
       calls.some((call) => call.method === "flows.screen"),
       "корень перерисован",
     );
-    // Второй тап — data-верб по неизвестному sid в свежее сообщение: тоже
-    // «устарело» правкой, а не тишина.
+    // Второй тап — data-верб по неизвестному sid в СВЕЖЕЕ сообщение: тост «устарело»,
+    // рабочий корень с клавиатурой и снятое ожидание ввода. Правка без клавиатуры
+    // оставляла живое меню без кнопок и с заряженным ожиданием, которому в мёртвом
+    // экране нет обработчика.
     calls.length = 0;
+    st.awaitText = { kind: "k", secret: true };
     const second = await tap("iva_menu:zzz:set:x");
     assert.equal(second, true);
-    const edit = calls.find((call) => call.method === "editMessageText");
-    assert.ok(edit, "правка была");
-    const edited: unknown = (edit.params as { text?: unknown }).text;
-    assert.ok(typeof edited === "string");
-    assert.match(edited, /устарело|expired/i);
+    const ack2 = calls.find((call) => call.method === "answerCallbackQuery");
+    assert.ok(ack2, "спиннер погашен");
+    const toast2: unknown = (ack2.params as { text?: unknown }).text;
+    assert.ok(typeof toast2 === "string", "тост — строка");
+    assert.match(toast2, /устарело|expired/i);
+    assert.ok(
+      calls.some((call) => call.method === "flows.screen"),
+      "корень перерисован",
+    );
+    assert.equal(states.get("11:111")?.screen, "r", "экран — корень");
+    assert.equal(states.get("11:111")?.awaitText, null, "флоу не заряжен");
   } finally {
     states.clear();
   }

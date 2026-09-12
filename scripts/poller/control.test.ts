@@ -907,3 +907,91 @@ test("model keep callback is retained when only spinner ack succeeds", async () 
     globalThis.fetch = previousFetch;
   }
 });
+
+// Тап по кнопке мёртвого экрана в СТАРОМ сообщении не забирает у живого меню ни его
+// сообщение, ни ожидание ввода. Иначе ожидание переезжает в корень, где обрабатывать
+// его kind нечем, и следующий ОБЫЧНЫЙ текст пользователя мост удаляет как креденшл
+// вместо доставки в eve.
+test("a dead menu tap leaves the live menu's pending input alone", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const raw = init?.body;
+    calls.push({
+      method: url.split("/").at(-1) ?? "",
+      body:
+        typeof raw === "string"
+          ? (JSON.parse(raw) as Record<string, unknown>)
+          : {},
+    });
+    return Response.json({ ok: true, result: { message_id: 100 } });
+  };
+  try {
+    const live = flows.start(7, "42", "menu", {
+      screen: "srch",
+      page: 0,
+      msgId: 100,
+      awaitText: { kind: "apikey", secret: true, data: { provider: "tavily" } },
+    });
+
+    const tapped = await handleControl(
+      {
+        update_id: 910,
+        callback_query: {
+          id: "cq-dead-menu",
+          from: trustedFrom,
+          message: { message_id: 55, date: 1, chat },
+          data: "iva_menu:zzz:o",
+        },
+      },
+      recordingDeps().deps,
+    );
+
+    assert.equal(tapped, true);
+    assert.equal(flows.get(7, "42"), live, "живое меню не вытеснено");
+    assert.equal(live.msgId, 100, "меню осталось за своим сообщением");
+    assert.equal(live.awaitText, null, "ожидание ввода снято, а не перенесено");
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.method === "editMessageText" && call.body.message_id === 100,
+      ),
+      "корень перерисован в сообщении живого меню",
+    );
+
+    calls.length = 0;
+    const ordinary = await handleControl(
+      {
+        update_id: 911,
+        message: {
+          message_id: 911,
+          date: 1,
+          chat,
+          from: trustedFrom,
+          text: "сколько времени?",
+        },
+      },
+      recordingDeps().deps,
+    );
+
+    assert.equal(ordinary, false, "обычное сообщение уходит в eve");
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      [],
+      "обычное сообщение не удалено и не перехвачено",
+    );
+  } finally {
+    const stale = flows.get(7, "42");
+    if (stale) {
+      stale.createdAt = 0;
+      flows.get(7, "42");
+    }
+    globalThis.fetch = previousFetch;
+  }
+});

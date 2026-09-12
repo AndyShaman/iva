@@ -237,19 +237,17 @@ export function createMenu({
     const userId = String(cq.from?.id ?? "");
     const messageId = cq.message?.message_id;
     ctx.lang = getLang();
-    // Мёртвый экран с навигационным вербом: тост «устарело» прямо в ack (второй
-    // answerCallbackQuery Telegram уже не примет), сообщение усыновляется корнем ниже.
-    // screenKnown считается здесь же и переиспользуется ниже: навигация едет по живому
-    // экрану, а не по мусору из кнопки.
+    // Мёртвый экран: тост «устарело» уходит прямо в ack (второй answerCallbackQuery
+    // Telegram уже не примет), а меню ниже открывается заново на корне. Верб x — закрытие,
+    // у него свой финальный текст, тост там противоречил бы ему.
     let staleToast: string | null = null;
-    let screenKnown = true;
     if (typeof cq.data === "string" && cq.data.startsWith(PREFIX)) {
       const early = parse(cq.data);
-      screenKnown =
+      const known =
         early.sid === "mdl" ||
         early.sid === "thk" ||
         Boolean(screenAt(early.sid));
-      if (!screenKnown && NAV_VERBS.has(early.verb))
+      if (!known && early.verb !== "x")
         staleToast = ctx.tr(
           "Menu expired — shown again.",
           "Меню устарело — открыто заново.",
@@ -312,24 +310,45 @@ export function createMenu({
 
     let st = flows.get(chatId, userId);
     const fresh = Boolean(st && st.flow === "menu" && st.msgId === messageId);
+    const mod = screenAt(sid);
+    // Мёртвый sid (кнопка из прошлой раскладки меню, мусор в callback_data): меню
+    // открывается заново на корне, тост «устарело» уже ушёл в ack. Живое menu-состояние
+    // при этом НЕ вытесняется и его ожидание ввода НЕ переезжает: корень рисуется в том
+    // сообщении, которым меню владеет, а ожидание снимается, как на любом нав-вербе.
+    // Иначе стейт вместе с awaitText уехал бы на мёртвое сообщение, а обработчика этому
+    // ожиданию в корне нет — следующее ОБЫЧНОЕ сообщение перехватывалось бы как креденшл
+    // (secret:true — ещё и удалялось из чата) вместо доставки в eve.
+    if (!mod) {
+      const target =
+        st && st.flow === "menu"
+          ? st
+          : flows.start(chatId, userId, "menu", {
+              screen: "r",
+              page: 0,
+              msgId: messageId,
+            });
+      flows.touch(target);
+      target.awaitText = null;
+      target.page = 0;
+      await ctx.show(target, "r");
+      return true;
+    }
     let adopted = false;
     if (!fresh) {
       if (NAV_VERBS.has(verb)) {
         // Усыновить сообщение: создать стейт, привязанный к тапнутому message_id,
-        // и отрендерить. Мёртвый экран усыновляется корнем (тост «устарело» уже ушёл
-        // в ack выше). Живой awaitText вытесненного стейта забираем с собой: иначе
+        // и отрендерить. Живой awaitText вытесненного стейта забираем с собой: иначе
         // следующий секрет прошёл бы мимо перехвата и ушёл в eve.
         const keptAwait = isMenuAwaitText(st?.awaitText) ? st.awaitText : null;
         st = flows.start(chatId, userId, "menu", {
-          screen: screenKnown ? sid : "r",
+          screen: sid,
           page: 0,
           msgId: messageId,
           ...(keptAwait ? { awaitText: keptAwait } : {}),
         });
         adopted = true;
       } else {
-        const mod = screenAt(sid);
-        if (event && typeof mod?.recover === "function") {
+        if (event && typeof mod.recover === "function") {
           const recovered = await mod.recover(verb, args, event, ctx);
           if (recovered !== undefined) return recovered;
         }
@@ -355,21 +374,19 @@ export function createMenu({
     // Усыновление — не отказ от ввода: awaitText, забранный у вытесненного стейта, живёт дальше.
     if (NAV_VERBS.has(verb) && !adopted) active.awaitText = null;
 
-    // Навигация едет по живому экрану: мёртвый sid уже заменён корнем при усыновлении.
-    const target = screenKnown ? sid : "r";
     if (verb === "o") {
       active.page = 0;
-      await ctx.show(active, target);
+      await ctx.show(active, sid);
       return true;
     }
     if (verb === "pg") {
-      active.screen = target;
+      active.screen = sid;
       active.page = Number.parseInt(args[0], 10) || 0;
       await renderScreen(active);
       return true;
     }
     if (verb === "rf") {
-      active.screen = target;
+      active.screen = sid;
       await renderScreen(active);
       return true;
     }
@@ -377,19 +394,6 @@ export function createMenu({
     // Data-верб — экрану sid (тапнутая кнопка принадлежит ему). Экран сам решает, что
     // отрисовать (ctx.show / flows.screen / awaitText). Ошибки экрана НЕ роняют мост:
     // onCallback вызывается из моста через .catch (см. handleControl-интеграцию).
-    const mod = screenAt(sid);
-    if (!mod) {
-      // Тап по мёртвому экрану и на свежем состоянии: честное «устарело» вместо тишины.
-      await tg("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: ctx.tr(
-          "Menu expired — send /menu",
-          "Меню устарело — отправь /menu заново",
-        ),
-      }).catch(() => {});
-      return true;
-    }
     active.screen = sid;
     if (typeof mod.on === "function") {
       const handled = await mod.on(verb, args, active, ctx, event ?? undefined);
