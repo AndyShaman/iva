@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 237;
+const EXPECTED_PRODUCTION_COUNT = 238;
 const EXPECTED_INVENTORY_SHA256 =
-  "78dd89162e7b979ea29e9549c473d0fd4b7f6a6c7b08dc19f9a8b8442f5f624f";
+  "9cc460411c2e9ac18042a9d51b4887f31753318669a4784a16cd8befc9c45ee2";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -135,6 +135,12 @@ const EXPECTED_INVENTORY_SHA256 =
 // The reminder table `agent/lib/reminder-store.ts` came next, one path: scoped coverage over
 // its anchors and properties reports it at 88.42% lines, 77.56% branches and 100% functions,
 // so the blind spot stays 26.
+// The zoned-time move came last, one path: `agent/lib/zoned-time.ts`, the wall-clock
+// arithmetic the schedule catch-up and the coming reminder surfaces share. Scoped coverage
+// over `agent/lib/zoned-time.test.ts` and `agent/lib/schedule-migration.test.ts` reports it
+// at 100% lines, 90.91% branches and 100% functions - the branch the roundtrip property
+// never takes is the loop break on an exact-minute match, not an unloaded module - so the
+// blind spot stays 26.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
