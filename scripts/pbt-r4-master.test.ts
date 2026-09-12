@@ -63,7 +63,13 @@ function run(
     const stdout = execFileSync(
       "bash",
       [harness, mode, ...(extra === undefined ? [] : [extra])],
-      { input: `${answer}\n`, encoding: "utf8" },
+      {
+        input: `${answer}\n`,
+        encoding: "utf8",
+        // Целевые машины ставят install.sh из curl|bash на Debian/Ubuntu, где локаль
+        // по умолчанию POSIX: разбор ответов обязан работать и под C.
+        env: { ...process.env, LC_ALL: "C", LANG: "C" },
+      },
     );
     return { status: 0, stdout };
   } catch (error) {

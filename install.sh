@@ -555,8 +555,10 @@ prompt_yes_no() {
   if [ -z "$answer" ]; then
     case "$default" in [yY]*|1|true) return 0 ;; *) return 1 ;; esac
   fi
+  # Явные строки, не диапазоны: на чистой Debian/Ubuntu локаль POSIX, и `[дД]` в case
+  # сравнивает байты — кириллица не совпадает (проверено под LC_ALL=C).
   case "$answer" in
-    [yY]|[yY][eE][sS]|[дД]|[дД][аА]) return 0 ;;
+    y|Y|yes|Yes|yEs|yeS|YEs|YeS|yES|YES|д|Д|да|Да|дА|ДА) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -586,7 +588,7 @@ pick_language() {
     else ans=""; fi
   fi
   case "$(answer_token "$ans")" in
-    2|ru|RU|[Рр]ус*) IVA_LANG=ru ;;
+    2|ru|RU|рус*|Рус*|РУС*|ру|Ру|РУ) IVA_LANG=ru ;;
     1|en|EN) IVA_LANG=en ;;
     *) IVA_LANG="$default_lang" ;;
   esac
