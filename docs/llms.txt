@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | b
 - [Memory](https://iva-agent.com/memory.md): The layered vault — daily transcripts, nightly rollups, typed cards, CORE.md, BM25 + graph search
 - [Security & privacy](https://iva-agent.com/security.md): Inbound injection screening, outbound secret redaction, fail-closed user allowlist
 - [Providers & cost](https://iva-agent.com/providers.md): Every external service Iva talks to, with real prices — models, transcription, vision, search
-- [Deploy](https://iva-agent.com/deploy.md): Two systemd user services, two watchdog timers, and five in-process Eve schedules, plus long polling, updates, and backups
+- [Deploy](https://iva-agent.com/deploy.md): Two systemd user services, two watchdog timers, and six in-process Eve schedules, plus long polling, updates, and backups
 - [Command reference](https://iva-agent.com/cli.md): Telegram slash commands and the `iva` CLI
 - [Settings menu](https://iva-agent.com/menu.md): The `/menu` hub — screen map, what applies instantly vs on restart, key intake, character test, memory interview
 - [Reminders](https://iva-agent.com/reminders.md): Asking Iva to remind you - one-time and repeating, one firing with two branches (code sends the text, agent checks delivery), the minute dispatcher, failed delivery, limits

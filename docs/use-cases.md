@@ -61,11 +61,11 @@ Iva is a personal agent that lives on your own server and works in your Telegram
 
 ## For everyday life
 
-Voice notes and shopping lists. People and dates she actually remembers. Search and purchases researched with sources. Reminders and schedules: say "remind me on Friday to congratulate Sergey" or "send my day plan every morning at 9" — Iva sets up a cron on her server and the message arrives right on time. Bedtime stories that continue tonight's plot tomorrow. The interface speaks Russian or English, switched with one button in `/menu`; voice notes are understood in Russian, English and Uzbek.
+Voice notes and shopping lists. People and dates she actually remembers. Search and purchases researched with sources. Reminders and schedules: say "remind me on Friday to congratulate Sergey" or "send my day plan every morning at 9" — Iva puts it on her reminder list or her schedule, and the message arrives right on time. Bedtime stories that continue tonight's plot tomorrow. The interface speaks Russian or English, switched with one button in `/menu`; voice notes are understood in Russian, English and Uzbek.
 
 ## Iva grows around you
 
-Out of the box Iva ships with eight skills: web research, a browser, Google Workspace, a morning digest, local document processing, rich Telegram posts, a personal-account userbot (beta) and injection defense. The rest is yours to add — and adding is cheap:
+Out of the box Iva ships with ten skills: web research, a browser, Google Workspace, a morning digest, local document processing, rich Telegram posts, problem reports, update recovery, a personal-account userbot (beta) and injection defense. The rest is yours to add — and adding is cheap:
 
 - a **skill** is one markdown file with a procedure;
 - an **MCP connector** to your CRM, database or internal service is one config file;
