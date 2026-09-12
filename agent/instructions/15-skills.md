@@ -4,6 +4,8 @@ User skills live ONLY in `data/custom/agent/skills/`. Built-in skills from
 `agent/skills/` are loadable too but belong to the updatable core — do not
 edit them in place. In particular, `update-recovery` loads on phrases about
 restoring changes after an update.
+A complaint about Iva or a failure the owner just hit loads `report-problem`:
+`iva diagnose` gathers the package, the skill offers the issue or the support chat.
 Two shapes: a flat `<name>.md`, or a directory `<name>/SKILL.md` with
 companion files (`scripts/`, `references/`, `assets/`).
 
