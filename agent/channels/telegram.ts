@@ -12,6 +12,10 @@ import {
   sendThroughOutbox,
   type OutboxTransport,
 } from "../lib/outbox.js";
+import {
+  TELEGRAM_RICH_REPLIES,
+  type RichReplies,
+} from "../lib/telegram-rich-replies.js";
 // Inbound-пайплайн — единственный вход внутрь: allowlist, решение о диспатче,
 // запись в Vault, медиа со зрением и транскрипцией, inbound-Gate и контекст хода.
 // Канал приносит ему эффекты и сам про разбор входящего ничего не знает.
@@ -75,39 +79,13 @@ import {
 // решает шов (agent/lib/outbox.ts) — здесь только вызовы Bot API и логи отказов.
 // stop канал не выставляет намеренно: ответ в диалоге короткий, и упавший кусок
 // не повод молчать остальными. Обрыв хвоста — про ночные отчёты, не про разговор.
-function outboxTransport(
+// При TELEGRAM_RICH_REPLIES=never ключа sendRich в транспорте нет вовсе, и шов
+// (agent/lib/outbox.ts) сам уходит HTML-путём.
+export function outboxTransport(
   tg: Pick<TelegramHandle, "chatId" | "messageThreadId" | "request" | "post">,
+  richReplies: RichReplies,
 ): OutboxTransport {
-  return {
-    // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
-    // рендерятся нативно — HTML-путь так не умеет. Любая ошибка (старый Bot API, парс,
-    // лимит 32768, RICH_MESSAGE_*) уводит шов в HTML-путь, то есть в поведение до rich.
-    // request() = raw Bot API call, транспорт JSON, поэтому rich_message шлём объектом.
-    async sendRich(markdown) {
-      try {
-        const res = await tg.request("sendRichMessage", {
-          chat_id: tg.chatId,
-          rich_message: { markdown },
-          ...(tg.messageThreadId !== undefined
-            ? { message_thread_id: tg.messageThreadId }
-            : {}),
-        });
-        if (res.ok) return { ok: true };
-        console.error(
-          "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-          res.status,
-          JSON.stringify(res.body).slice(0, 300),
-        );
-        return {
-          ok: false,
-          error: `sendRichMessage ${res.status}`,
-          retryPlain: false,
-        };
-      } catch (err) {
-        console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
-        return { ok: false, error: String(err), retryPlain: false };
-      }
-    },
+  const transport: OutboxTransport = {
     async sendHtml(html) {
       try {
         // eve's TelegramMessageBody type omits parse_mode, но рантайм
@@ -138,6 +116,37 @@ function outboxTransport(
       }
     },
   };
+  if (richReplies === "auto")
+    // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
+    // рендерятся нативно — HTML-путь так не умеет. Любая ошибка (старый Bot API, парс,
+    // лимит 32768, RICH_MESSAGE_*) уводит шов в HTML-путь, то есть в поведение до rich.
+    // request() = raw Bot API call, транспорт JSON, поэтому rich_message шлём объектом.
+    transport.sendRich = async (markdown) => {
+      try {
+        const res = await tg.request("sendRichMessage", {
+          chat_id: tg.chatId,
+          rich_message: { markdown },
+          ...(tg.messageThreadId !== undefined
+            ? { message_thread_id: tg.messageThreadId }
+            : {}),
+        });
+        if (res.ok) return { ok: true };
+        console.error(
+          "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
+          res.status,
+          JSON.stringify(res.body).slice(0, 300),
+        );
+        return {
+          ok: false,
+          error: `sendRichMessage ${res.status}`,
+          retryPlain: false,
+        };
+      } catch (err) {
+        console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
+        return { ok: false, error: String(err), retryPlain: false };
+      }
+    };
+  return transport;
 }
 
 // Пульс живого хода в run-status: без него жнец моста снимал молчаливый длинный ход
@@ -282,7 +291,11 @@ const telegram = telegramChannel({
           source: "telegram",
         },
         message,
-        () => sendThroughOutbox(message, outboxTransport(channel.telegram)),
+        () =>
+          sendThroughOutbox(
+            message,
+            outboxTransport(channel.telegram, TELEGRAM_RICH_REPLIES),
+          ),
       );
       if (result.delivered > 0 && result.ok) recordDelivery(true);
     },
