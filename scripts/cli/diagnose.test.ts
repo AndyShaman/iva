@@ -589,5 +589,12 @@ await test("таблица фактов расписаний видна в па�
   assert.match(text, /## Schedules \(facts table/u);
   assert.match(text, /memory-daily: провал \(exited 1\)/u);
   assert.match(text, /незакрытый провал: memory-daily/u);
+  // Первые три якоря печатает и доктор; хвост запуска с отступом — только секция расписаний.
+  // Без этого якоря мутация `schedules: ""` оставляла тест зелёным (T30 v2, §2).
+  assert.match(
+    text,
+    new RegExp(`^  provider ${REDACTED} rejected$`, "mu"),
+    "секция расписаний обязана печатать хвост незакрытого провала",
+  );
   assert.ok(!text.includes(URL_PASSWORD), "секрет из хвоста уехал в пакет");
 });
