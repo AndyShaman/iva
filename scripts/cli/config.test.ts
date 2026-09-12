@@ -640,6 +640,73 @@ for (const [what, patch] of [
   });
 }
 
+// N7/N8: строку, которую нельзя записать в безопасном подмножестве, мастер не выписывает
+// дословно. Для значения с переносом строки «как есть» вообще не перенос: строка
+// разваливается надвое, и вторая половина становится настоящей переменной — так в приёмке
+// молча подменился ASSISTANT_DATA_DIR. Поэтому такая строка выбрасывается, а ключ
+// называется вслух: смолчать о выброшенной строке владельца нельзя.
+for (const [what, patch, key] of [
+  [
+    "значение с переносом строки",
+    (text: string) =>
+      `${text}OTHER="one\nASSISTANT_DATA_DIR=/tmp/pwned\ntwo"\n`,
+    "OTHER",
+  ],
+  ["чужое имя ключа", (text: string) => `${text}my.key=1\n`, "my.key"],
+] as const) {
+  test(`the setup wizard drops ${what} from the existing .env and names the key`, async (t) => {
+    const { candidate, output } = await runWizard(
+      t,
+      "invalid",
+      /Ready — settings validated for apply|Setup aborted/u,
+      [
+        "2", // Provider -> OpenCode
+        "sk-opencode-1", // its key
+        "", // Model number -> default
+        "", // Vision model -> default
+        "", // Deepgram key -> keep fixture
+        "", // Recognition language -> default
+        "", // Search provider -> default
+        "", // tavily key -> skip
+        "n", // hybrid memory?
+        "", // Bot token -> keep fixture
+        "", // Timezone -> default
+        "", // Vault directory -> default
+        "", // Port -> default
+      ],
+      patch,
+    );
+    assert.doesNotMatch(output, /Setup aborted/u, output);
+    assert.ok(existsSync(candidate), `кандидат не записан:\n${output}`);
+
+    const text = readFileSync(candidate, "utf8");
+
+    // Эталон — сам рантайм. В файле не должно появиться переменной, которой владелец не
+    // задавал: каталог данных обязан остаться тем, что мастер выбрал сам.
+    const seen = execFileSync(
+      process.execPath,
+      [
+        `--env-file=${candidate}`,
+        "-e",
+        'process.stdout.write(process.env.ASSISTANT_DATA_DIR ?? "")',
+      ],
+      { encoding: "utf8", env: { PATH: process.env.PATH ?? "" } },
+    );
+    assert.equal(seen, "data", text);
+
+    assert.ok(
+      !text.split("\n").some((line) => line.startsWith(`${key}=`)),
+      `строка ${key} всё-таки записана:\n${text}`,
+    );
+
+    // Предупреждение обязано назвать ключ: иначе владелец не узнает, что строки не стало.
+    assert.ok(
+      output.includes(`Dropped ${key}`),
+      `мастер не назвал выброшенный ключ ${key}:\n${output}`,
+    );
+  });
+}
+
 // IVA_CONFIG_INPUT существует ради одного: прогнать мастера против фикстуры в тесте.
 // Унаследованный из окружения оператора он молча подменил бы источник — мастер прочитал бы
 // чужой файл и записал бы результат поверх живого .env установки. `iva config` снимает его.
