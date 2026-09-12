@@ -17,7 +17,12 @@ import {
   generateAssistantBearer,
   isAssistantBearer,
 } from "../lib/assistant-auth.ts";
-import { writeEnvAtomicSync } from "../lib/env-file.ts";
+import {
+  envValueRejection,
+  formatEnvLine,
+  parseEnvText,
+  writeEnvAtomicSync,
+} from "../lib/env-file.ts";
 import {
   authFilePath,
   readAuth,
@@ -149,9 +154,59 @@ function promptInput(): NodeJS.ReadableStream {
 }
 const rl = createInterface({ input: promptInput(), output: process.stdout });
 
-const ask = async (q: string, def = "") => {
-  const a = (await rl.question(def ? `${q} [${def}]: ` : `${q}: `)).trim();
-  return a || def;
+// Почему `.env` не примет это значение, словами владельца - или null.
+const envComplaint = (value: string): string | null => {
+  const rejection = envValueRejection(value);
+  if (!rejection) return null;
+  const problem = {
+    newline: t("a line break", "перенос строки"),
+    control: t(
+      "a hidden control character (check the paste)",
+      "невидимый управляющий символ (проверьте вставку)",
+    ),
+    "non-ascii": t(
+      "a character outside the Latin alphabet",
+      "символ вне латиницы",
+    ),
+    special: t("one of # \" ' ` \\", "один из знаков # \" ' ` \\"),
+    "edge-space": t(
+      "a space at the start or end",
+      "пробел в начале или в конце",
+    ),
+  }[rejection];
+  return t(
+    `The value has ${problem}. The service and the iva command would read it differently, so .env cannot hold it — enter it without that character.`,
+    `В значении ${problem}. Сервис и команда iva прочитали бы его по-разному, поэтому .env такое не хранит — введите значение без этого знака.`,
+  );
+};
+
+// Один вопрос мастера. `existing` - значение из текущего .env: показывается маской и
+// подставляется по Enter. Проверяется ИТОГОВОЕ значение, а не только набранное: иначе
+// негодное значение, уже лежащее в файле, доживает до записи и роняет прогон на
+// последнем шаге, унося все ответы владельца.
+const ask = async (q: string, def = "", existing = "") => {
+  // Негодное значение из существующего .env не предлагается по Enter: иначе вопрос
+  // зациклится (Enter → отказ → тот же вопрос). Говорим о нём один раз и спрашиваем
+  // заново с чистого листа.
+  const carried = existing || def;
+  const carriedComplaint = carried ? envComplaint(carried) : null;
+  if (carriedComplaint) {
+    console.log(
+      `${C.y}  ⚠ ${t("The value in .env cannot stay", "Значение из .env оставить нельзя")}: ${carriedComplaint}${C.x}\n`,
+    );
+    existing = "";
+    def = "";
+  }
+  for (;;) {
+    const typed = (
+      await rl.question(def ? `${q} [${def}]: ` : `${q}: `)
+    ).trim();
+    const a =
+      existing && (!typed || typed.endsWith(KEEP())) ? existing : typed || def;
+    const complaint = envComplaint(a);
+    if (!complaint) return a;
+    console.log(`${C.y}  ⚠ ${complaint}${C.x}\n`);
+  }
 };
 const askYesNo = async (q: string, def = false) => {
   const a = await ask(`${q} (${def ? "Y/n" : "y/N"})`);
@@ -228,8 +283,7 @@ async function askRequired(
 ) {
   for (;;) {
     if (help) console.log(help);
-    let a = await ask(label, existing ? mask(existing) : "");
-    if (existing && (!a || a.endsWith(KEEP()))) a = existing;
+    let a = await ask(label, existing ? mask(existing) : "", existing);
     a = (a || "").trim();
     if (!a) {
       console.log(
@@ -252,17 +306,11 @@ async function askRequired(
   }
 }
 
-function parseEnv(text: string): Env {
-  const env: Env = {};
-  for (const line of text.split("\n")) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-  }
-  return env;
-}
 async function loadExistingEnv(): Promise<Env> {
   try {
-    return parseEnv(await readFile(SOURCE_ENV_PATH, "utf8"));
+    // parseEnvText, а не своя регулярка: мастер обязан судить о существующей
+    // настройке по тому значению, которое получит запущенный агент.
+    return parseEnvText(await readFile(SOURCE_ENV_PATH, "utf8"));
   } catch (error) {
     if ((error as ThrownSetupError | null | undefined)?.code === "ENOENT")
       return {};
@@ -322,10 +370,27 @@ async function writeEnv(out: Env): Promise<void> {
     ...order.filter((k) => out[k] != null),
     ...Object.keys(out).filter((k) => !order.includes(k)),
   ];
-  writeEnvAtomicSync(
-    ENV_PATH,
-    keys.map((k) => `${k}=${out[k]}`).join("\n") + "\n",
-  );
+  // Строку, которую мастер сочинил сам, он обязан записать в безопасном подмножестве -
+  // это и проверяется при каждом вопросе. Но в .env попадает и то, что уже лежало там
+  // до нас: чужой ключ вроде `my.key`, значение с кириллицей или краевым пробелом.
+  // Такую строку мастер переносит как есть и говорит о ней вслух. Уронить весь прогон
+  // на последнем шаге и потерять все ответы - хуже, чем перенести чужую строку;
+  // назовёт её потом и `iva doctor`.
+  const lines = keys.map((k) => {
+    const value = String(out[k]);
+    try {
+      return formatEnvLine(k, value);
+    } catch {
+      console.log(
+        `${C.y}  ⚠ ${t(
+          `Kept ${k} from the existing .env as it was: the service and the iva command may read it differently.`,
+          `${k} перенесён из существующего .env как есть: сервис и команда iva могут прочитать его по-разному.`,
+        )}${C.x}`,
+      );
+      return `${k}=${value}`;
+    }
+  });
+  writeEnvAtomicSync(ENV_PATH, lines.join("\n") + "\n");
 }
 
 async function ollamaModels(key: string): Promise<string[]> {
@@ -853,12 +918,11 @@ async function main() {
     );
     const customKeyExisting =
       process.env.CUSTOM_API_KEY || existing.CUSTOM_API_KEY || "";
-    let customKey = await ask(
+    const customKey = await ask(
       `  ${t("Custom API key", "API-ключ эндпоинта")}`,
       customKeyExisting ? mask(customKeyExisting) : "",
+      customKeyExisting,
     );
-    if (customKeyExisting && (!customKey || customKey.endsWith(KEEP())))
-      customKey = customKeyExisting;
     out.CUSTOM_API_KEY = (customKey || "").trim();
     // GET /models спецификацией не гарантирован: нет каталога — берём id из рук владельца.
     let customModels: string[] = [];
@@ -1079,11 +1143,11 @@ async function main() {
   );
   const keyExisting =
     process.env[sprov.key] || existing[sprov.key] || out[sprov.key] || "";
-  let kv = await ask(
+  const kv = await ask(
     `  ${sprov.id} API key`,
     keyExisting ? mask(keyExisting) : "",
+    keyExisting,
   );
-  if (keyExisting && (!kv || kv.endsWith(KEEP()))) kv = keyExisting;
   out[sprov.key] = (kv || "").trim();
 
   // ── Enhanced memory (optional hybrid plugin) ──────────────────────
@@ -1135,11 +1199,11 @@ async function main() {
     console.log(
       `  ${t("Key for", "Ключ")} ${eprov.id}: ${C.c}${eprov.url}${C.x}. ${t("Enter — skip.", "Enter — пропустить.")}`,
     );
-    let ek = await ask(
+    const ek = await ask(
       `  ${eprov.id} API key`,
       eExisting ? mask(eExisting) : "",
+      eExisting,
     );
-    if (eExisting && (!ek || ek.endsWith(KEEP()))) ek = eExisting;
     out[eprov.key] = (ek || "").trim();
     out.MEMORY_SEARCH_MODE = resolveMemorySearchMode(true, out);
     if (out.MEMORY_SEARCH_MODE === "hybrid") {
@@ -1302,10 +1366,11 @@ async function main() {
       `${C.r}  ${t("Unknown IANA timezone. Try again.", "Неизвестный часовой пояс IANA. Введите ещё раз.")}${C.x}`,
     );
   }
-  out.ASSISTANT_VAULT_DIR = await ask(
-    `  ${t("Vault directory (memory + git backup)", "Каталог vault (память + git-бэкап)")}`,
-    out.ASSISTANT_VAULT_DIR || "vault",
-  );
+  out.ASSISTANT_VAULT_DIR =
+    (await ask(
+      `  ${t("Vault directory (memory + git backup)", "Каталог vault (память + git-бэкап)")}`,
+      out.ASSISTANT_VAULT_DIR || "vault",
+    )) || "vault";
   out.ASSISTANT_DATA_DIR = out.ASSISTANT_DATA_DIR || "data";
   // Off-the-beaten-path port: 3000/8000/8080 are often taken on a typical VPS (docker etc.). The server
   // listens on IVA_PORT and clients (poll bridge, digest, rollups) reach it via ASSISTANT_HOST. We check

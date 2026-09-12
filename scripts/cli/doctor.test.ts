@@ -137,10 +137,14 @@ async function bridgeBacklogEvents(
     queue,
     queueRaw,
     statuses = [],
+    envText,
+    messagePrefix = "bridge backlog:",
   }: {
     now: number;
     queue?: unknown;
     queueRaw?: string;
+    envText?: string;
+    messagePrefix?: string;
     statuses?: Array<{
       chatKey: string;
       status: { status?: string; updatedAt?: number };
@@ -149,6 +153,7 @@ async function bridgeBacklogEvents(
 ): Promise<Array<[string, string]>> {
   const data = join(root, "data");
   const units = join(root, "units");
+  if (envText !== undefined) writeFileSync(join(root, ".env"), envText);
   mkdirSync(data, { recursive: true });
   mkdirSync(units, { recursive: true });
   writeFileSync(join(units, "iva.service"), "[Service]\n");
@@ -196,7 +201,7 @@ async function bridgeBacklogEvents(
     log: () => undefined,
     exit: () => undefined,
   })();
-  return events.filter(([, message]) => message.startsWith("bridge backlog:"));
+  return events.filter(([, message]) => message.startsWith(messagePrefix));
 }
 
 /** Доктор на каталоге с напоминаниями: возвращает события, начинающиеся с "reminders". */
@@ -420,6 +425,54 @@ test("doctor warns about an old Telegram bridge backlog item", async (t) => {
         "bridge backlog: oldest item 11m old — check: journalctl --user -u iva-telegram-poll; use /stop or iva restart",
       ],
     ],
+  );
+});
+
+// Предупреждение о строках .env, которые сервис и команда прочитают по-разному.
+// Разбор идёт по СЫРОЙ строке файла: по разобранному значению `ab#cd` выглядит как
+// безобидное `ab`, и главный случай был бы не виден.
+test("doctor names the .env lines the service and the CLI read differently", async (t) => {
+  const root = await sandbox(t);
+
+  assert.deepEqual(
+    await bridgeBacklogEvents(root, {
+      now: 1_000_000,
+      messagePrefix: ".env lines",
+      envText: [
+        "CUSTOM_API_KEY=ab#cd",
+        "ASSISTANT_VAULT_DIR=вольт",
+        'TELEGRAM_BOT_TOKEN="tg "',
+        "my.key=1",
+        "IVA_PORT=8723",
+        "# комментарий",
+        "",
+      ].join("\n"),
+    }),
+    [
+      [
+        "warn",
+        ".env lines the service and the CLI may read differently: " +
+          "CUSTOM_API_KEY (one of # \" ' ` \\), " +
+          "ASSISTANT_VAULT_DIR (a character outside ASCII), " +
+          "TELEGRAM_BOT_TOKEN (one of # \" ' ` \\), " +
+          "my.key (a name the service cannot use)" +
+          " — re-enter them: iva config",
+      ],
+    ],
+  );
+});
+
+// Контроль: на здоровом .env предупреждения нет вовсе, иначе тест выше держал бы ноль.
+test("doctor stays silent when every .env line is unambiguous", async (t) => {
+  const root = await sandbox(t);
+
+  assert.deepEqual(
+    await bridgeBacklogEvents(root, {
+      now: 1_000_000,
+      messagePrefix: ".env lines",
+      envText: "CUSTOM_API_KEY=sk-live_ABC-123\nIVA_PORT=8723\n",
+    }),
+    [],
   );
 });
 

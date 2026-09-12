@@ -29,6 +29,7 @@ import {
   KEEP,
 } from "../lib/version-store.ts";
 import { hasEmbeddingSource } from "../lib/memory-mode.ts";
+import { ambiguousEnvLines } from "../lib/env-file.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -226,6 +227,19 @@ export function createDoctorCommand(
           );
           badN++;
         }
+      }
+      // Значение вне безопасного подмножества сервис и команда могут прочитать
+      // по-разному: юнит несёт `EnvironmentFile=`, а CLI читает тем же parseEnv, что и
+      // `node --env-file`. Разбирается СЫРОЙ текст файла, а не `env`: `parseEnv` уже
+      // обрезал бы `KEY=ab#cd` до `ab`, и главный случай стал бы невидимым. Имена
+      // называем, значения - никогда: в них секреты.
+      const ambiguous = ambiguousEnvLines(readFileSync(ENV_PATH, "utf8")).map(
+        ({ key, problem }) => `${key} (${problem})`,
+      );
+      if (ambiguous.length) {
+        warn(
+          `.env lines the service and the CLI may read differently: ${ambiguous.join(", ")} — re-enter them: iva config`,
+        );
       }
       // old .env without IVA_PORT (or with :3000) — migrate right here
       if (migrateEnv()) fixN++;

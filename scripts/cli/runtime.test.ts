@@ -259,11 +259,11 @@ test("writeEnvVars rejects CRLF values before writing", async (t) => {
 
   assert.throws(
     () => runtime.writeEnvVars({ TELEGRAM_API_HASH: "first\rsecond" }),
-    /env value for TELEGRAM_API_HASH contains a newline/u,
+    /env value for TELEGRAM_API_HASH has a newline/u,
   );
   assert.throws(
     () => runtime.writeEnvVars({ TELEGRAM_API_HASH: "first\nsecond" }),
-    /env value for TELEGRAM_API_HASH contains a newline/u,
+    /env value for TELEGRAM_API_HASH has a newline/u,
   );
   assert.equal(readFileSync(runtime.ENV_PATH, "utf8"), "KEEP=original\n");
 });
