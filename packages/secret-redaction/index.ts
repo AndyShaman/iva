@@ -42,6 +42,14 @@ const SCHEME_HOST = /^https?:\/\/[^\s/@:]+(?::\d+)?$/u;
  * открытым (слепая приёмка T21, раунд 3).
  */
 const URL_PASSWORD = /^(?:[A-Za-z][A-Za-z\d+.-]*:\/\/)?[^\s/@:]*:([^\s/@]+)@/u;
+/**
+ * Настройки САМОГО ПРОЦЕССА, а не установки: в `.env` таких ключей нет, а в `process.env`
+ * они есть всегда — и их значения не секреты. Без этого списка хвост журнала расписания
+ * терял смысл: `HOME=/Users/john` вырезал начало каждого пути, `USER=john` — слог внутри
+ * слов, `SHLVL=1` — каждую единицу (слепая приёмка T20, раунды 2-3).
+ */
+const PROCESS_SETTING_KEY =
+  /^(?:HOME|PATH|PWD|OLDPWD|SHLVL|SHELL|USER|LOGNAME|TERM|COLORTERM|TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|LANG|LC_[A-Z_]+|TMPDIR|TMP|TEMP|EDITOR|VISUAL|PAGER|HOSTNAME|DISPLAY|XPC_[A-Z_]+|__CF[A-Z_]+|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|COMMAND_MODE|INFOPATH|MANPATH|_)$/u;
 /** Ключи со списком личных id: их значения делятся по запятой и пробелам. */
 const CHAT_ID_KEY = /(?:_CHAT_ID|_USER_IDS|_API_ID)$/u;
 /**
@@ -145,7 +153,7 @@ export function secretValuesFromEnv(env: Record<string, string>): string[] {
       );
       continue;
     }
-    if (CONFIG_KEY.test(key)) continue;
+    if (CONFIG_KEY.test(key) || PROCESS_SETTING_KEY.test(key)) continue;
     if (
       HOST_KEY.test(key) &&
       (PLAIN_HOST.test(value) || SCHEME_HOST.test(value))

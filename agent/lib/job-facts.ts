@@ -9,7 +9,7 @@
 // Форма строки — контракт: битая строка пропускается (файл пишем мы сами, не пользователь),
 // а чужой корень файла — явная ошибка: молча ответить «запусков не было» значило бы
 // выключить и провалы, и сторожа.
-import { copyFileSync, readFileSync, renameSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   redact,
@@ -28,13 +28,6 @@ export const JOB_FACT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** Последние строки журнала в факте (п.1 спеки T20). */
 export const JOB_TAIL_LINES = 20;
 export const JOB_TAIL_MAX_CHARS = 4000;
-
-/**
- * Короткое значение окружения секретом не считаем: сюда приходит ВСЁ окружение процесса,
- * а не `.env`-файл, и `SHLVL=1` вычистил бы из хвоста каждую единицу. Всё остальное режется
- * по общему правилу (packages/secret-redaction/index.ts).
- */
-const MIN_ENV_SECRET_CHARS = 4;
 
 export class JobFactsError extends Error {}
 
@@ -61,14 +54,15 @@ export function jobFactsFile(dir: string = dataDir()): string {
 }
 
 /**
- * Хвост для факта: последние 20 строк без секретов. Хвост складывается из stdout+stderr
- * ребёнка, поэтому в него попадает всё, что скрипт печатал, — и хвост едет дальше двумя
- * путями: в data/jobs.json и в текст хода пробуждения, откуда модель может его
- * процитировать владельцу. Поэтому правило вырезания здесь ровно то же, что у пакета улик
- * `iva diagnose` (packages/secret-redaction/index.ts): значение любого ключа, кроме
- * настроечных, пароль из userinfo URL, токен бота в любом месте строки, личный id рядом с
- * меткой и e-mail. Свой шаблон здесь был слабее и пропускал и токен внутри `bot<token>`,
- * и пароль в `CUSTOM_BASE_URL` (слепая приёмка T20).
+ * Хвост для факта: последние 20 строк stderr без секретов. Хвост едет дальше двумя путями —
+ * в data/jobs.json и в текст хода пробуждения, откуда модель может процитировать его
+ * владельцу, — поэтому правило вырезания здесь ровно то же, что у пакета улик `iva diagnose`
+ * (packages/secret-redaction/index.ts): значение любого ключа, кроме настроечных, пароль из
+ * userinfo URL, токен бота в любом месте строки, личный id рядом с меткой и e-mail. Свой
+ * шаблон здесь был слабее и пропускал токен внутри `bot<token>` и пароль в
+ * `CUSTOM_BASE_URL` (слепая приёмка T20). По длине значения не фильтруем: трёхсимвольный
+ * секрет — тоже секрет, а служебные переменные самого процесса (HOME, PWD, USER, PATH,
+ * SHLVL) общее правило знает по именам и не режет.
  */
 export function jobTail(
   tail: string,
@@ -76,11 +70,7 @@ export function jobTail(
 ): string {
   const named: Record<string, string> = {};
   for (const [name, value] of Object.entries(env))
-    if (
-      typeof value === "string" &&
-      value.trim().length >= MIN_ENV_SECRET_CHARS
-    )
-      named[name] = value;
+    if (typeof value === "string") named[name] = value;
   const text = redact(tail, secretValuesFromEnv(named));
   const lines = text
     .split("\n")
@@ -195,22 +185,34 @@ async function withFacts<T>(file: string, fn: () => Promise<T>): Promise<T> {
  * этом ошибкой; чужой корень откладываем здесь тем же способом. Остальные ошибки чтения
  * (права, ввод-вывод) идут наружу: молча начать таблицу заново значило бы потерять её.
  */
-async function readFactsForWrite(file: string): Promise<JobFact[]> {
+async function readFactsForWrite(
+  file: string,
+  now: number,
+): Promise<JobFact[]> {
   try {
     const parsed = await loadJsonStrict<unknown>(file, []);
     const facts = parseFacts(parsed, file);
     // Битые строки перезапись потеряет насовсем, поэтому файл сначала копируется рядом:
     // живые строки остаются в работе, а испорченная запись переживает запись и видна.
-    if (Array.isArray(parsed) && parsed.length !== facts.length)
-      quarantine(file, "copy");
+    if (
+      Array.isArray(parsed) &&
+      parsed.length !== facts.length &&
+      !quarantine(file, "copy", now)
+    )
+      throw new JobFactsError(
+        `${file}: broken row not kept aside, not rewriting`,
+      );
     return facts;
   } catch (error) {
     if (error instanceof JobFactsError) {
-      quarantine(file);
+      // Начать таблицу заново можно только после состоявшегося карантина: иначе перезапись
+      // уничтожит и повреждение, и то, что лежало рядом с ним.
+      if (!quarantine(file, "move", now)) throw error;
       return [];
     }
-    // `loadJsonStrict` переносит битый файл сам и говорит об этом в тексте ошибки.
-    if (/damaged \(invalid JSON\)/u.test((error as Error).message)) return [];
+    // Битый JSON `loadJsonStrict` откладывает сам. Верим не тексту ошибки, а файлу: пока
+    // оригинал на месте, перезаписывать его нельзя.
+    if (!existsSync(file)) return [];
     throw error;
   }
 }
@@ -219,15 +221,20 @@ async function readFactsForWrite(file: string): Promise<JobFact[]> {
  * Отложить испорченный файл рядом, как это делает json-store для битого JSON. `"copy"` —
  * когда живые строки нужны дальше: рядом остаётся копия, а работа идёт с самим файлом.
  */
-function quarantine(file: string, how: "move" | "copy" = "move"): void {
-  const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+function quarantine(file: string, how: "move" | "copy", now: number): boolean {
+  const stamp = new Date(now).toISOString().replace(/[:.]/gu, "-");
   const aside = `${file}.corrupt-${stamp}`;
   try {
     if (how === "copy") copyFileSync(file, aside);
     else renameSync(file, aside);
     console.error(`job facts: ${file} kept aside as ${aside}`);
-  } catch {
-    // Не смогли отложить — таблица всё равно начинается заново, факт важнее файла.
+    return true;
+  } catch (error) {
+    // Отказ карантина — не повод терять данные: говорим и отдаём решение вызвавшему.
+    console.error(
+      `job facts: ${file} could not be kept aside as ${aside} — ${(error as Error).message}`,
+    );
+    return false;
   }
 }
 
@@ -238,7 +245,7 @@ export async function recordFact(
   now: number = Date.now(),
 ): Promise<void> {
   await withFacts(file, async () => {
-    const existing = await readFactsForWrite(file);
+    const existing = await readFactsForWrite(file, now);
     await saveJsonAtomic(file, [...rotated(existing, now), fact]);
   });
 }
@@ -302,7 +309,15 @@ export function latestFact(
   let latest: JobFact | null = null;
   for (const fact of facts) {
     if (fact.name !== name) continue;
-    if (!latest || fact.finishedAt > latest.finishedAt) latest = fact;
+    // При равном finishedAt (две записи в одну миллисекунду) решает более поздний старт, а
+    // не порядок строк в файле: иначе свежий провал мог спрятаться за старым успехом.
+    if (
+      !latest ||
+      fact.finishedAt > latest.finishedAt ||
+      (fact.finishedAt === latest.finishedAt &&
+        fact.startedAt > latest.startedAt)
+    )
+      latest = fact;
   }
   return latest;
 }

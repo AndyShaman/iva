@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 // Таблица фактов расписаний (T20 п.1): запись, ротация 7 дней, ack, хвост без секретов.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -192,6 +198,71 @@ test("чужой корень файла — ошибка, битые строк
   assert.equal((await readFacts(file)).length, 1);
   writeFileSync(file, "{");
   assert.throws(() => readFactsSync(file), /damaged/u);
+});
+
+test("короткий секрет режется, а настройки окружения процесса остаются", () => {
+  // Проверка v6 (HIGH-4): фильтр «значение короче четырёх знаков — не секрет» обходил общее
+  // правило, которое короткие формы режет по границе слова. И обратное: HOME/PWD/USER/PATH —
+  // настройки самого процесса, а не секреты, иначе пути в стеке превращались в <redacted>.
+  const tail = jobTail("credential=abc for /Users/john/iva/vault", {
+    CUSTOM_SECRET: "abc",
+    HOME: "/Users/john",
+    USER: "john",
+    PWD: "/Users/john/iva",
+    PATH: "/usr/bin:/bin",
+    SHLVL: "1",
+  });
+  assert.ok(!/credential=abc/u.test(tail), `короткий секрет остался: ${tail}`);
+  assert.match(
+    tail,
+    /\/Users\/john\/iva\/vault/u,
+    "путь вырезан вместе с настройками",
+  );
+});
+
+test("не отложили испорченный файл — не перезаписываем его", async () => {
+  // Проверка v6 (HIGH-5): карантин мог не состояться (EEXIST, права), а таблица всё равно
+  // начиналась заново — испорченное содержимое исчезало насовсем.
+  const directory = dir();
+  const file = jobFactsFile(directory);
+  const damaged = JSON.stringify({ "memory-daily": "SECRET-ONLY-EVIDENCE" });
+  writeFileSync(file, damaged);
+  // Путь карантина считается от того же `now`, что и запись: занимаем его каталогом.
+  mkdirSync(
+    `${file}.corrupt-${new Date(NOW).toISOString().replace(/[:.]/gu, "-")}`,
+  );
+
+  await assert.rejects(() => recordFact(file, fact(), NOW));
+  assert.equal(
+    readFileSync(file, "utf8"),
+    damaged,
+    "файл перезаписан без карантина",
+  );
+});
+
+test("latestFact при равном finishedAt берёт строку с поздним startedAt", () => {
+  const early = fact({
+    startedAt: NOW - 900,
+    finishedAt: NOW,
+    ok: false,
+    error: "exited 1",
+  });
+  const late = fact({
+    startedAt: NOW - 100,
+    finishedAt: NOW,
+    ok: true,
+    error: null,
+    exitCode: 0,
+  });
+  for (const rows of [
+    [early, late],
+    [late, early],
+  ])
+    assert.equal(
+      latestFact(rows, "memory-daily")?.startedAt,
+      late.startedAt,
+      "порядок строк в файле решает вместо startedAt",
+    );
 });
 
 test("чужой корень: файл в карантин, факт записан, таблица лечится", async () => {
