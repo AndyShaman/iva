@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   chmod,
-  cp,
   copyFile,
   mkdir,
   mkdtemp,
@@ -17,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as systemdControl from "./systemd-control.ts";
+import { plantCliTree } from "../fixtures/cli-tree.ts";
 
 const { createSystemdControl } = systemdControl;
 
@@ -42,21 +42,12 @@ async function fixture(t: TestContext) {
   const state = join(dir, "systemd-state");
   const envPath = join(project, ".env");
   const userbotDir = join(project, "services/telegram-userbot");
-  await mkdir(join(project, "bin"), { recursive: true });
-  await mkdir(join(project, "scripts"), { recursive: true });
   await mkdir(join(project, ".output/server"), { recursive: true });
   await mkdir(join(userbotDir, ".venv/bin"), { recursive: true });
   await mkdir(home, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
   await mkdir(state, { recursive: true });
-  await copyFile(join(ROOT, "bin/iva.mjs"), join(project, "bin/iva.mjs"));
-  await cp(join(ROOT, "scripts/cli"), join(project, "scripts/cli"), {
-    recursive: true,
-  });
-  await symlink(join(ROOT, "scripts/lib"), join(project, "scripts/lib"), "dir");
-  // Дерево пакетов целиком и ссылкой: `scripts/cli` здесь копия, поэтому его относительные
-  // импорты в `packages/` должны разрешаться внутри фикстуры (T20: packages/secret-redaction).
-  await symlink(join(ROOT, "packages"), join(project, "packages"), "dir");
+  await plantCliTree(ROOT, project, { copy: ["scripts/cli"] });
   // The real nightly entrypoint: the retained-legacy-unit tests check that the unit kept on
   // disk names a script that actually exists in the tree it will run against.
   await symlink(
@@ -64,7 +55,6 @@ async function fixture(t: TestContext) {
     join(project, "scripts/memory"),
     "dir",
   );
-  await symlink(join(ROOT, "deploy"), join(project, "deploy"), "dir");
   await writeFile(join(project, ".output/server/index.mjs"), "");
   await copyFile(
     join(ROOT, "services/telegram-userbot/requirements.lock"),
