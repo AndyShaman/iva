@@ -134,3 +134,27 @@ await test("минимальный контрпример: 200 с пустым J
   }
 });
 
+await test("отказ обновления не отдаёт вызывающему протухший токен (seed 20260916)", async () => {
+  const { dir, file, before } = install();
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (input) => {
+    calls.push(
+      typeof input === "object" && "url" in input ? input.url : String(input),
+    );
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+  try {
+    // Файл уцелеет и от второго слоя (toAuth), но это не отменяет отказ: без явной ошибки
+    // getAccessToken вернул бы протухший токен, он уехал бы провайдеру как живой Bearer, а
+    // каждый следующий ход снова шёл бы в auth.openai.com. Один ход — один поход за
+    // токеном, и только отказ снаружи.
+    await assert.rejects(getAccessToken(dir), /access_token/u);
+    await assert.rejects(getAccessToken(dir), /access_token/u);
+    assert.equal(calls.length, 2, "токен-эндпоинт спрошен не по разу на ход");
+    assert.equal(readFileSync(file, "utf8"), before);
+  } finally {
+    globalThis.fetch = realFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

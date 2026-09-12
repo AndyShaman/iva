@@ -692,6 +692,21 @@ await test("codexFetch refreshes and retries auth failures once", async (t) => {
     assert.equal(backendAuthorizations.length, 1);
   });
 
+  await t.test(
+    "a refresh without access_token does not retry with the old token",
+    async () => {
+      resetAuth();
+      backendResponses = [
+        Response.json({ error: { code: "token_expired" } }, { status: 401 }),
+      ];
+      refreshResponses = [Response.json({})];
+      // Пустой ответ токен-эндпоинта — отказ, а не новый вход: бэкенд не должен получить
+      // повторный запрос с прежним, уже отвергнутым Bearer.
+      await assert.rejects(request(), assertCodexAuthExpired);
+      assert.equal(backendAuthorizations.length, 1);
+    },
+  );
+
   await t.test("a non-reusable body is not retried", async () => {
     resetAuth();
     const upstream = Response.json(
