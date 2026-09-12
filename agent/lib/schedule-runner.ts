@@ -480,7 +480,15 @@ export async function runScheduledJob(
       if (completed) reserved = false;
     }
 
-    return { skipped: false, ok, code: outcome.code, signal: outcome.signal };
+    // Ошибка spawn (ENOENT и любая другая) едет наружу: потребитель обязан сказать
+    // причину, а не «exited unknown» — ребёнок не запускался вовсе.
+    return {
+      skipped: false,
+      ok,
+      code: outcome.code,
+      signal: outcome.signal,
+      ...(outcome.error === undefined ? {} : { error: outcome.error }),
+    };
   } catch (error) {
     try {
       log(

@@ -442,6 +442,11 @@ void test("spawn failure (bad nodeBin) never throws and records the error", asyn
 
   assert.equal(threw, false, "runScheduledJob must never throw");
   assert.equal(result.ok, false);
+  assert.match(
+    String(result.error),
+    /ENOENT/u,
+    "причина незапуска едет наружу, а не теряется",
+  );
 });
 
 void test(
