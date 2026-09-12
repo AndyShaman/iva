@@ -28,7 +28,7 @@ import {
 } from "#lib/plugin-store.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { acquireUpdateLock, createVersionStore } from "../lib/version-store.ts";
-import { createDoctorCommand } from "./doctor.ts";
+import { authoredTreeMissing, createDoctorCommand } from "./doctor.ts";
 import { createCliRuntime } from "./runtime.ts";
 import { createCliSystemd } from "./systemd.ts";
 
@@ -1823,4 +1823,24 @@ test("doctor без systemd печатает раздел расписаний �
     ),
     "незакрытый провал не назван",
   );
+});
+
+// T30 №9: чужая ERR_MODULE_NOT_FOUND (пропал packages/*) — не «нет agent/».
+test("T30 №9: authoredTreeMissing различает дерево и пакет", () => {
+  const foreign = Object.assign(
+    new Error(
+      'Cannot find module "/tmp/x/packages/secret-redaction/index.ts" imported from /tmp/x/scripts/cli/doctor.ts',
+    ),
+    { code: "ERR_MODULE_NOT_FOUND" },
+  );
+  assert.equal(
+    authoredTreeMissing(foreign),
+    false,
+    "пропажа пакета выдана за отсутствие authored tree",
+  );
+  const authored = Object.assign(
+    new Error('Cannot find module "#lib/job-facts.ts"'),
+    { code: "ERR_PACKAGE_IMPORT_NOT_DEFINED" },
+  );
+  assert.equal(authoredTreeMissing(authored), true);
 });

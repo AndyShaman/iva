@@ -75,9 +75,18 @@ export interface ScheduleFactsReport {
  */
 export function authoredTreeMissing(error: unknown): boolean {
   const code = (error as { code?: unknown } | null | undefined)?.code;
-  return (
-    code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED"
-  );
+  if (
+    code !== "ERR_MODULE_NOT_FOUND" &&
+    code !== "ERR_PACKAGE_IMPORT_NOT_DEFINED"
+  )
+    return false;
+  // Любая ERR_MODULE_NOT_FOUND — это ещё и пропавший локальный пакет (`packages/…`):
+  // счесть его отсутствием дерева значит промолчать о поломке (T30 №9). Своя ошибка
+  // называет `#lib/`-алиас или путь в `agent/`; если каталога дерева нет вовсе — тоже она.
+  const message = error instanceof Error ? error.message : String(error);
+  // Своя ошибка называет `#lib/`-алиас или путь в `agent/`; чужой пакет (`packages/…`)
+  // сюда не попадает и доктор о нём предупреждает.
+  return /#lib\/|#evals\/|agent[\\/]/u.test(message);
 }
 
 /**
