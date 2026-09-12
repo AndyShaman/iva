@@ -7,6 +7,7 @@
 // `agent/` is missing (ADR-0003, scripts/authored-tree-guard.test.ts). The turn journal is
 // therefore read where it lies — `data/trace/*.jsonl`, the contract of docs/trace.md — and
 // the reminders table as `data/reminders.json`; neither authored module is loaded.
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -34,6 +35,15 @@ export const JOURNAL_LINES = 200;
 export const SECTION_ITEM_LIMIT = 100;
 /** Потолок текста ошибки: в тело ответа апстрим кладёт что угодно, а нужен только код. */
 const ERROR_CHARS = 200;
+/**
+ * id строки напоминания в пакете — короткий хеш, а не id. Имя строки задаёт владелец, и
+ * текстовый слаг («напомни-про-подарок») увёз бы его слова в issue; сверить же строку
+ * можно и по хешу: sha256 от id, первые восемь знаков.
+ */
+export function reminderIdHash(id: string): string {
+  return createHash("sha256").update(id).digest("hex").slice(0, 8);
+}
+
 /** Потолок кода ошибки хода: код — короткое слово, а не текст. */
 const TRACE_CODE_CHARS = 60;
 /**
@@ -263,7 +273,7 @@ function remindersSection(dataDir: string, nowMs: number): string {
         ? errorCode(record.lastError)
         : "none";
     facts.push(
-      `${String(record.id)} · due ${due === null ? "-" : new Date(due).toISOString()} · ` +
+      `${reminderIdHash(String(record.id))} · due ${due === null ? "-" : new Date(due).toISOString()} · ` +
         `last ${last === null ? "-" : new Date(last).toISOString()} · delivered ${status} · ` +
         `error ${error}`,
     );
@@ -488,7 +498,7 @@ function packageMarkdown(input: {
     input.journal.trimEnd(),
     "```",
     "",
-    "## Reminders (last 24h and overdue)",
+    "## Reminders (last 24h and overdue; id = sha256/8)",
     remindersSection(input.dataDir, nowMs),
     "",
     "## Failed turns (last 24h)",

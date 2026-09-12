@@ -144,7 +144,8 @@ await test("пакет на фикстуре данных: все разделы
           deliveredKey: "tg:1",
         },
         {
-          id: "rem-overdue",
+          // id задаёт владелец: текстовый слаг не имеет права уехать в issue.
+          id: "напомни-про-подарок-IDMARK",
           text: REMINDER_TEXT,
           mode: "verbatim",
           schedule: { kind: "at", atMs: old },
@@ -241,7 +242,7 @@ await test("пакет на фикстуре данных: все разделы
     "## Host",
     "## iva doctor",
     "## Service journal (last 200 lines)",
-    "## Reminders (last 24h and overdue)",
+    "## Reminders (last 24h and overdue; id = sha256/8)",
     "## Failed turns (last 24h)",
     "## Custom layer (file names only)",
   ])
@@ -262,10 +263,26 @@ await test("пакет на фикстуре данных: все разделы
   );
   assert.match(
     text,
-    /rem-run-failed · due .* · last .* · delivered no · error sendMessage 400/,
+    /40e768f6 · due .* · last .* · delivered no · error sendMessage 400/,
   );
-  assert.match(text, /rem-run-ok · due .* · delivered yes/);
-  assert.match(text, /rem-overdue · due .* · delivered never/);
+  assert.match(text, /e26d255a · due .* · delivered yes/);
+  assert.match(text, /fe3584b2 · due .* · delivered never/);
+  for (const rawId of [
+    "rem-run-failed",
+    "rem-run-ok",
+    "rem-overdue",
+    "напомни-про-подарок-IDMARK",
+    "IDMARK",
+  ])
+    assert.ok(
+      !text.includes(rawId),
+      `id строки напоминания уехал в пакет: ${rawId}`,
+    );
+  assert.match(
+    text,
+    /^- [0-9a-f]{8} · due .* · delivered never · error /mu,
+    "id в пакете — короткий хеш",
+  );
   assert.ok(
     !text.includes("rem-future-only"),
     "нет фактов и не просрочено — не в пакете",
