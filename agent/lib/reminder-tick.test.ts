@@ -171,6 +171,50 @@ void test("ребёнок не запустился: строка fired с пр�
   assert.equal(second.calls.length, 0);
 });
 
+void test("ребёнок вышел 0 без факта: это «факт не записан», а не «не дошло»", async () => {
+  const now = Date.now();
+  await at("a", now - 60_000);
+  const { lines, log } = logLines();
+  // Текст мог уйти, а запись факта не состояться (лок таблицы занят): ребёнок
+  // заканчивает работу успешно и молчит про таблицу.
+  const stub = jobStub(() => ok());
+
+  const result = await runReminderTick({
+    nowMs: now,
+    runJob: stub.runJob,
+    log,
+  });
+
+  assert.deepEqual(result, { claimed: 1, spawned: 0, filled: 1, swept: 0 });
+  const [row] = await list();
+  assert.ok(row);
+  assert.equal(row.status, "fired");
+  assert.equal(
+    row.delivered,
+    null,
+    "выход 0 без факта — не установленный провал доставки",
+  );
+  assert.equal(row.error, "delivery fact not recorded");
+  assert.ok(
+    lines.some((line) =>
+      line.includes("reminders: a delivery fact not recorded"),
+    ),
+  );
+  assert.equal(
+    lines.some((line) => line.includes("not delivered")),
+    false,
+    "доставленное напоминание названо провалом",
+  );
+
+  // Больше за эту строку не берёмся.
+  const second = jobStub(() => ok());
+  assert.deepEqual(
+    await runReminderTick({ nowMs: now + 60_000, runJob: second.runJob, log }),
+    { claimed: 0, spawned: 0, filled: 0, swept: 0 },
+  );
+  assert.equal(second.calls.length, 0);
+});
+
 void test("повторяющаяся строка будит ребёнка на каждом сроке и не будит раньше", async () => {
   const now = Date.now();
   await add({

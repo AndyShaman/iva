@@ -215,7 +215,12 @@ async function remindersEvents(
   }: {
     now: number;
     pulseAgoMs: number | null;
-    rows?: Array<{ id: string; firedAt: number | null; error: string | null }>;
+    rows?: Array<{
+      id: string;
+      firedAt: number | null;
+      error: string | null;
+      delivered?: boolean | null;
+    }>;
   },
 ): Promise<Array<[string, string]>> {
   const data = join(root, "data");
@@ -236,7 +241,8 @@ async function remindersEvents(
         createdAt: now - 120_000,
         status: "fired",
         firedAt: row.firedAt,
-        delivered: row.error === null,
+        delivered:
+          row.delivered === undefined ? row.error === null : row.delivered,
         error: row.error,
       })),
     }),
@@ -318,6 +324,18 @@ test("doctor показывает провалы напоминаний за с�
         error: "старое, не показываем",
       },
       { id: "r3", firedAt: now - 60_000, error: null },
+      {
+        id: "r4",
+        firedAt: now - 120_000,
+        error: "delivery fact not recorded",
+        delivered: null,
+      },
+      {
+        id: "r5",
+        firedAt: now - 180_000,
+        error: "agent wake failed: boom",
+        delivered: true,
+      },
     ],
   });
   assert.ok(
@@ -351,6 +369,20 @@ test("doctor показывает провалы напоминаний за с�
     false,
     "успешную строку не показываем",
   );
+  // Незаписанный факт — не провал доставки: строка доктора называет его иначе.
+  const marker = fresh.find(([, message]) => message.includes("#r4"));
+  assert.ok(marker, JSON.stringify(fresh));
+  assert.match(marker[1], /the delivery fact was not recorded/u);
+  assert.equal(
+    /did not go out/u.test(marker[1]),
+    false,
+    "невидимый факт назван провалом доставки",
+  );
+  // А записанный факт с ошибкой позднего шага — не «не дошло».
+  const later = fresh.find(([, message]) => message.includes("#r5"));
+  assert.ok(later, JSON.stringify(fresh));
+  assert.match(later[1], /went out, a later step failed/u);
+  assert.equal(/did not go out/u.test(later[1]), false);
 
   // Тик молчит десять минут.
   const stale = await remindersEvents(root, {

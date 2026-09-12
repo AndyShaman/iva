@@ -152,6 +152,31 @@ export async function runReminderTick(
       );
       return;
     }
+    // Ребёнок отработал и вышел 0, а факта нет: текст мог уйти, а запись не состояться
+    // (лок таблицы занят) — сказать «не дошло» про такую строку нельзя. Факт остаётся
+    // невидимым, причина названа явно, и доктор говорит о ней иначе, чем о провале.
+    if (result.ok && !result.skipped) {
+      try {
+        await recordDelivery(
+          row.id,
+          {
+            firedAt: row.firedAt,
+            delivered: null,
+            error: "delivery fact not recorded",
+          },
+          { log },
+        );
+      } catch (error) {
+        if (error instanceof ReminderStoreError) {
+          log(`reminders: ${row.id} outcome not recorded: ${message(error)}`);
+          return;
+        }
+        throw error;
+      }
+      filled += 1;
+      log(`reminders: ${row.id} delivery fact not recorded`);
+      return;
+    }
     // Ребёнок не сказал факта: причина — по коду выхода. Больше за эту строку не берёмся.
     const failure = fireFailure(result);
     try {

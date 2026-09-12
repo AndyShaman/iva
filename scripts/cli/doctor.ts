@@ -644,10 +644,19 @@ export function createDoctorCommand(
             now() - row.firedAt <= dayMs,
         );
         for (const row of failed.slice(0, 5)) {
+          // Три состояния строки, а не одно: установленный провал, невидимый факт
+          // (текст мог уйти, запись не состоялась) и провал позднего шага после
+          // отправки. «Не дошло» — только первое; в строке — хеш id и код ошибки.
           const code =
             row.error === null ? "error text omitted" : errorCode(row.error);
+          const verdict =
+            row.delivered === false
+              ? `did not go out: ${code}`
+              : row.delivered === null
+                ? "the delivery fact was not recorded"
+                : `went out, a later step failed: ${code}`;
           warn(
-            `reminders: #${reminderIdHash(row.id)} fired ${Math.round((now() - (row.firedAt ?? 0)) / 60_000)}m ago and did not go out: ${code}`,
+            `reminders: #${reminderIdHash(row.id)} fired ${Math.round((now() - (row.firedAt ?? 0)) / 60_000)}m ago and ${verdict}`,
           );
         }
         if (failed.length > 5)

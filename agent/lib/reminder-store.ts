@@ -512,13 +512,14 @@ export async function fireDue(
  * записанный второй веткой), а провал отправки называет свою. Результат принимается
  * только за своё срабатывание: firedAt результата обязан совпасть с firedAt строки,
  * иначе запоздалый ответ старого срока переписал бы факт нового — такой результат
- * уходит в журнал и отбрасывается.
+ * уходит в журнал и отбрасывается. `delivered: null` — факта нет (текст мог уйти, а
+ * запись не состояться): строка остаётся без факта, `error` называет причину.
  */
 export async function recordDelivery(
   id: string,
   outcome: {
     readonly firedAt: number | null;
-    readonly delivered: boolean;
+    readonly delivered: boolean | null;
     readonly error: string | null;
   },
   options: ReminderRecordOptions = {},
