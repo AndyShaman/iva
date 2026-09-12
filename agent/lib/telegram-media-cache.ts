@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   acquireLock,
@@ -78,7 +78,16 @@ export function resolveAttachmentPath(
   const inside = relative(attachments, target);
   if (!inside || inside.startsWith("..") || isAbsolute(inside)) return null;
   try {
-    return existsSync(target) && statSync(target).isFile() ? target : null;
+    if (!existsSync(target) || !statSync(target).isFile()) return null;
+    // Симлинк внутри attachments читается как обычный файл, поэтому границу проверяем
+    // по РЕАЛЬНОМУ пути - так же поступает постовый путь (physical в scripts/cli/post.ts).
+    // Наружу отдаём реальный путь: читать будут ровно проверенное.
+    const root = realpathSync(attachments);
+    const real = realpathSync(target);
+    const insideReal = relative(root, real);
+    if (!insideReal || insideReal.startsWith("..") || isAbsolute(insideReal))
+      return null;
+    return real;
   } catch {
     return null;
   }
