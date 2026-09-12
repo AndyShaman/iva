@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 242;
+const EXPECTED_PRODUCTION_COUNT = 244;
 const EXPECTED_INVENTORY_SHA256 =
-  "16dfb23989a8c627b2d88b165a6d04e3d04114af8147660f77668b9df8a4a2e1";
+  "6ce72c14d41f899ed051832bec931c8bbbb8405c2539d34ffb19eda2dadab6a9";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -161,6 +161,14 @@ const EXPECTED_INVENTORY_SHA256 =
 // 92.86% / 100% functions - the lines the tick never takes are the "killed by signal" and
 // "failed to start" wording of a child that did not report a plain exit code, not an
 // unloaded file - so the blind spot stays 26.
+// The reminder delivery came last, two paths: `scripts/lib/reminder-delivery.ts`, the rules
+// that keep a failed send from closing the row and throttle the retries and Alerts, and
+// `scripts/reminders/deliver.ts`, the child process the minute dispatcher starts per row.
+// Scoped coverage over the delivery anchors, the turn anchors, the property and the
+// `iva remind` command reports them at 95.12% / 57.83% lines, 81.13% / 57.14% branches and
+// 100% / 50% functions - the uncovered lines are the real eve client and the boundary
+// branches no test drives, the entry point's real delivery and missing-token paths and its
+// outer catch, not unloaded files - so the blind spot stays 26. The inventory counts 244.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
