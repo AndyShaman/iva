@@ -40,7 +40,7 @@ export function customSkillsDir(): string {
 
 // Описание попадает в системный промпт на каждом ходу. Файл без frontmatter, у которого
 // первая строка длиной в абзац, иначе раздувал бы промпт — режем.
-const DESCRIPTION_CAP = 300;
+const DESCRIPTION_CAP = 120;
 
 type Kind = "package" | "flat";
 
@@ -97,7 +97,13 @@ function firstMeaningfulLine(body: string): string | null {
   return null;
 }
 
-function describe(name: string, markdown: string): string {
+type Described = {
+  readonly description: string;
+  /** Длина описания до усечения; null — описание уложилось в DESCRIPTION_CAP. */
+  readonly truncatedFrom: number | null;
+};
+
+function describe(name: string, markdown: string): Described {
   let description: string | null;
   try {
     const { fields, body } = parseFrontmatter(markdown);
@@ -111,10 +117,17 @@ function describe(name: string, markdown: string): string {
     description = firstMeaningfulLine(markdown);
   }
   // Тот же слабый фолбэк, что у eve: скилл остаётся загружаемым по имени.
-  if (!description) return `Instructions for the ${name} skill.`;
-  return description.length > DESCRIPTION_CAP
-    ? `${description.slice(0, DESCRIPTION_CAP - 1).trimEnd()}…`
-    : description;
+  if (!description)
+    return {
+      description: `Instructions for the ${name} skill.`,
+      truncatedFrom: null,
+    };
+  if (description.length > DESCRIPTION_CAP)
+    return {
+      description: `${description.slice(0, DESCRIPTION_CAP - 1).trimEnd()}…`,
+      truncatedFrom: description.length,
+    };
+  return { description, truncatedFrom: null };
 }
 
 /** Соседние файлы пакета. Пути, которые eve не примет, и нечитаемые файлы отбрасываются. */
@@ -177,7 +190,17 @@ async function readOne(
     );
     return null;
   }
-  const description = describe(name, markdown);
+  const { description, truncatedFrom } = describe(name, markdown);
+  if (truncatedFrom !== null) {
+    const source = kind === "package" ? join(entryName, "SKILL.md") : entryName;
+    const key = `description-cap\u0000${label}\u0000${name}\u0000${source}\u0000${truncatedFrom}`;
+    if (!reportedDiagnostics.has(key)) {
+      reportedDiagnostics.add(key);
+      log(
+        `[skills] ${label} ${name} (${source}) description is ${truncatedFrom} characters, cap ${DESCRIPTION_CAP}; truncated in the prompt index`,
+      );
+    }
+  }
   if (kind === "flat") return { description, markdown };
   const files = await packageFiles(join(dir, entryName), name, log);
   return Object.keys(files).length > 0
@@ -238,8 +261,9 @@ export async function readCustomSkills(
 }
 
 // Одна и та же жалоба не должна повторяться на каждом ходу: и про битый
-// plugins.json, и про кривой скилл плагина достаточно сказать один раз за жизнь
-// процесса. Набор маленький и ограничен числом скиллов на диске.
+// plugins.json, и про кривой скилл плагина, и про усечённое описание кастомного
+// скилла достаточно сказать один раз за жизнь процесса. Набор маленький и ограничен
+// числом скиллов на диске.
 let damagedStateReported = false;
 const reportedDiagnostics = new Set<string>();
 
