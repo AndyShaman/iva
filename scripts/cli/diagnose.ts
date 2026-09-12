@@ -47,18 +47,30 @@ export function reminderIdHash(id: string): string {
 /** Потолок кода ошибки хода: код — короткое слово, а не текст. */
 const TRACE_CODE_CHARS = 60;
 /**
- * Имя ключа, значение которого режется целиком, какой бы длины оно ни было. Решают ИМЕНА,
- * а не вид значения: трёхзначный PIN под `PIN_ID` прячется так же, как длинный ключ, а
- * `ASSISTANT_DATA_DIR=data`, `MODEL_PROVIDER=ollama` и `ASSISTANT_TIMEZONE=Asia/Almaty` —
- * конфиг, и вырезать их по длине нельзя: слово `data` пропадало из путей и списков самого
- * пакета (слепая приёмка T21, раунд 2). `HASH` добавлен к списку владельца по описи
- * `agent/skills/security-defense/outbound-sensitive-keys.json`: `TELEGRAM_API_HASH` —
- * секрет, а в перечисленные слова его имя не попадает. `ID` ищется словом, а не подстрокой:
- * иначе `MODEL_PROVIDER` («proVIDer») и любой другой конфиг с этими буквами внутри считался
- * бы секретом — ровно та ошибка, из-за которой `data` вырезался из путей пакета.
+ * Имя ключа `.env`, значение которого НЕ секрет: каталог, модель, провайдер, зона, язык,
+ * порт, хост, окно контекста, усилие, режим, ник бота. Режется значение любого другого
+ * ключа файла, какой бы длины оно ни было, — список секретов не словарь английских слов, а
+ * дополнение к этому списку настроек. Иначе секрет в ключе без слова-приметы уезжает в
+ * issue: пароль внутри `CUSTOM_BASE_URL=https://user:pass@host` (ключ из `.env.example`),
+ * `CUSTOM_ENDPOINT`, `PROXY`, `*_DSN`, `*_COOKIE`, `SALT`, `PIN`, `OTP` и инвайт-ссылка
+ * `SUPPORT_CHAT_URL` в чат владельца (слепая приёмка T21, раунд 3). Настройки остаются
+ * целыми не для красоты: `ASSISTANT_DATA_DIR=data` и `ASSISTANT_VAULT_DIR=vault` — слова
+ * внутри путей самого пакета, и вырезание съедало их из каждой строки (раунд 2). Список
+ * сверяется тестом с `.env.example` и с описью
+ * `agent/skills/security-defense/outbound-sensitive-keys.json`.
  */
-const SECRET_KEY =
-  /(?:^|_)(?:ID|IDS)(?:_|$)|KEY|TOKEN|SECRET|PASSWORD|PASS|AUTH|BEARER|HASH/iu;
+const CONFIG_KEY =
+  /(?:^|_)(?:DIR|MODEL|PROVIDER|TIMEZONE|LANGUAGE|LANG|PORT|WINDOW|EFFORT|MODE|USERNAME|REASONING|MAX_OUTPUT)$|^(?:NODE_ENV|TZ)$/iu;
+/** `*_HOST`: настройка, только пока в значении нет ни владельца (`@`), ни пароля после `:`. */
+const HOST_KEY = /(?:^|_)HOST$/iu;
+const PLAIN_HOST = /^[^\s@:]+(?::\d+)?$/u;
+/**
+ * Пароль внутри значения с владельцем: `https://user:pass@host`, `user:pass@host`. Значение
+ * режется целиком, но в журнал пароль попадает и отдельным словом — строкой апстрима или
+ * текстом ошибки, — а целого URL там нет, и по одному полному значению он оставался
+ * открытым (слепая приёмка T21, раунд 3).
+ */
+const URL_PASSWORD = /^(?:[A-Za-z][A-Za-z\d+.-]*:\/\/)?[^\s/@:]*:([^\s/@]+)@/u;
 /** Ключи со списком личных id: их значения делятся по запятой и пробелам. */
 const CHAT_ID_KEY = /(?:_CHAT_ID|_USER_IDS|_API_ID)$/u;
 /**
@@ -136,11 +148,11 @@ export function redact(text: string, secrets: readonly string[]): string {
 
 /**
  * Какие значения `.env` считать секретами. Имена ключей берутся из самого файла: список
- * не угадывается по виду значения. Режется значение целиком, если имя ключа похоже на
- * секрет (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, BEARER, ID, HASH) — любой длины;
- * значения остальных ключей (DIR, MODEL, TIMEZONE, LANG, URL и прочие) не режутся вовсе,
- * чтобы слово `data` не исчезало из путей пакета. Ветвь CHAT_ID_KEY делит список на части:
- * личные id пишут через запятую.
+ * не угадывается по виду значения. Секрет — значение ЛЮБОГО ключа, кроме настроечных
+ * (CONFIG_KEY, `*_HOST` без владельца и пароля): неизвестный и пользовательский ключ по
+ * умолчанию режется, потому что задача тут — утечка, а не полнота пакета. Пустое значение
+ * не режется (пометка вместо пустоты выглядела бы как найденный секрет). Ветвь CHAT_ID_KEY
+ * делит значение на части: личные id пишут через запятую.
  */
 export function secretValuesFromEnv(env: Record<string, string>): string[] {
   const values: string[] = [];
@@ -156,7 +168,11 @@ export function secretValuesFromEnv(env: Record<string, string>): string[] {
       );
       continue;
     }
-    if (SECRET_KEY.test(key)) values.push(value);
+    if (CONFIG_KEY.test(key)) continue;
+    if (HOST_KEY.test(key) && PLAIN_HOST.test(value)) continue;
+    values.push(value);
+    const password = URL_PASSWORD.exec(value)?.[1];
+    if (password) values.push(password);
   }
   return values;
 }

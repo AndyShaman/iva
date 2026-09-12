@@ -32,6 +32,9 @@ const TOKEN = "123456789:AAF3xK9mQ7vR2sT5uW8yZ1bC4dE6fG0hI2j";
 const OWNER_ID = "987654321";
 const BEARER = "Bq7".repeat(15);
 const SUPPORT_URL = "https://t.me/+iva-support-chat";
+// Пароль внутри ключа `.env.example`, в имени которого нет ни одного слова-приметы.
+const URL_PASSWORD = "bpass1111";
+const BASE_URL = `https://buser:${URL_PASSWORD}@api.example.com/v1`;
 const REMINDER_TEXT = "напомни про подарок для Ани";
 // Токен, которого нет в .env: его обязан поймать шаблон, а не список значений.
 const FOREIGN_TOKEN = "444555666:BBForeignTokenJJJabcdefghijklmnopqrs";
@@ -73,10 +76,12 @@ async function sandbox(t: TestContext): Promise<{
   const env = {
     MODEL_PROVIDER: "ollama",
     ASSISTANT_DATA_DIR: "data",
+    ASSISTANT_VAULT_DIR: "vault",
     TELEGRAM_BOT_TOKEN: TOKEN,
     TELEGRAM_ALLOWED_USER_IDS: OWNER_ID,
     ASSISTANT_BEARER: BEARER,
     SUPPORT_CHAT_URL: SUPPORT_URL,
+    CUSTOM_BASE_URL: BASE_URL,
     TINY_KEY: "xq7",
   };
   writeFileSync(
@@ -217,7 +222,13 @@ await test("пакет на фикстуре данных: все разделы
   writeFileSync(
     join(logDir, "update-2026-09-12T10-00-00-000Z.log"),
     `ASSISTANT_BEARER=${BEARER}\n` +
-      `GET https://api.telegram.org/bot${FOREIGN_TOKEN}/sendMessage failed\n`,
+      `GET https://api.telegram.org/bot${FOREIGN_TOKEN}/sendMessage failed\n` +
+      // Ключи без слова-приметы в имени: инвайт-ссылка целой строкой и пароль из
+      // CUSTOM_BASE_URL отдельным словом — так их и пишет апстрим в журнал.
+      `support chat ${SUPPORT_URL} unreachable\n` +
+      `custom provider rejected password ${URL_PASSWORD} end\n` +
+      // Настройки внутри путей: вырезание не имеет права съесть data и vault.
+      "read vault/MEMORY.md and data/trace/2026-09-12.jsonl\n",
   );
   mkdirSync(join(data, "custom/agent/instructions"), { recursive: true });
   mkdirSync(join(data, "custom/agent/skills/my-skill"), { recursive: true });
@@ -236,6 +247,20 @@ await test("пакет на фикстуре данных: все разделы
   assert.deepEqual(printed, [`Diagnose package: ${path}`]);
   assert.ok(existsSync(path), "пакет создан по напечатанному пути");
   const text = readFileSync(path, "utf8");
+  for (const leak of [
+    TOKEN,
+    FOREIGN_TOKEN,
+    "xq7",
+    OWNER_ID,
+    BEARER,
+    SUPPORT_URL,
+    BASE_URL,
+    URL_PASSWORD,
+    REMINDER_TEXT,
+    CARD_TEXT,
+    FAILURE_MESSAGE,
+  ])
+    assert.ok(!text.includes(leak), `утечка в пакете: ${leak}`);
   for (const section of [
     "# Iva diagnose package",
     "## Versions",
@@ -249,7 +274,7 @@ await test("пакет на фикстуре данных: все разделы
     assert.ok(text.includes(section), `нет раздела ${section}`);
   assert.match(
     text,
-    /- redaction: 4 values from \.env, pattern rules always on/u,
+    /- redaction: 7 values from \.env, pattern rules always on/u,
     "пакет обязан сказать, чем и по какому списку он вырезал",
   );
   assert.match(text, /- iva: 9\.9\.9 \(git abc1234\)/);
@@ -266,6 +291,11 @@ await test("пакет на фикстуре данных: все разделы
     text,
     /newest log file data\/logs\/update-2026-09-12T10-00-00-000Z\.log/u,
     "нет journalctl — взят новейший файл журнала, и путь к нему не разъеден",
+  );
+  assert.match(
+    text,
+    /read vault\/MEMORY\.md and data\/trace\/2026-09-12\.jsonl/u,
+    "настройки-каталоги остаются словами в путях журнала, а не пометками",
   );
   assert.match(
     text,
@@ -305,18 +335,6 @@ await test("пакет на фикстуре данных: все разделы
   );
   assert.ok(text.includes("instructions/rules.md"));
   assert.ok(text.includes("skills/my-skill/SKILL.md"));
-  for (const leak of [
-    TOKEN,
-    FOREIGN_TOKEN,
-    "xq7",
-    OWNER_ID,
-    BEARER,
-    SUPPORT_URL,
-    REMINDER_TEXT,
-    CARD_TEXT,
-    FAILURE_MESSAGE,
-  ])
-    assert.ok(!text.includes(leak), `утечка в пакете: ${leak}`);
   assert.ok(
     text.includes(REDACTED),
     "вырезание оставило пометку, а не пустоту",
@@ -355,7 +373,7 @@ await test("секрет, записанный .env доктором во вре
     !text.includes(freshBearer),
     "секрет, записанный доктором во время прогона, уехал в пакет",
   );
-  assert.match(text, /- redaction: 4 values from \.env/u);
+  assert.match(text, /- redaction: 7 values from \.env/u);
 });
 
 await test("без .env пакет говорит об этом, а шаблонные правила всё равно работают", async (t) => {

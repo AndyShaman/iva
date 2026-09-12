@@ -1,11 +1,13 @@
 // Правила вырезания: сырое значение, формы, в которых секрет попадает в журнал
 // (percent-encoded, JSON-экранированное, base64/base64url), шаблонные правила (токен бота
-// в любом месте строки, личный id рядом с меткой, e-mail) и порядок «от длинного к
-// короткому». Тесты пакета целиком — в diagnose.test.ts, здесь чистые правила.
+// в любом месте строки, личный id рядом с меткой, e-mail), порядок «от длинного к
+// короткому» и сверка списка настроечных ключей с `.env.example` и с описью
+// `outbound-sensitive-keys.json`. Тесты пакета целиком — в diagnose.test.ts, здесь правила.
 //
 // КАК ВОСПРОИЗВЕСТИ ПАДЕНИЕ: seed в имени теста; при провале подставь ещё и path:
 // fc.assert(prop, { seed: SEED, path }).
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import fc from "fast-check";
 import { REDACTED, redact, secretValuesFromEnv } from "./diagnose.ts";
@@ -183,7 +185,7 @@ await test("шаблонные правила работают без .env: id �
   assert.match(out, /chat_id=<redacted>/u);
 });
 
-await test("режутся только значения ключей с секретным именем, конфиг — нет", () => {
+await test("режется значение любого ключа, кроме настроечных", () => {
   const values = secretValuesFromEnv({
     TINY_KEY: "xq7",
     TINY_TOKEN: "a1",
@@ -193,12 +195,23 @@ await test("режутся только значения ключей с сек�
     AUTH_SECRET: "s",
     ASSISTANT_BEARER: "b",
     TELEGRAM_API_HASH: "h",
+    // Ключи без слова-приметы в имени: словарь слов оставлял их значения открытыми.
+    PROXY: "socks5://puser:ppass5432@proxy.example.com:1080",
+    CUSTOM_ENDPOINT: "https://endpoint.example.com/v1",
+    SUPPORT_CHAT_URL: "https://t.me/+iva-support",
+    SALT: "sss",
+    OTP: "77",
+    // Хост с владельцем и паролем — не настройка, как бы ни звалось имя.
+    DB_HOST: "user:pw@db.example.com",
     AGENT_LANGUAGE: "ru",
     CUSTOM_REASONING: "1",
     MODEL_PROVIDER: "codex",
     ASSISTANT_DATA_DIR: "data",
+    ASSISTANT_VAULT_DIR: "vault",
     ASSISTANT_TIMEZONE: "Asia/Almaty",
-    SUPPORT_CHAT_URL: "https://t.me/+iva-support",
+    ASSISTANT_HOST: "127.0.0.1",
+    IVA_PORT: "8787",
+    EMPTY_KEY: "   ",
     TELEGRAM_ALLOWED_USER_IDS: "555, 987654321",
     OLLAMA_API_KEY: "k".repeat(20),
   });
@@ -212,24 +225,124 @@ await test("режутся только значения ключей с сек�
     "s",
     "b",
     "h",
+    "socks5://puser:ppass5432@proxy.example.com:1080",
+    // Пароль из URL — отдельной формой: в журнале он стоит словом, без URL вокруг.
+    "ppass5432",
+    "https://endpoint.example.com/v1",
+    "https://t.me/+iva-support",
+    "sss",
+    "77",
+    "user:pw@db.example.com",
+    "pw",
     "k".repeat(20),
     "555",
     "987654321",
   ])
     assert.ok(
       values.includes(secret),
-      `значение ключа с секретным именем не попало в список: ${secret}`,
+      `значение ключа не попало в список вырезания: ${secret}`,
     );
   for (const config of [
     "ru",
     "1",
     "codex",
     "data",
+    "vault",
     "Asia/Almaty",
-    "https://t.me/+iva-support",
+    "127.0.0.1",
+    "8787",
+    "",
+    "   ",
   ])
     assert.ok(
       !values.includes(config),
-      `конфиг вырезается как секрет: ${config}`,
+      `настройка вырезается как секрет: ${JSON.stringify(config)}`,
     );
+});
+
+/** Значение-проба: ни одного знака, по которому правило могло бы решить само. */
+const PROBE = "ProbeValueQ9876";
+
+await test("каждый ключ описи outbound-sensitive-keys.json режется", () => {
+  const inventory: unknown = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../agent/skills/security-defense/outbound-sensitive-keys.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.ok(
+    Array.isArray(inventory) && inventory.length > 15,
+    "опись не прочитана",
+  );
+
+  const missed = (inventory as string[]).filter(
+    (key) => !secretValuesFromEnv({ [key]: PROBE }).includes(PROBE),
+  );
+
+  assert.deepEqual(missed, [], `ключ описи не режется: ${missed.join(", ")}`);
+});
+
+/**
+ * Ключи `.env.example`, значения которых — настройка, а не секрет. Список пишется здесь
+ * ЯВНО, а не считается тем же правилом: новый ключ в `.env.example` обязан либо попасть
+ * сюда руками, либо резаться, и тест называет тот, который выпал из обоих случаев.
+ */
+const CONFIG_KEYS_IN_EXAMPLE = new Set([
+  "AGENT_LANGUAGE",
+  "MODEL_PROVIDER",
+  "OLLAMA_MODEL",
+  "OLLAMA_VISION_MODEL",
+  "OLLAMA_CONTEXT_WINDOW",
+  "OPENCODE_MODEL",
+  "OPENCODE_VISION_MODEL",
+  "OPENCODE_CONTEXT_WINDOW",
+  "OPENROUTER_MODEL",
+  "OPENROUTER_VISION_MODEL",
+  "OPENROUTER_CONTEXT_WINDOW",
+  "CODEX_MODEL",
+  "CODEX_CONTEXT_WINDOW",
+  "CUSTOM_MODEL",
+  "CUSTOM_VISION_MODEL",
+  "CUSTOM_CONTEXT_WINDOW",
+  "CUSTOM_REASONING",
+  "THINKING_EFFORT",
+  "AGENT_BROWSER_MAX_OUTPUT",
+  "TELEGRAM_BOT_USERNAME",
+  "DEEPGRAM_LANGUAGE",
+  "SEARCH_PROVIDER",
+  "MEMORY_SEARCH_MODE",
+  "ASSISTANT_TIMEZONE",
+  "ASSISTANT_VAULT_DIR",
+  "ASSISTANT_DATA_DIR",
+  "IVA_PORT",
+  "ASSISTANT_HOST",
+]);
+
+await test("каждый ключ .env.example либо назван настройкой, либо режется", () => {
+  const example = readFileSync(
+    new URL("../../.env.example", import.meta.url),
+    "utf8",
+  );
+  const keys = [...example.matchAll(/^([A-Za-z_][A-Za-z\d_]*)=/gmu)].map(
+    (match) => match[1],
+  );
+  assert.ok(
+    keys.length > 30,
+    `ключи .env.example не прочитаны: ${keys.length}`,
+  );
+
+  const fell = keys.filter(
+    (key) =>
+      secretValuesFromEnv({ [key]: PROBE }).includes(PROBE) ===
+      CONFIG_KEYS_IN_EXAMPLE.has(key),
+  );
+
+  assert.deepEqual(
+    fell,
+    [],
+    `ключ .env.example выпал из правила (режется, хотя назван настройкой, либо наоборот): ${fell.join(", ")}`,
+  );
 });
