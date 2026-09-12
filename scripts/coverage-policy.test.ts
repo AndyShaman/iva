@@ -165,7 +165,7 @@ const EXPECTED_INVENTORY_SHA256 =
 // that keep a failed send from closing the row and throttle the retries and Alerts, and
 // `scripts/reminders/deliver.ts`, the child process the minute dispatcher starts per row.
 // Scoped coverage over the delivery anchors, the turn anchors, the property and the
-// `iva remind` command reports them at 95.12% / 57.83% lines, 81.13% / 57.14% branches and
+// `iva remind` command reports them at 95.93% / 57.83% lines, 83.05% / 57.14% branches and
 // 100% / 50% functions - the uncovered lines are the real eve client and the boundary
 // branches no test drives, the entry point's real delivery and missing-token paths and its
 // outer catch, not unloaded files - so the blind spot stays 26. The inventory counts 244.
