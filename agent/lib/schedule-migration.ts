@@ -23,6 +23,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { jobFactsFile } from "./job-facts.ts";
 
 // WHEN each period fires — time of day AND day constraint — comes from the schedule table
 // the eve schedules themselves read; this module restates none of it. Table and runner are
@@ -265,7 +266,7 @@ export async function runScheduleMigration({
           nodeBin,
           lockPath: root ? join(root, ".memory.lock") : undefined,
           statusPath,
-          factsPath: join(dirname(statusPath), "jobs.json"),
+          factsPath: jobFactsFile(dirname(statusPath)),
           log,
         }));
 

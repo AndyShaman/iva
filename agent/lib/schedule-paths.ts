@@ -3,6 +3,7 @@
 // filename, lock filename, or ASSISTANT_DATA_DIR resolution rule ever changes.
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";
+import { jobFactsFile } from "./job-facts.ts";
 
 export interface SchedulePaths {
   readonly root: string;
@@ -21,7 +22,7 @@ export function resolvePaths(): SchedulePaths {
     dataDir: resolvedDataDir,
     statusPath: join(resolvedDataDir, "rollup-status.json"),
     memoryLockPath: join(root, ".memory.lock"),
-    factsPath: join(resolvedDataDir, "jobs.json"),
+    factsPath: jobFactsFile(resolvedDataDir),
   };
 }
 

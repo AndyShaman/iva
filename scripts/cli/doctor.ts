@@ -87,10 +87,11 @@ export async function scheduleFactsReport(
   dataDirectory: string,
   now: number,
 ): Promise<ScheduleFactsReport> {
-  const { latestFact, readFactsSync } = await import("#lib/job-facts.ts");
+  const { jobFactsFile, latestFact, readFactsSync } =
+    await import("#lib/job-facts.ts");
   const { openJobFailures } = await import("#lib/open-failures.ts");
   const { SCHEDULE_CRON } = await import("#lib/schedule-table.ts");
-  const facts = readFactsSync(join(dataDirectory, "jobs.json"));
+  const facts = readFactsSync(jobFactsFile(dataDirectory));
   const names = [
     ...new Set([...Object.keys(SCHEDULE_CRON), ...facts.map((f) => f.name)]),
   ].sort();
