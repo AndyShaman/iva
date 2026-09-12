@@ -51,6 +51,7 @@ test("обход кавычками и обёртками не работает 
   blocked("env FOO=bar iva restart");
   blocked("nohup iva restart");
   blocked("sudo -n systemctl kill iva");
+  blocked("while :; do iva restart; done"); // shell-слова цикла — тоже обёртки
 });
 
 test("массовое убийство процессов node/eve блокируется", () => {

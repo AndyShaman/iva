@@ -34,11 +34,13 @@ const SEGMENT_SPLIT = /[;&|()`\n]+/;
 // Обёртки, после которых следующий токен — снова командная позиция: слово + его флаги
 // и VAR=значение; у timeout дополнительно съедается длительность. bash/sh -c и node
 // включены: после снятия кавычек `bash -c iva restart` исполняет ровно iva restart,
-// а `node bin/iva.mjs restart` — тот же CLI напрямую.
+// а `node bin/iva.mjs restart` — тот же CLI напрямую. Shell-слова ветвления и циклов
+// стоят перед командной позицией так же: без них `while :; do iva restart; done`
+// оставлял бы позиции `while :` и `do iva restart` и правило не срабатывало.
 const WRAPPER =
-  /^(?:(?:sudo|command|exec|nohup|setsid|nice|node|env|(?:ba|da|z)?sh)(?:\s+(?:-\S+|\w+=\S*))*|timeout(?:\s+-\S+)*\s+\S+)\s+/;
+  /^(?:(?:sudo|command|exec|nohup|setsid|nice|node|env|if|then|elif|else|while|until|do|(?:ba|da|z)?sh)(?:\s+(?:-\S+|\w+=\S*))*|timeout(?:\s+-\S+)*\s+\S+)\s+/;
 
-function commandPositions(command: string): string[] {
+export function commandPositions(command: string): string[] {
   const out: string[] = [];
   for (const raw of normalize(command).split(SEGMENT_SPLIT)) {
     let seg = raw.trimStart();
