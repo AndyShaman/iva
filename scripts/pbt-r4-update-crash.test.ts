@@ -147,6 +147,34 @@ await test("НАХОДКА R4-1: своя метка дочищает покал
   assert.ok(!existsSync(join(home, RETIRE_MARKER)), "метка снята");
 });
 
+// НАХОДКА T34-C. Обрыв ровно ПОСЛЕ удаления `.git` (он идёт последним) оставлял метку,
+// которую повтор принять не мог: `retireIdentity` в состоянии «без .git» даёт null/null, и
+// сверка с записанным в метке `.git` не сходилась - вывод не дочищался никогда.
+await test("метка дочищает вывод, когда .git уже снесён обрывом", () => {
+  const home = makeHome();
+  const identity = retireIdentity(home);
+  assert.ok(identity);
+  writeFileSync(
+    join(home, RETIRE_MARKER),
+    JSON.stringify({ ...identity, at: 0 }),
+  );
+  // Обрыв после удаления `.git`: тяжёлые артефакты и метка остались на диске.
+  rmSync(join(home, ".git"), { recursive: true, force: true });
+  assert.ok(existsSync(join(home, "node_modules")));
+
+  const said: string[] = [];
+  const removed = retireCheckout(home, (line) => said.push(String(line)));
+  assert.ok(
+    removed.includes("node_modules"),
+    JSON.stringify({ removed, said: said.join("\n") }),
+  );
+  assert.ok(!existsSync(join(home, RETIRE_MARKER)), "метка снята");
+  assert.deepEqual(
+    leftovers(home).filter((name) => ARTIFACTS.includes(name)),
+    [],
+  );
+});
+
 await test("НАХОДКА R4-1: чужая метка ничего не сносит", () => {
   const home = makeHome();
   rmSync(join(home, ".git", "objects"), { recursive: true, force: true });

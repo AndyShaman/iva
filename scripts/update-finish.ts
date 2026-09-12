@@ -383,6 +383,9 @@ const RETIRE_ARTIFACTS = ARTIFACTS.filter((path) => path !== ".git");
 
 export interface RetireIdentity {
   readonly home: string;
+  /** dev+inode каталога: вторая ветка сверки, когда `.git` уже снесён обрывом. */
+  readonly homeDev: string | null;
+  readonly homeIno: string | null;
   readonly gitDev: string | null;
   readonly gitIno: string | null;
   readonly headSha: string | null;
@@ -397,6 +400,15 @@ export function retireIdentity(home: string): RetireIdentity | null {
   } catch {
     return null;
   }
+  let homeDev: string | null = null;
+  let homeIno: string | null = null;
+  try {
+    const stat = lstatSync(realHome, { bigint: true });
+    homeDev = String(stat.dev);
+    homeIno = String(stat.ino);
+  } catch {
+    // Каталог исчез между realpath и stat - сверять будет нечем, поля остаются пустыми.
+  }
   let gitDev: string | null = null;
   let gitIno: string | null = null;
   try {
@@ -404,7 +416,7 @@ export function retireIdentity(home: string): RetireIdentity | null {
     gitDev = String(stat.dev);
     gitIno = String(stat.ino);
   } catch {
-    // `.git` уже нет или не читается - идентичность держится на пути.
+    // `.git` уже нет или не читается - идентичность держится на каталоге и пути.
   }
   let headSha: string | null = null;
   try {
@@ -412,7 +424,15 @@ export function retireIdentity(home: string): RetireIdentity | null {
   } catch {
     // Покалеченный или недоступный git: HEAD неизвестен.
   }
-  return { home: realHome, gitDev, gitIno, headSha, at: Date.now() };
+  return {
+    home: realHome,
+    homeDev,
+    homeIno,
+    gitDev,
+    gitIno,
+    headSha,
+    at: Date.now(),
+  };
 }
 
 /** Метка с диска; нет файла или мусор - null (чужую метку не толкуем как свою). */
@@ -436,6 +456,8 @@ export function readRetireMarker(marker: string): RetireIdentity | null {
     typeof field === "string" && field.length > 0 ? field : null;
   return {
     home: value.home,
+    homeDev: optional(value.homeDev),
+    homeIno: optional(value.homeIno),
     gitDev: optional(value.gitDev),
     gitIno: optional(value.gitIno),
     headSha: optional(value.headSha),
@@ -452,8 +474,19 @@ export function sameRetireTree(
   if (marker.home !== current.home) return false;
   // Если в метке записан `.git`, он обязан совпасть: пересозданный репозиторий на том же
   // пути - уже другое дерево.
-  if (marker.gitDev !== null || marker.gitIno !== null)
-    return marker.gitDev === current.gitDev && marker.gitIno === current.gitIno;
+  if (marker.gitDev !== null || marker.gitIno !== null) {
+    if (current.gitDev !== null || current.gitIno !== null)
+      return (
+        marker.gitDev === current.gitDev && marker.gitIno === current.gitIno
+      );
+    // `.git` уже снесён обрывом: сверять репозиторий нечем, вторая ветка - сам каталог
+    // (dev+inode). Без неё повтор после обрыва сразу за удалением `.git` не дочищал
+    // вывод никогда: метка оставалась, а идентичность давала null/null.
+    if (marker.homeDev !== null && current.homeDev !== null)
+      return (
+        marker.homeDev === current.homeDev && marker.homeIno === current.homeIno
+      );
+  }
   return true;
 }
 

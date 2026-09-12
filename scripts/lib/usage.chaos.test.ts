@@ -243,3 +243,37 @@ await test("старый лог с гигантскими числами не п
     );
   });
 });
+
+// T34-C: одиночное 1e308 из старого лога проходило `Number.isFinite` и доезжало до отчёта
+// гигантским числом (двух таких хватало на Infinity и потолок, одного - нет). Потолок должен
+// быть тот же, что у писателя (agent/hooks/usage.ts:35): расход - безопасное целое, всё прочее
+// из старого лога считается нулём, а не числом.
+await test("одиночное 1e308 из старого лога не доезжает до отчёта (seed 20260918)", () => {
+  withDir((dir) => {
+    writeFileSync(
+      join(dir, "usage.jsonl"),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        source: "channel:telegram",
+        provider: "ollama",
+        model: "deepseek-v4-pro",
+        sessionId: "s1",
+        turnId: "turn_1",
+        step: 0,
+        in: 1e308,
+        out: 1e308,
+        cacheRead: 1e308,
+        cacheWrite: 1e308,
+        total: 1e308,
+      }) + "\n",
+    );
+    const summary = summarize(readEntries(dir), {
+      window: "today",
+      now: Date.now(),
+    });
+    assert.equal(summary.totals.in, 0, "1e308 - мусор, а не расход");
+    assert.equal(summary.totals.total, 0);
+    const report = formatUsageReport(summary);
+    assert.doesNotMatch(report, /e\+\d|1e308|Infinity|NaN/u, report);
+  });
+});
