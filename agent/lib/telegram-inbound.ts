@@ -364,8 +364,10 @@ async function noAccessNote(
       );
   try {
     await effects.sendMessage(note);
-  } catch {
-    /* молча игнорируем сбой ответа */
+  } catch (error) {
+    console.error(
+      `[telegram] не смог отправить отказ в доступе: ${String(error)}`,
+    );
   }
 }
 
@@ -410,8 +412,10 @@ async function unreadableNote(
         `Не могу прочитать это сообщение${fields}. Пришли текстом или файлом.`,
       ),
     );
-  } catch {
-    /* молча игнорируем сбой ответа */
+  } catch (error) {
+    console.error(
+      `[telegram] не смог отправить «не могу прочитать сообщение»: ${String(error)}`,
+    );
   }
 }
 

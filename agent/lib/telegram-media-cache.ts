@@ -88,7 +88,10 @@ export function resolveAttachmentPath(
     if (!insideReal || insideReal.startsWith("..") || isAbsolute(insideReal))
       return null;
     return real;
-  } catch {
+  } catch (error) {
+    console.error(
+      `[telegram] не смог проверить вложение из кэша (${rel}): ${String(error)}`,
+    );
     return null;
   }
 }

@@ -237,7 +237,10 @@ async function loadSession(): Promise<{
       return null;
     }
     return saved;
-  } catch {
+  } catch (error) {
+    console.error(
+      `rollup ${period}: сохранённая сессия не прочиталась, начинаю заново: ${String(error)}`,
+    );
     return null;
   }
 }

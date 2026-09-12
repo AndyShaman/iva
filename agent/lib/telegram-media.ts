@@ -142,8 +142,10 @@ export async function processMediaPart(
                   "Подпись сохранил; перешли файл иначе (ссылкой/частями).",
               ),
             );
-          } catch {
-            /* молча игнорируем сбой ответа */
+          } catch (error) {
+            console.error(
+              `[telegram] не смог отправить предупреждение о файле >20 МБ: ${String(error)}`,
+            );
           }
           const context = [
             tr(
@@ -358,8 +360,10 @@ export async function processMediaPart(
           `Не смог обработать запись: ${contextDetail}`,
         ),
       );
-    } catch {
-      /* молча игнорируем сбой ответа */
+    } catch (error) {
+      console.error(
+        `[telegram] не смог отправить сообщение о сбое обработки записи: ${String(error)}`,
+      );
     }
     return {
       kind: "error",

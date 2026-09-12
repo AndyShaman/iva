@@ -235,7 +235,10 @@ function loadGraph(): GraphNodes {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!isRecord(parsed)) return {};
     return isGraphNodes(parsed.nodes) ? parsed.nodes : {};
-  } catch {
+  } catch (error) {
+    console.error(
+      `[memory] не смог прочитать граф vault (${path}): ${String(error)}`,
+    );
     return {};
   }
 }
@@ -284,7 +287,10 @@ function loadEmbedIndex(): Record<string, number[]> | null {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return null;
     return isVectorIndex(parsed.vectors) ? parsed.vectors : null;
-  } catch {
+  } catch (error) {
+    console.error(
+      `[memory] не смог прочитать индекс эмбеддингов: ${String(error)}`,
+    );
     return null;
   }
 }
@@ -489,7 +495,8 @@ export async function searchMemory({
         ranked = naiveSearch(docs, tokens);
         engine = "naive-empty-bm25";
       }
-    } catch {
+    } catch (error) {
+      console.error(`[memory] BM25 упал, ищу наивно: ${String(error)}`);
       ranked = naiveSearch(docs, tokens);
       engine = "naive-fallback";
     }

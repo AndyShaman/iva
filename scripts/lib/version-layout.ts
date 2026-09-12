@@ -256,7 +256,10 @@ function sameOpenShim(
       stat.dev === opened.dev &&
       stat.ino === opened.ino
     );
-  } catch {
+  } catch (error) {
+    console.error(
+      `version-layout: не смог сличить shim с открытым дескриптором (${path}): ${String(error)}`,
+    );
     return false;
   }
 }
@@ -269,7 +272,10 @@ function restoreClaim(claim: ClaimedShim, shimPath: string): boolean {
     unlinkSync(claim.path);
     rmdirSync(claim.directory);
     return true;
-  } catch {
+  } catch (error) {
+    console.error(
+      `version-layout: не смог вернуть shim на место (${shimPath}): ${String(error)}`,
+    );
     return false;
   }
 }

@@ -47,7 +47,10 @@ function walk(dir: string, out: string[]): void {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    console.error(
+      `embed-index: не смог прочитать каталог (${dir}): ${String(error)}`,
+    );
     return;
   }
   for (const e of entries) {

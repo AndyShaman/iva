@@ -21,7 +21,10 @@ export function scanUnclosedFenceCards(vaultPath: string): string[] {
   let entries: string[];
   try {
     entries = readdirSync(root, { recursive: true, encoding: "utf8" });
-  } catch {
+  } catch (error) {
+    console.error(
+      `card-fences: не смог прочитать каталог карточек (${root}): ${String(error)}`,
+    );
     return [];
   }
   const found: string[] = [];

@@ -391,7 +391,10 @@ export function sanitizeTelegramHtml(input: unknown): string {
       return String(input)
         .replace(/<[^>]*>/g, "")
         .replace(/[&<>]/g, (c) => HTML_ESC[c]);
-    } catch {
+    } catch (error) {
+      console.error(
+        `[telegram] форматтер упал, и запасное экранирование тоже: ${String(error)}`,
+      );
       return "";
     }
   }
@@ -404,7 +407,10 @@ export function mdToTelegramHtml(md: unknown): string {
   } catch {
     try {
       return escHtml(md);
-    } catch {
+    } catch (error) {
+      console.error(
+        `[telegram] md→HTML не удался, и запасное экранирование тоже: ${String(error)}`,
+      );
       return "";
     }
   }
@@ -541,7 +547,10 @@ export function toTelegramHtmlChunks(md: unknown, limit = 4096): string[] {
   } catch {
     try {
       return [escHtml(md)];
-    } catch {
+    } catch (error) {
+      console.error(
+        `[telegram] нарезка ответа не удалась, текст потерян: ${String(error)}`,
+      );
       return [""];
     }
   }

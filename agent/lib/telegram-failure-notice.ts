@@ -96,8 +96,10 @@ export async function notifyTelegramFailure(
   if (claim === null) return;
   try {
     await send(telegramFailureMessage(data));
-  } catch {
+  } catch (error) {
     releaseFailureNotification(sessionId, claim);
-    /* молча игнорируем сбой ответа */
+    console.error(
+      `[telegram] не смог отправить уведомление о сбое хода: ${String(error)}`,
+    );
   }
 }

@@ -156,7 +156,10 @@ function isoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try {
     return new Date(value).toISOString() === value;
-  } catch {
+  } catch (error) {
+    console.error(
+      `version-store: не смог разобрать timestamp ${JSON.stringify(value)}: ${String(error)}`,
+    );
     return false;
   }
 }
