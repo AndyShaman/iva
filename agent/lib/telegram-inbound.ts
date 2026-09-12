@@ -435,7 +435,10 @@ function logInboundFindings(
   sanitized: ReturnType<typeof sanitizeInbound>,
 ): boolean {
   const flagged = sanitized.blocked || sanitized.flags.length > 0;
-  if (flagged) {
+  // Журнал — только для настоящей тревоги: blocked или attack-signal
+  // (role-markers/overrides). Флаги lookalikes/invisible стоят на каждом русском
+  // сообщении — тревога на каждый ход утопила бы настоящие находки.
+  if (sanitized.blocked || hasInboundAttackSignal(sanitized)) {
     console.error(
       "[security] inbound flagged:",
       sanitized.reason,
