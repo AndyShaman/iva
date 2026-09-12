@@ -7,8 +7,8 @@ stays clean, so an update cannot be blocked by a customized skill or HTML file. 
 made to `agent/instructions.md`, `agent/connections/`, `agent/tools/` or `agent/subagents/` move into
 the custom layer automatically on the first update - a `data/custom/agent/instructions.md`
 that arrived that way is the deprecated replacement persona: `iva doctor` names it, and
-"Your rules" below shows the way off it. Skills are the exception: they are read straight
-off disk at run time and never go through a build (see below). Edits anywhere else in
+"Your rules" below shows the way off it. Skills and the markdown owner rules are the exception:
+they are read straight off disk at run time and never go through a build (see below). Edits anywhere else in
 the tree stay a plain local patch: the updater stashes them and replays them onto the new revision, and
 archives them under `data/update-conflicts/` when they no longer apply.
 
