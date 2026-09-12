@@ -70,7 +70,7 @@ test("the run reads the traces of past runs before it leaves its own", () => {
   // прогон оставит свой собственный. Прочитанный после, он был бы true у всех.
   assert.match(
     source,
-    /const RAN_BEFORE = rollupRanBefore\(DATA_DIR, VAULT\);/u,
+    /const RAN_BEFORE = rollupRanBefore\(DATA_DIR, VAULT\(\)\);/u,
   );
   assert.ok(
     source.indexOf("const RAN_BEFORE") < source.indexOf("saveSession("),
