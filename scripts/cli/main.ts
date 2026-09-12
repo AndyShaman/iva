@@ -33,7 +33,12 @@ export function dispatchCli(
   }: DispatchDependencies,
 ): Promise<unknown> {
   const [commandName, ...rest] = argv;
-  const command = commandName ? commands[commandName] : undefined;
+  // Только собственные ключи: `commands["constructor"]` находил Object из прототипа,
+  // и `iva constructor` молча завершался кодом 0, будто команда сработала.
+  const command =
+    commandName && Object.hasOwn(commands, commandName)
+      ? commands[commandName]
+      : undefined;
   if (!command) {
     if (commandName) bad(`Unknown command: ${commandName}`);
     help();

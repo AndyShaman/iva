@@ -78,6 +78,7 @@ await test("НАХОДКА R2-4: имя из прототипа - неизвес
 
 await test(`НАХОДКА R2-4: свойство «чужое имя всегда неизвестно» (seed ${SEED})`, async () => {
   const { commands } = createCliMain(join(tmpdir(), "iva-cli-chaos-"));
+  // Пустая строка - это «команда не названа»: help и код 0, как у голого `iva`.
   const namePool = [
     "constructor",
     "toString",
@@ -85,7 +86,6 @@ await test(`НАХОДКА R2-4: свойство «чужое имя всегд
     "__proto__",
     "hasOwnProperty",
     "unknown",
-    "",
     "iva",
     "help!",
     "--",
