@@ -8,9 +8,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 244;
+const EXPECTED_PRODUCTION_COUNT = 249;
 const EXPECTED_INVENTORY_SHA256 =
-  "6ce72c14d41f899ed051832bec931c8bbbb8405c2539d34ffb19eda2dadab6a9";
+  "31131bb870188cc7e8099b0fc972fd6bae6b79ea123c337fb93c354eac104675";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
 // This test pins the exact production path inventory and a separately measured 26-path
@@ -142,10 +142,11 @@ const EXPECTED_INVENTORY_SHA256 =
 // never takes is the loop break on an exact-minute match, not an unloaded module - so the
 // blind spot stays 26.
 // The reminder time resolver `agent/lib/reminder-time.ts` came next, one path: the croner
-// boundary and the owner-zone forms the reminder tools will share. Scoped coverage over
-// `agent/lib/reminder-time.test.ts` and `agent/lib/reminder-time.property.test.ts` reports
-// it at 98.57% lines, 97.14% branches and 80% functions - the uncovered function is
-// `ownerTimeZone`, which only the coming tools call - so the blind spot stays 26.
+// boundary and the owner-zone forms the reminder tools share. Scoped coverage over
+// `agent/lib/reminder-time.test.ts`, `agent/lib/reminder-time.property.test.ts` and the tool
+// tests that call `ownerTimeZone` through `remind_add` reports it at 100% lines, 100%
+// branches and 100% functions - the tools closed the `ownerTimeZone` gap the module shipped
+// with - so the blind spot stays 26.
 // The reminder turn `scripts/lib/reminder-turn.ts` came last, one path: the session with the
 // idle-window watchdog that `iva remind` now shares with the delivery process. Scoped
 // coverage over `scripts/lib/reminder-turn.test.ts` and `scripts/cli/remind.test.ts` reports
@@ -169,6 +170,15 @@ const EXPECTED_INVENTORY_SHA256 =
 // 100% / 50% functions - the uncovered lines are the real eve client and the boundary
 // branches no test drives, the entry point's real delivery and missing-token paths and its
 // outer catch, not unloaded files - so the blind spot stays 26. The inventory counts 244.
+// The reminder tools came next, five paths: `agent/lib/notification-chat.ts`, the
+// authored-tree copy of the owner-chat rule, `agent/lib/reminder-tool.ts`, the row the model
+// reads and the dispatcher liveness check, and the three tools `agent/tools/remind_add.ts`,
+// `remind_list.ts`, `remind_remove.ts`. Scoped coverage over the tool tests and the
+// notification-chat contract test reports them at 100% lines, 100% / 100% / 85.71% branches
+// and 100% functions, with `remind_add.ts` at 92.86% branches - the branches the tool tests
+// never take are the two guards against a normalizeSchedule result that changes kind, not an
+// unloaded file - so the blind spot stays 26, and the inventory counts 249 with the tools in
+// it.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
   frameworkBoundaries: [
     "agent/agent.ts",
