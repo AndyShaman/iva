@@ -438,8 +438,12 @@ export function attachVaultImages(
       console.error(`[vision] картинку ${rel} из Vault не прочитал:`, error);
       continue;
     }
-    if (data.byteLength > MAX_IMAGE_BYTES) {
-      console.error(`[vision] картинка ${rel} больше потолка, иду без неё`);
+    if (data.byteLength === 0 || data.byteLength > MAX_IMAGE_BYTES) {
+      console.error(
+        data.byteLength === 0
+          ? `[vision] картинка ${rel} пустая, иду без неё`
+          : `[vision] картинка ${rel} больше потолка, иду без неё`,
+      );
       continue;
     }
     if (data.byteLength > budget) {

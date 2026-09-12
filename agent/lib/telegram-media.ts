@@ -190,9 +190,10 @@ export async function processMediaPart(
         // через vision-модель.
         chatSeesImage =
           imageMediaType(rel) !== undefined &&
+          bytes.byteLength > 0 &&
           bytes.byteLength <= MAX_IMAGE_BYTES &&
           (await effects.chatModelSeesImages());
-        if (!chatSeesImage) {
+        if (!chatSeesImage && bytes.byteLength > 0) {
           try {
             vision = await effects.describeImage(bytes, media.mimeType);
             cacheEntry.vision = vision;
