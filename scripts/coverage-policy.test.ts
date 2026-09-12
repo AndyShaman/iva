@@ -62,10 +62,6 @@ const BLIND_SPOT: ReadonlyArray<{
     why: "прицеп plugin-store/reader; листинг в их тестах",
   },
   {
-    path: "agent/lib/reminder-tool.ts",
-    why: "прицеп remind_*: строка и heartbeat в тестах тулов",
-  },
-  {
     path: "agent/lib/telegram-allowlist.ts",
     why: "прицеп инбаунда; allowlist гоняют его тесты",
   },
