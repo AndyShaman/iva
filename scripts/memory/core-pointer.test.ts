@@ -212,6 +212,33 @@ test("an empty body that stays empty, or fills up, is not damage", () => {
   );
 });
 
+test("тела одинаковых заголовков склеиваются: выхолощенная секция видна", () => {
+  const duplicateBefore = [
+    "# CORE",
+    "",
+    "## Предпочтения",
+    "",
+    "- главное лежит в первой секции",
+    "",
+    "## Предпочтения",
+    "",
+    "## Указатели",
+    "",
+    "- Последний день: summaries/daily/2026-08-20 · Индекс: MOC.md",
+    "",
+  ].join("\n");
+  const duplicateAfter = duplicateBefore.replace(
+    "- главное лежит в первой секции",
+    "",
+  );
+
+  const damage = coreDamage(duplicateBefore, duplicateAfter);
+
+  assert.equal(damage.damaged, true);
+  assert.deepEqual(damage.hollowedHeadings, ["Предпочтения"]);
+  assert.deepEqual(damage.lostHeadings, []);
+});
+
 test("a first-run vault without CORE is not damage", () => {
   assert.equal(coreDamage("", "").damaged, false);
   assert.equal(coreDamage("", "# CORE\n").damaged, false);
