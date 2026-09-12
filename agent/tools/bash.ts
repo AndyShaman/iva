@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { selfRestartViolation } from "../lib/self-restart-guard.ts";
+import { schedulerBypassViolation } from "../lib/scheduler-bypass-guard.ts";
 
 // Host-native bash. Переопределяет встроенный sandbox-bash eve: команда выполняется
 // напрямую на реальной файловой системе VPS через node:child_process (без sandbox).
@@ -296,6 +297,11 @@ export default defineTool({
     // немеет с HookConflictError (issue #68). Промпт-запрета мало — модели его игнорируют.
     const lethal = selfRestartViolation(command);
     if (lethal) return { stdout: "", stderr: lethal, exitCode: 1 };
+    // Свои таймеры и свои отправки в Telegram агент строил мимо штатных инструментов
+    // (curl с токеном, systemd-run, crontab, sleep-цепочки): такой путь не виден ни в
+    // напоминаниях, ни в расписаниях. Режем до запуска тем же видом возврата.
+    const bypass = schedulerBypassViolation(command);
+    if (bypass) return { stdout: "", stderr: bypass, exitCode: 1 };
     const timeout = timeoutMs ?? 120_000;
     if (
       !Number.isSafeInteger(timeout) ||
