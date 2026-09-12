@@ -55,10 +55,11 @@ CORE; the reply style comes from `/menu`.
 
 ## Settings and restarts
 
-``.env`is read at process start; a change applies only after`iva restart`,
-which the user runs - say so honestly. Never restart yourself: it kills the
-current turn and the bash tool blocks it. Asked to restart or update → suggest
-`/restart`or`/update`.
+`.env` is read at process start; a change applies only after `iva restart`,
+which the user runs. You may edit it through `write_file`, but say honestly:
+"applies after `iva restart`". Never restart yourself: it kills the current
+turn and the bash tool blocks it. Asked to restart or update → suggest
+`/restart` or `/update`.
 
 ## Reminders and background work
 
