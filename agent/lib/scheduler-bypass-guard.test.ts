@@ -337,4 +337,33 @@ test("T32: дуп дескриптора не разделитель коман�
   // Фон и `&&` остаются разделителями — иначе вторая команда ушла бы из-под суда.
   blocked("echo hi & crontab /tmp/j");
   blocked("echo hi && crontab /tmp/j");
+  // `>&слово` в bash — перенаправление обоих потоков в ФАЙЛ `crontab`, команда не
+  // запускается (проверено живым bash). Отсюда отсутствие отказа, и это не ослабление.
+  allowed("echo hi>&crontab /tmp/j");
+});
+
+// T32 v2: правила путей и хоста судят весь сегмент, а не имя команды, поэтому снятие
+// префикса уносило из-под суда саму улику — запретный путь лежал в ЗНАЧЕНИИ присваивания
+// или обёртки. Форма исполнима: значение раскрывает внутренний shell (`bash -c`).
+test("T32: путь и хост в значении присваивания или обёртки судятся, а не теряются", () => {
+  for (const cmd of [
+    "URL=https://api.telegram.org/bot1:2/sendMessage bash -c 'curl -s $URL -d chat_id=1 -d text=hi'",
+    "S=~/.iva-scripts/remind.sh bash -c 'echo curl > $S'",
+    "U=~/.config/systemd/user/my.timer sh -c 'cp /tmp/u $U'",
+    "H=api.telegram.org curl -s https://$H/bot1:2/sendMessage",
+    "D=~/.iva-scripts tee $D/x.sh",
+    // Та же дыра через `env` была и до ветки — закрывается тем же судом по сегменту.
+    "env URL=https://api.telegram.org/bot1:2/sendMessage bash -c 'curl -s $URL'",
+  ]) {
+    blocked(cmd);
+  }
+  // Имя команды по-прежнему судится по снятому сегменту: обёртка не делает читателя
+  // писателем, иначе `sudo grep …` стало бы ложным срабатыванием.
+  for (const cmd of [
+    "sudo grep -rn iva ~/.config/systemd/user",
+    "timeout 30 cat ~/.config/systemd/user/iva.service",
+    "bash -c 'cat ~/.iva-scripts/remind.sh'",
+  ]) {
+    allowed(cmd);
+  }
 });

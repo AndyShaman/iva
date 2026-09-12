@@ -28,11 +28,16 @@ function normalize(command: string): string {
   return command.replace(/\\(.)/g, "$1").replace(/["']/g, "");
 }
 
-// Разделители командных позиций: ; & | && || ( ) ` $( и перевод строки. Амперсанд рядом
-// с `>` разделителем НЕ считается: `2>&1`, `>&2`, `&>file` - это дублирование файлового
-// дескриптора, часть одной команды. Разрезав их, мы оставляли хвост `2>` и читали
+// Разделители командных позиций: ; & | && || ( ) ` $( и перевод строки. Амперсанд ПОСЛЕ
+// `>` разделителем не считается: `2>&1`, `>&2` - это дублирование файлового дескриптора,
+// часть одной команды. Разрезав их, мы оставляли хвост `2>` и читали
 // `grep … >/dev/null 2>&1` как запись в файл.
-const SEGMENT_SPLIT = /(?:(?<!>)&(?!>)|[;|()`\n])+/;
+//
+// Форма `&>file` (оба потока в файл) здесь нарочно НЕ исключена, хотя тоже одна команда:
+// её разрез вердикт не меняет ни у одного правила - второй кусок начинается с `>`,
+// читателем не бывает и путь уносит с собой. Гвард, который нельзя сломать мутацией,
+// - не гвард, а комментарий; правило вернётся вместе с правилом, которому оно нужно.
+const SEGMENT_SPLIT = /(?:(?<!>)&|[;|()`\n])+/;
 
 // Обёртки, после которых следующий токен — снова командная позиция: слово + его флаги
 // и VAR=значение; у timeout дополнительно съедается длительность. bash/sh -c и node
@@ -49,18 +54,34 @@ const WRAPPER =
 // Требуется пробел после: одинокое `A=1` - это присваивание, а не вызов.
 const ASSIGNMENT_PREFIX = /^[A-Za-z_]\w*=\S*\s+/;
 
-export function commandPositions(command: string): string[] {
-  const out: string[] = [];
+/**
+ * Одна командная позиция в двух видах. `command` - со снятыми обёртками и
+ * присваиваниями: по нему судят ИМЯ команды. `segment` - весь кусок как он написан:
+ * по нему судят то, что может лежать в значении обёртки или присваивания. Запретный
+ * путь в `S=~/.iva-scripts/x.sh bash -c '… $S'` виден только во втором.
+ */
+export type CommandPosition = {
+  readonly segment: string;
+  readonly command: string;
+};
+
+export function commandSegments(command: string): CommandPosition[] {
+  const out: CommandPosition[] = [];
   for (const raw of normalize(command).split(SEGMENT_SPLIT)) {
+    const segment = raw.trim();
     let seg = raw.trimStart();
     for (;;) {
       const m = WRAPPER.exec(seg) ?? ASSIGNMENT_PREFIX.exec(seg);
       if (!m || !m[0].trim()) break;
       seg = seg.slice(m[0].length).trimStart();
     }
-    if (seg) out.push(seg);
+    if (seg) out.push({ segment, command: seg });
   }
   return out;
+}
+
+export function commandPositions(command: string): string[] {
+  return commandSegments(command).map((at) => at.command);
 }
 
 // Сам CLI: restart|stop|reset|full-reset останавливают iva.service; update перезапускает

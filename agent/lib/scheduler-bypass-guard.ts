@@ -6,7 +6,7 @@
 // `list-timers`, `daemon-reload`), юниты `iva*` (рестарт моста/таймеров не убивает агента),
 // обвязку сна (`wait`, `done`, `:`, второй sleep). Принятое ложное срабатывание:
 // `grep … > /tmp/out` (вывод в файл — отдельной командой). Deterrence, не граница.
-import { commandPositions } from "./self-restart-guard.ts";
+import { commandSegments, type CommandPosition } from "./self-restart-guard.ts";
 
 const WHAT = {
   SYSTEMD_RUN: "systemd-run: свой таймер",
@@ -126,10 +126,16 @@ function carriesPayload(segment: string): boolean {
 // нелетальный systemctl продолжают проверять пути той же позиции. `positions` и `index`
 // нужны sleep: сам по себе он безвреден, таймером его делает отложенная команда ПОСЛЕ.
 function positionViolation(
-  segment: string,
-  positions: readonly string[],
+  at: CommandPosition,
+  positions: readonly CommandPosition[],
   index: number,
 ): string | null {
+  // Имя команды - по снятому сегменту: обёртка не должна превращать читателя в
+  // писателя. Пути и хост - по сегменту как он написан: запретный путь умеет лежать
+  // в значении присваивания или обёртки (`S=~/.iva-scripts/x.sh bash -c '… $S'`), и
+  // снятие префикса уносило улику из-под суда.
+  const segment = at.command;
+  const written = at.segment;
   for (const [name, what] of Object.entries(BAN_COMMANDS)) {
     if (!anchored(name).test(segment)) continue;
     // Чтение расписания — не запись, но позицию всё равно судят проверки путей ниже.
@@ -142,14 +148,14 @@ function positionViolation(
   ) {
     return WHAT.SYSTEMCTL;
   }
-  if (UNIT_DIR.test(segment) && !isReader(segment)) return WHAT.UNIT_DIR;
-  if (SCRIPTS_DIR.test(segment) && !isReader(segment)) return WHAT.SCRIPTS_DIR;
-  if (TELEGRAM_HOST.test(segment) && !isReader(segment))
+  if (UNIT_DIR.test(written) && !isReader(segment)) return WHAT.UNIT_DIR;
+  if (SCRIPTS_DIR.test(written) && !isReader(segment)) return WHAT.SCRIPTS_DIR;
+  if (TELEGRAM_HOST.test(written) && !isReader(segment))
     return WHAT.TELEGRAM_HOST;
   if (
     anchored("sleep").test(segment) &&
     sleepSeconds(segment) >= SLEEP_THRESHOLD_SECONDS &&
-    positions.slice(index + 1).some(carriesPayload)
+    positions.slice(index + 1).some((next) => carriesPayload(next.command))
   ) {
     return WHAT.SLEEP;
   }
@@ -161,9 +167,11 @@ function positionViolation(
  * мимо штатных инструментов, иначе null.
  */
 export function schedulerBypassViolation(command: string): string | null {
-  const positions = commandPositions(command);
+  const positions = commandSegments(command);
   for (let index = 0; index < positions.length; index += 1) {
-    const what = positionViolation(positions[index] ?? "", positions, index);
+    const at = positions[index];
+    if (!at) continue;
+    const what = positionViolation(at, positions, index);
     if (what) {
       return (
         `ЗАБЛОКИРОВАНО: ${what}. Свои таймеры и свои отправки в Telegram из bash ` +
