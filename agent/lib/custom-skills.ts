@@ -122,11 +122,21 @@ function describe(name: string, markdown: string): Described {
       description: `Instructions for the ${name} skill.`,
       truncatedFrom: null,
     };
-  if (description.length > DESCRIPTION_CAP)
+  if (description.length > DESCRIPTION_CAP) {
+    // Не оставлять одинокий старший суррогат: эмодзи на границе усечения превращался
+    // в «�» в индексе скиллов - тем же приёмом режет CORE (agent/lib/core-clamp.ts).
+    let end = DESCRIPTION_CAP - 1;
+    if (
+      end > 0 &&
+      /[\uD800-\uDBFF]/.test(description[end - 1]) &&
+      /[\uDC00-\uDFFF]/.test(description[end])
+    )
+      end -= 1;
     return {
-      description: `${description.slice(0, DESCRIPTION_CAP - 1).trimEnd()}…`,
+      description: `${description.slice(0, end).trimEnd()}…`,
       truncatedFrom: description.length,
     };
+  }
   return { description, truncatedFrom: null };
 }
 
