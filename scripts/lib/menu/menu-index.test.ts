@@ -300,6 +300,26 @@ test("stale: нет стейта, o-верб УСЫНОВЛЯЕТ тапнуто
   assert.equal(log.render.at(-1), "srch");
 });
 
+// sid, попадающий в Object.prototype (constructor/toString/__proto__/valueOf), — не экран:
+// поиск по реестру обязан идти по СВОИМ ключам, иначе мусор из кнопки становится «живым»
+// экраном, тап отвечает тишиной, а состояние уезжает на несуществующий экран.
+test("sid из прототипа Object не считается экраном: тост «устарело» и корень", async () => {
+  for (const sid of ["constructor", "toString", "__proto__", "valueOf"]) {
+    const { menu, flows, calls, log } = setup();
+    const result = await menu.onCallback(
+      cb(`iva_menu:${sid}:o`, { messageId: 555 }),
+    );
+    assert.equal(result, true, sid);
+    const ack = calls.find((c) => c.method === "answerCallbackQuery");
+    assert.ok(ack, sid);
+    assert.match(String(ack.params.text ?? ""), /устарело|expired/iu, sid);
+    const st = flows.get(10, "20");
+    assert.ok(st, sid);
+    assert.equal(st.screen, "r", sid);
+    assert.equal(log.render.at(-1), "r", sid);
+  }
+});
+
 test("stale group callback is acknowledged without adopting state or dispatching", async () => {
   for (const chatType of ["group", "supergroup", "channel", null]) {
     const { menu, flows, calls, log } = setup();

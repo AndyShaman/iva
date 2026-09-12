@@ -208,9 +208,17 @@ export function createMenu({
     ],
   };
 
+  // sid → экран ТОЛЬКО по своим ключам таблицы экранов: иначе sid из Object.prototype
+  // (constructor, toString, __proto__, valueOf) находит наследованное значение и мусор
+  // из кнопки считается живым экраном.
+  function screenAt(sid: unknown): MenuScreen | undefined {
+    if (typeof sid !== "string" || !Object.hasOwn(screens, sid))
+      return undefined;
+    return screens[sid] as MenuScreen | undefined;
+  }
+
   async function renderScreen(st: MenuState) {
-    const screen = typeof st.screen === "string" ? st.screen : "";
-    const mod = screens[screen] as MenuScreen | undefined;
+    const mod = screenAt(st.screen);
     if (!mod || typeof mod.render !== "function") return;
     const view = await mod.render(st, ctx);
     if (!view) return;
@@ -240,7 +248,7 @@ export function createMenu({
       screenKnown =
         early.sid === "mdl" ||
         early.sid === "thk" ||
-        Boolean(screens[early.sid] as MenuScreen | undefined);
+        Boolean(screenAt(early.sid));
       if (!screenKnown && NAV_VERBS.has(early.verb))
         staleToast = ctx.tr(
           "Menu expired — shown again.",
@@ -320,7 +328,7 @@ export function createMenu({
         });
         adopted = true;
       } else {
-        const mod = screens[sid] as MenuScreen | undefined;
+        const mod = screenAt(sid);
         if (event && typeof mod?.recover === "function") {
           const recovered = await mod.recover(verb, args, event, ctx);
           if (recovered !== undefined) return recovered;
@@ -369,7 +377,7 @@ export function createMenu({
     // Data-верб — экрану sid (тапнутая кнопка принадлежит ему). Экран сам решает, что
     // отрисовать (ctx.show / flows.screen / awaitText). Ошибки экрана НЕ роняют мост:
     // onCallback вызывается из моста через .catch (см. handleControl-интеграцию).
-    const mod = screens[sid] as MenuScreen | undefined;
+    const mod = screenAt(sid);
     if (!mod) {
       // Тап по мёртвому экрану и на свежем состоянии: честное «устарело» вместо тишины.
       await tg("editMessageText", {
@@ -441,10 +449,7 @@ export function createMenu({
         );
       }
     }
-    const screen = typeof st.screen === "string" ? st.screen : "";
-    const handler = (screens[screen] as MenuScreen | undefined)?.texts?.[
-      a.kind
-    ];
+    const handler = screenAt(st.screen)?.texts?.[a.kind];
     if (typeof handler !== "function") {
       await flows.end(
         st,
