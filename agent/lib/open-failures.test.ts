@@ -120,6 +120,25 @@ function day(): number {
   return 24 * HOUR;
 }
 
+test("доставленное напоминание с записью ошибки не считается провалом", () => {
+  // Проверка T20 (раунд 3): ход пробуждения мог упасть уже ПОСЛЕ доставки текста, и строка
+  // несёт причину при delivered=true. Спека считает провалом именно недоставку.
+  assert.deepEqual(
+    openReminderFailures(
+      [reminder({ delivered: true, error: "agent wake failed: turn stuck" })],
+      NOW,
+    ),
+    [],
+  );
+  assert.equal(
+    openReminderFailures(
+      [reminder({ delivered: false, error: "TELEGRAM_BOT_TOKEN is missing" })],
+      NOW,
+    ).length,
+    1,
+  );
+});
+
 test("оба источника рядом, старые провалы первыми", () => {
   const failures = openFailuresFrom(
     [fact({ ok: false, error: "exited 3", finishedAt: NOW - 30 * 60 * 1000 })],

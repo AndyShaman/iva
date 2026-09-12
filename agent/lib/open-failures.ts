@@ -57,6 +57,10 @@ export function openReminderFailures(
   // срабатывание перезапишет error, а разовую строку уборка снимет через сутки.
   const failures: OpenFailure[] = [];
   for (const row of reminders) {
+    // Провал напоминания — именно недоставка (спека T20 п.3): ход пробуждения мог упасть и
+    // ПОСЛЕ того, как текст ушёл владельцу, и такая строка несёт причину при delivered=true
+    // — висеть открытым провалом каждый ход ей не за что (проверка T20, раунд 3).
+    if (row.delivered !== false) continue;
     if (row.error === null || row.error.length === 0) continue;
     if (row.firedAt === null) continue;
     if (now - row.firedAt > OPEN_FAILURES_WINDOW_MS) continue;
