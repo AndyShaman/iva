@@ -1350,7 +1350,32 @@ test("the chores of the installation are run around the restart, out of the vers
   ]);
   assert.equal(createVersionStore(iva.home).settled(), outcome.version);
   assert.ok(
-    logged.some((message) => /Google CLI update did not run/.test(message)),
+    logged.some((message) =>
+      /Google CLI update did not run \(exit 1: no registry\)/.test(message),
+    ),
+    logged.join("\n"),
+  );
+});
+
+test("an errand without output names the exit code alone", async (t) => {
+  const iva = world(t);
+  const logged: string[] = [];
+  const build = fixtureRunner();
+  updated(
+    await iva.update({
+      log: (message) => logged.push(message),
+      run: (command, args, cwd) =>
+        command === "uv"
+          ? Promise.resolve({ code: 127, output: "\n  \n" })
+          : build(command, args, cwd),
+    }),
+  );
+  assert.ok(
+    logged.some((message) =>
+      /the vault cleanup did not run \(exit 127\); the update continues without it/.test(
+        message,
+      ),
+    ),
     logged.join("\n"),
   );
 });

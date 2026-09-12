@@ -768,6 +768,11 @@ async function runPostHealthCleanup({
 }
 
 /**
+ * Потолок причины в строке журнала: вывод команды может быть длинным, а строка одна.
+ */
+const ERRAND_REASON_CHARS = 200;
+
+/**
  * Something an update does for the installation rather than for the version it
  * installs: the vault cleaner, run out of the new version before the service can
  * open what it repairs, and the Google CLI, the one dependency that lives outside
@@ -795,7 +800,20 @@ async function errand(
     (error: unknown): CommandResult => ({ code: 1, output: String(error) }),
   );
   if (done.code === 0) return true;
-  log(`${what} did not run; ${failure}`);
+  // Причина едет в ту же строку: без неё провал необязательного шага («uv не в PATH
+  // неинтерактивного ssh») выясняется только руками. Вывод команды — последняя непустая
+  // строка, не длиннее 200 знаков; пустой вывод оставляет один код выхода.
+  const lastLine =
+    done.output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .at(-1) ?? "";
+  const reason =
+    lastLine === ""
+      ? `exit ${done.code}`
+      : `exit ${done.code}: ${lastLine.slice(0, ERRAND_REASON_CHARS)}`;
+  log(`${what} did not run (${reason}); ${failure}`);
   return false;
 }
 
