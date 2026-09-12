@@ -149,17 +149,36 @@ export async function runJobWatchdog(
     );
   }
   let state: WatchdogState | null = null;
+  let repaired = false;
   try {
     state = readWatchdogState(stateFile);
   } catch (error) {
-    log(
-      `watchdog: state unreadable, treating as never sent — ${error instanceof Error ? error.message : String(error)}`,
-    );
+    // Файл есть, но не читается. Испорченный, но записываемый дроссель восстанавливаем
+    // меткой «сейчас» и всё равно шлём один раз — иначе страховка молчала бы вместе с
+    // файлом. Не записывается (каталог, права): молчим, иначе владелец получит второе
+    // сообщение за сутки (T30 №6).
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      writeFileAtomicSync(
+        stateFile,
+        JSON.stringify({ lastSentAt: now }, null, 2),
+        { mode: 0o600 },
+      );
+      repaired = true;
+      log(`watchdog: state repaired, sending once — ${reason}`);
+    } catch (writeError) {
+      log(
+        `watchdog: state unreadable and not writable, message suppressed — ${reason} ` +
+          `(${writeError instanceof Error ? writeError.message : String(writeError)})`,
+      );
+      return null;
+    }
   }
   const message = watchdogDecision({
     facts,
     now,
-    lastSentAt: state?.lastSentAt ?? null,
+    // Восстановленное состояние уже несёт метку «сейчас»: решает сам повод, а не дроссель.
+    lastSentAt: repaired ? null : (state?.lastSentAt ?? null),
     tr: deps.tr,
   });
   if (message === null) {
@@ -175,9 +194,12 @@ export async function runJobWatchdog(
     log("watchdog: message not sent — will retry on the next run");
     throw new Error(`watchdog: message not sent: ${message}`);
   }
-  writeFileAtomicSync(stateFile, JSON.stringify({ lastSentAt: now }, null, 2), {
-    mode: 0o600,
-  });
+  if (!repaired)
+    writeFileAtomicSync(
+      stateFile,
+      JSON.stringify({ lastSentAt: now }, null, 2),
+      { mode: 0o600 },
+    );
   log(`watchdog: sent "${message}"`);
   return message;
 }

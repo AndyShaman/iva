@@ -1,7 +1,12 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 // Дневной сторож (T20 п.4): одно сообщение в сутки, когда провалы есть, а агент молчит.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -298,4 +303,33 @@ test("точка входа watchdog.ts шлёт владельцу кодом �
   );
   assert.match(entry, /runJobWatchdog\(/u);
   assert.match(entry, /sendTelegramHtml\(/u);
+});
+
+// T30 №6: существующее, но нечитаемое состояние — не «никогда не отправляли».
+test("T30 №6: нечитаемое состояние дросселя не рождает второе сообщение", async () => {
+  const root = dir();
+  await recordFact(jobFactsFile(root), fact(), NOW);
+  mkdirSync(join(root, "jobs-watchdog.json"), { recursive: true });
+  const sent: string[] = [];
+  const send = async (text: string) => {
+    sent.push(text);
+    return true;
+  };
+  const first = await runJobWatchdog({
+    dataDir: root,
+    tr: (en: string) => en,
+    send,
+    now: () => NOW,
+    log: () => {},
+  });
+  const second = await runJobWatchdog({
+    dataDir: root,
+    tr: (en: string) => en,
+    send,
+    now: () => NOW + 60 * 60 * 1000,
+    log: () => {},
+  });
+  assert.equal(first, null, "первый прогон отправил при нечитаемом состоянии");
+  assert.equal(second, null);
+  assert.deepEqual(sent, [], "сообщение ушло при нечитаемом состоянии");
 });
