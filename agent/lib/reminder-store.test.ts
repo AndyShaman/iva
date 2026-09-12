@@ -187,12 +187,21 @@ test("факт доставки и сбой пробуждения живут в
   });
   await fireDue(now, 10);
 
-  await recordWakeError("one", "agent wake failed: no bearer");
+  const [fired] = await list();
+  assert.ok(fired);
+  await recordWakeError("one", {
+    firedAt: fired.firedAt,
+    error: "agent wake failed: no bearer",
+  });
   let [stored] = await list();
   assert.equal(stored.error, "agent wake failed: no bearer");
   assert.equal(stored.delivered, null, "пробуждение не трогает факт доставки");
 
-  await recordDelivery("one", { delivered: true, error: null });
+  await recordDelivery("one", {
+    firedAt: fired.firedAt,
+    delivered: true,
+    error: null,
+  });
   [stored] = await list();
   assert.equal(stored.delivered, true);
   assert.equal(
@@ -202,6 +211,7 @@ test("факт доставки и сбой пробуждения живут в
   );
 
   await recordDelivery("one", {
+    firedAt: fired.firedAt,
     delivered: false,
     error: "400 chat not found",
   });
@@ -212,7 +222,10 @@ test("факт доставки и сбой пробуждения живут в
   assert.equal(stored.firedAt, now);
 
   // Провал доставки — главная причина: сбой пробуждения её не перекрывает.
-  await recordWakeError("one", "agent wake failed: no bearer");
+  await recordWakeError("one", {
+    firedAt: fired.firedAt,
+    error: "agent wake failed: no bearer",
+  });
   [stored] = await list();
   assert.equal(
     stored.error,
@@ -221,10 +234,55 @@ test("факт доставки и сбой пробуждения живут в
   );
 
   await assert.rejects(
-    recordDelivery("nope", { delivered: true, error: null }),
+    recordDelivery("nope", { firedAt: null, delivered: true, error: null }),
     /nope/,
   );
-  await assert.rejects(recordWakeError("nope", "boom"), /nope/);
+  await assert.rejects(
+    recordWakeError("nope", { firedAt: null, error: "boom" }),
+    /nope/,
+  );
+});
+
+test("результат старого срока не переписывает факт нового и уходит в журнал", async () => {
+  const now = 10_000_000;
+  await add({
+    id: "cron",
+    text: "отчёт",
+    schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
+  const [first] = await fireDue(now, 10);
+  const [second] = await fireDue(first.nextRunAtMs, 10);
+  assert.ok(first && second);
+
+  const lines: string[] = [];
+  const log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  await recordDelivery(
+    "cron",
+    { firedAt: first.firedAt, delivered: false, error: "late failure" },
+    { log },
+  );
+  await recordWakeError(
+    "cron",
+    { firedAt: first.firedAt, error: "late wake failure" },
+    { log },
+  );
+
+  const [row] = await list();
+  assert.equal(row?.firedAt, second.firedAt);
+  assert.equal(
+    row?.delivered,
+    null,
+    "старый провал не тронул факт нового срока",
+  );
+  assert.equal(row?.error, null, "старая причина не тронула факт нового срока");
+  assert.equal(
+    lines.length,
+    2,
+    "оба отброшенных результата объяснены в журнале",
+  );
+  assert.match(lines[0], /ignored/u);
+  assert.match(lines[1], /ignored/u);
 });
 
 test("сработавшая разовая строка живёт сутки и убирается тиком", async () => {
@@ -330,7 +388,7 @@ test("файл версии 1 переводится: срок и текст ж�
   assert.equal(cron.error, "400 chat not found");
   assert.equal(cron.createdAt > 0, true);
   // После первой мутации файл уже версии 2.
-  await recordWakeError("old-cron", "wake");
+  await recordWakeError("old-cron", { firedAt: cron.firedAt, error: "wake" });
   assert.equal(table().schemaVersion, REMINDER_SCHEMA_VERSION);
 });
 
@@ -427,7 +485,11 @@ test("жизненный цикл, права файла и remove", async () =>
   await fireDue(now, 10);
   const [stored] = await list();
   assert.equal(stored.status, "fired");
-  await recordDelivery("one-shot", { delivered: true, error: null });
+  await recordDelivery("one-shot", {
+    firedAt: stored.firedAt,
+    delivered: true,
+    error: null,
+  });
   assert.equal((await list())[0].delivered, true);
 
   const removed = await remove("one-shot");

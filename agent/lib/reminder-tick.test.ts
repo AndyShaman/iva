@@ -81,7 +81,12 @@ void test("созревшая строка уходит в fired, ребёнок
   await at("a", now - 60_000);
   const { lines, log } = logLines();
   const stub = jobStub(async (id) => {
-    await recordDelivery(id, { delivered: true, error: null });
+    const [firedRow] = (await list()).filter((row) => row.id === id);
+    await recordDelivery(id, {
+      firedAt: firedRow?.firedAt ?? null,
+      delivered: true,
+      error: null,
+    });
     return ok();
   });
 
@@ -176,7 +181,12 @@ void test("повторяющаяся строка будит ребёнка н�
   });
   const { log } = logLines();
   const first = jobStub(async (id) => {
-    await recordDelivery(id, { delivered: true, error: null });
+    const [firedRow] = (await list()).filter((row) => row.id === id);
+    await recordDelivery(id, {
+      firedAt: firedRow?.firedAt ?? null,
+      delivered: true,
+      error: null,
+    });
     return ok();
   });
 
@@ -188,7 +198,12 @@ void test("повторяющаяся строка будит ребёнка н�
   assert.ok(row.nextRunAtMs > now);
 
   const second = jobStub(async (id) => {
-    await recordDelivery(id, { delivered: true, error: null });
+    const [firedRow] = (await list()).filter((row) => row.id === id);
+    await recordDelivery(id, {
+      firedAt: firedRow?.firedAt ?? null,
+      delivered: true,
+      error: null,
+    });
     return ok();
   });
   const before = await runReminderTick({
@@ -258,7 +273,12 @@ void test("сработавшие разовые строки старше су�
   await at("old", longAgo);
   const { log } = logLines();
   const stub = jobStub(async (id) => {
-    await recordDelivery(id, { delivered: true, error: null });
+    const [firedRow] = (await list()).filter((row) => row.id === id);
+    await recordDelivery(id, {
+      firedAt: firedRow?.firedAt ?? null,
+      delivered: true,
+      error: null,
+    });
     return ok();
   });
 

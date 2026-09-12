@@ -497,11 +497,19 @@ export async function fireDue(
 
 /**
  * Факт отправки текста. Успех не стирает чужую причину (провал пробуждения агента,
- * записанный второй веткой), а провал отправки называет свою.
+ * записанный второй веткой), а провал отправки называет свою. Результат принимается
+ * только за своё срабатывание: firedAt результата обязан совпасть с firedAt строки,
+ * иначе запоздалый ответ старого срока переписал бы факт нового — такой результат
+ * уходит в журнал и отбрасывается.
  */
 export async function recordDelivery(
   id: string,
-  outcome: { readonly delivered: boolean; readonly error: string | null },
+  outcome: {
+    readonly firedAt: number | null;
+    readonly delivered: boolean;
+    readonly error: string | null;
+  },
+  options: ReminderRecordOptions = {},
 ): Promise<Reminder> {
   const file = reminderFile();
   return mutate(file, async () => {
@@ -509,6 +517,12 @@ export async function recordDelivery(
     const row = rows.find((candidate) => candidate.id === id);
     if (row === undefined)
       fail(file, `reminder ${JSON.stringify(id)} not found`);
+    if (row.firedAt !== outcome.firedAt) {
+      recordLog(options)(
+        `reminders: ${id} delivery result for firedAt=${outcome.firedAt} ignored: current firedAt=${row.firedAt}`,
+      );
+      return structuredClone(row);
+    }
     row.delivered = outcome.delivered;
     if (outcome.error !== null) row.error = outcome.error;
     await saveTable(file, rows);
@@ -519,11 +533,12 @@ export async function recordDelivery(
 /**
  * Причина сбоя пробуждения агента: факт доставки не трогает, его пишет своя ветка. Провал
  * доставки она не перекрывает: он и есть главная причина для владельца, а сбой хода остаётся
- * в журнале.
+ * в журнале. Как и факт отправки, принимается только за своё срабатывание.
  */
 export async function recordWakeError(
   id: string,
-  error: string,
+  outcome: { readonly firedAt: number | null; readonly error: string },
+  options: ReminderRecordOptions = {},
 ): Promise<Reminder> {
   const file = reminderFile();
   return mutate(file, async () => {
@@ -531,10 +546,30 @@ export async function recordWakeError(
     const row = rows.find((candidate) => candidate.id === id);
     if (row === undefined)
       fail(file, `reminder ${JSON.stringify(id)} not found`);
-    if (row.delivered !== false) row.error = error;
+    if (row.firedAt !== outcome.firedAt) {
+      recordLog(options)(
+        `reminders: ${id} wake error for firedAt=${outcome.firedAt} ignored: current firedAt=${row.firedAt}`,
+      );
+      return structuredClone(row);
+    }
+    if (row.delivered !== false) row.error = outcome.error;
     await saveTable(file, rows);
     return structuredClone(row);
   });
+}
+
+/** Журнал отброшенного результата: по умолчанию в stdout, как у планировщика. */
+export interface ReminderRecordOptions {
+  readonly log?: (...args: unknown[]) => void;
+}
+
+function recordLog(
+  options: ReminderRecordOptions,
+): (...args: unknown[]) => void {
+  return (
+    options.log ??
+    ((...args: unknown[]) => console.log(new Date().toISOString(), ...args))
+  );
 }
 
 /** Уборка: сработавшие разовые строки живут сутки — столько владелец видит факт. */

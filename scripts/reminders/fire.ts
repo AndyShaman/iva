@@ -95,7 +95,11 @@ export async function runReminderFire(
         token === ""
           ? "TELEGRAM_BOT_TOKEN is missing - run: iva config"
           : "no owner chat: set TELEGRAM_DIGEST_CHAT_ID or TELEGRAM_ALLOWED_USER_IDS";
-      await record(id, { delivered: false, error: reason });
+      await record(
+        id,
+        { firedAt: row.firedAt, delivered: false, error: reason },
+        { log },
+      );
       log(`reminders: ${id} not delivered: ${reason}`);
       return;
     }
@@ -103,10 +107,15 @@ export async function runReminderFire(
       retryTransient: true,
       trace: { source: "reminder" },
     });
-    await record(id, {
-      delivered: result.ok,
-      error: result.ok ? null : result.error,
-    });
+    await record(
+      id,
+      {
+        firedAt: row.firedAt,
+        delivered: result.ok,
+        error: result.ok ? null : result.error,
+      },
+      { log },
+    );
     log(
       result.ok
         ? `reminders: ${id} delivered`
@@ -133,13 +142,13 @@ export async function runReminderFire(
       );
     } catch (error) {
       const reason = `agent wake failed: ${message(error)}`;
-      await recordError(id, reason);
+      await recordError(id, { firedAt: row.firedAt, error: reason }, { log });
       log(`reminders: ${id} ${reason}`);
       return;
     }
     if (turn.status === "failed") {
       const reason = `agent turn failed: ${turn.message ?? "unknown"}`;
-      await recordError(id, reason);
+      await recordError(id, { firedAt: row.firedAt, error: reason }, { log });
       log(`reminders: ${id} ${reason}`);
       return;
     }
@@ -150,7 +159,7 @@ export async function runReminderFire(
     }
     if (token === "" || chat === null) {
       const reason = "agent message not sent: no bot token or owner chat";
-      await recordError(id, reason);
+      await recordError(id, { firedAt: row.firedAt, error: reason }, { log });
       log(`reminders: ${id} ${reason}`);
       return;
     }
@@ -168,7 +177,7 @@ export async function runReminderFire(
     });
     if (!result.ok) {
       const reason = `agent message not delivered: ${result.error}`;
-      await recordError(id, reason);
+      await recordError(id, { firedAt: row.firedAt, error: reason }, { log });
       log(`reminders: ${id} ${reason}`);
       return;
     }

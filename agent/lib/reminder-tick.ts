@@ -155,7 +155,11 @@ export async function runReminderTick(
     // Ребёнок не сказал факта: причина — по коду выхода. Больше за эту строку не берёмся.
     const failure = fireFailure(result);
     try {
-      await recordDelivery(row.id, { delivered: false, error: failure });
+      await recordDelivery(
+        row.id,
+        { firedAt: row.firedAt, delivered: false, error: failure },
+        { log },
+      );
     } catch (error) {
       if (error instanceof ReminderStoreError) {
         log(`reminders: ${row.id} outcome not recorded: ${message(error)}`);
