@@ -40,15 +40,13 @@ function reminder(overrides: Partial<Reminder> = {}): Reminder {
   return {
     id: "r1",
     text: "позвонить",
-    mode: "verbatim",
     schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
     nextRunAtMs: NOW,
-    lastRunAtMs: NOW - HOUR,
-    lastStatus: "failed",
-    lastError: "TELEGRAM_BOT_TOKEN is missing",
-    deliver: { chatId: "1" },
-    leaseUntilMs: null,
-    deliveredKey: null,
+    createdAt: NOW - 2 * HOUR,
+    status: "pending",
+    firedAt: NOW - HOUR,
+    delivered: false,
+    error: "TELEGRAM_BOT_TOKEN is missing",
     ...overrides,
   };
 }
@@ -97,22 +95,23 @@ test("причина без error не исчезает", () => {
   assert.equal(failure?.reason, "провал без причины");
 });
 
-test("провал напоминания виден по lastStatus и lastError", () => {
+test("провал напоминания виден по error и firedAt", () => {
   const open = openReminderFailures([reminder()], NOW);
   assert.equal(open.length, 1);
   assert.equal(open[0]?.name, "reminder-r1");
   assert.match(open[0]?.reason ?? "", /TELEGRAM_BOT_TOKEN/u);
+  // Доехало без причины, ещё ни разу не срабатывала, сработала позавчера — не провал.
   assert.equal(
-    openReminderFailures([reminder({ lastStatus: "ok" })], NOW).length,
-    0,
-  );
-  assert.equal(
-    openReminderFailures([reminder({ lastError: null })], NOW).length,
-    0,
-  );
-  assert.equal(
-    openReminderFailures([reminder({ lastRunAtMs: NOW - 2 * day() })], NOW)
+    openReminderFailures([reminder({ delivered: true, error: null })], NOW)
       .length,
+    0,
+  );
+  assert.equal(
+    openReminderFailures([reminder({ firedAt: null })], NOW).length,
+    0,
+  );
+  assert.equal(
+    openReminderFailures([reminder({ firedAt: NOW - 2 * day() })], NOW).length,
     0,
   );
 });
@@ -124,7 +123,7 @@ function day(): number {
 test("оба источника рядом, старые провалы первыми", () => {
   const failures = openFailuresFrom(
     [fact({ ok: false, error: "exited 3", finishedAt: NOW - 30 * 60 * 1000 })],
-    [reminder({ lastRunAtMs: NOW - 2 * HOUR })],
+    [reminder({ firedAt: NOW - 2 * HOUR })],
     NOW,
   );
   assert.deepEqual(

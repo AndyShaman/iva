@@ -1,7 +1,7 @@
 // «Незакрытые провалы за сутки» — то, что агент видит каждым ходом
 // (agent/instructions/40-open-failures.ts). Два источника: таблица фактов расписаний и
 // таблица напоминаний. T20 напоминания не трогает, но общий источник обязан видеть и их
-// провалы: строка напоминания с lastStatus=failed и причиной за сутки считается открытой.
+// провалы: сработавшая за сутки строка напоминания с причиной (error) считается открытой.
 //
 // Провал расписания закрыт, когда есть более поздний успешный запуск того же имени или
 // владелец/агент закрыл его через `iva jobs ack <name>`. Повторам в коде здесь места нет:
@@ -52,18 +52,19 @@ export function openReminderFailures(
   reminders: readonly Reminder[],
   now: number,
 ): OpenFailure[] {
+  // Та же мера провала, что у раздела напоминаний в `iva doctor`: строка сработала и
+  // назвала причину (не доехала или ход пробуждения упал). Закрывать её нечем: следующее
+  // срабатывание перезапишет error, а разовую строку уборка снимет через сутки.
   const failures: OpenFailure[] = [];
   for (const row of reminders) {
-    if (row.lastStatus !== "failed") continue;
-    if (typeof row.lastError !== "string" || row.lastError.length === 0)
-      continue;
-    if (row.lastRunAtMs === null) continue;
-    if (now - row.lastRunAtMs > OPEN_FAILURES_WINDOW_MS) continue;
+    if (row.error === null || row.error.length === 0) continue;
+    if (row.firedAt === null) continue;
+    if (now - row.firedAt > OPEN_FAILURES_WINDOW_MS) continue;
     failures.push({
       source: "reminder",
       name: `reminder-${row.id}`,
-      at: row.lastRunAtMs,
-      reason: row.lastError,
+      at: row.firedAt,
+      reason: row.error,
     });
   }
   return failures.sort(byTime);
