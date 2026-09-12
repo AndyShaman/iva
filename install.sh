@@ -287,14 +287,16 @@ process.stdout.write(resolveDataDir(root, process.env.ASSISTANT_DATA_DIR));
   printf '%s\n' "$$" >"$lock/pid" 2>/dev/null || true
 }
 
-# Copies .env with the permissions it must have from the first byte: `cp -p` carries the
-# source mode over, and a .env somebody left world-readable would be copied that way and
-# stay so until the chmod — a window a shared box does not need. The copy appears at its
-# final name only once it is whole, so a rollback can never restore half a file over a
-# whole one.
+# Copies .env with the permissions it must have from the first byte: the part file is
+# created under umask 077, so even the empty file that appears first is already 600. The
+# chmod stays for a part left behind by a run of an older version, which could be 644.
+# `cp -p` would have carried the source mode over, and a .env somebody left world-readable
+# would be copied that way and stay so until the chmod — a window a shared box does not
+# need. The copy appears at its final name only once it is whole, so a rollback can never
+# restore half a file over a whole one.
 copy_env_private() {
   local part="$1.part"
-  : >"$part" 2>/dev/null || return 1
+  (umask 077; : >"$part") 2>/dev/null || return 1
   chmod 600 "$part" 2>/dev/null || { rm -f -- "$part"; return 1; }
   cat "$PROJECT_DIR/.env" >"$part" 2>/dev/null || { rm -f -- "$part"; return 1; }
   mv -- "$part" "$1"
