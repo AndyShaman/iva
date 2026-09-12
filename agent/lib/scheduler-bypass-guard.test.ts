@@ -295,3 +295,46 @@ test("якоря QA: штатные команды — /dev/null, обвязка
     allowed(cmd);
   }
 });
+
+// T32, дефект 1: `env A=1 cmd` нормализация снимала, а голое `A=1 cmd` — нет, хотя shell
+// видит обе формы одинаково. Команда оставалась не в командной позиции, и гвард её не
+// находил.
+test("T32: ведущее присваивание не прячет команду — как и обёртка env", () => {
+  for (const cmd of [
+    "TZ=UTC crontab /tmp/j",
+    "TZ=UTC systemd-run --user --on-active=1h /bin/true",
+    "FOO=1 BAR=2 at now + 1 hour",
+    "sleep 3600 && TZ=UTC iva notify x",
+  ]) {
+    blocked(cmd);
+  }
+  // Паритет с обёрткой: один и тот же вызов через env судится так же.
+  for (const cmd of ["TZ=UTC crontab /tmp/j", "env TZ=UTC crontab /tmp/j"]) {
+    blocked(cmd);
+  }
+  // Слово с равенством, но не в начале позиции, командой не становится.
+  allowed("systemctl --user restart Environment=FOO");
+});
+
+// T32, дефект 2: разрез по `&` рвал `2>&1` надвое, хвост `2>` делал читателя писателем —
+// и совершенно штатный `grep … >/dev/null 2>&1` по каталогу юнитов блокировался.
+test("T32: дуп дескриптора не разделитель команд", () => {
+  for (const cmd of [
+    "grep -rn iva ~/.config/systemd/user >/dev/null 2>&1",
+    "cat ~/.iva-scripts/x.sh >/dev/null 2>&1",
+    "ls ~/.config/systemd/user >&2",
+  ]) {
+    allowed(cmd);
+  }
+  // Настоящая запись в те же каталоги по-прежнему блокируется: правило не ослабло.
+  for (const cmd of [
+    "grep -rn iva ~/.config/systemd/user > ~/.iva-scripts/out.txt 2>&1",
+    "echo x &> ~/.config/systemd/user/my.timer",
+    "crontab /tmp/j 2>&1",
+  ]) {
+    blocked(cmd);
+  }
+  // Фон и `&&` остаются разделителями — иначе вторая команда ушла бы из-под суда.
+  blocked("echo hi & crontab /tmp/j");
+  blocked("echo hi && crontab /tmp/j");
+});

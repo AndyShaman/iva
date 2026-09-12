@@ -28,8 +28,11 @@ function normalize(command: string): string {
   return command.replace(/\\(.)/g, "$1").replace(/["']/g, "");
 }
 
-// Разделители командных позиций: ; & | && || ( ) ` $( и перевод строки.
-const SEGMENT_SPLIT = /[;&|()`\n]+/;
+// Разделители командных позиций: ; & | && || ( ) ` $( и перевод строки. Амперсанд рядом
+// с `>` разделителем НЕ считается: `2>&1`, `>&2`, `&>file` - это дублирование файлового
+// дескриптора, часть одной команды. Разрезав их, мы оставляли хвост `2>` и читали
+// `grep … >/dev/null 2>&1` как запись в файл.
+const SEGMENT_SPLIT = /(?:(?<!>)&(?!>)|[;|()`\n])+/;
 
 // Обёртки, после которых следующий токен — снова командная позиция: слово + его флаги
 // и VAR=значение; у timeout дополнительно съедается длительность. bash/sh -c и node
@@ -40,12 +43,18 @@ const SEGMENT_SPLIT = /[;&|()`\n]+/;
 const WRAPPER =
   /^(?:(?:sudo|command|exec|nohup|setsid|nice|node|env|if|then|elif|else|while|until|do|(?:ba|da|z)?sh)(?:\s+(?:-\S+|\w+=\S*))*|timeout(?:\s+-\S+)*\s+\S+)\s+/;
 
+// Голое присваивание перед командой - та же обёртка, только без слова `env`: shell
+// исполняет `TZ=UTC crontab /tmp/j` и `env TZ=UTC crontab /tmp/j` одинаково. Снимаем
+// его так же, иначе команда не попадает в командную позицию и правила её не видят.
+// Требуется пробел после: одинокое `A=1` - это присваивание, а не вызов.
+const ASSIGNMENT_PREFIX = /^[A-Za-z_]\w*=\S*\s+/;
+
 export function commandPositions(command: string): string[] {
   const out: string[] = [];
   for (const raw of normalize(command).split(SEGMENT_SPLIT)) {
     let seg = raw.trimStart();
     for (;;) {
-      const m = WRAPPER.exec(seg);
+      const m = WRAPPER.exec(seg) ?? ASSIGNMENT_PREFIX.exec(seg);
       if (!m || !m[0].trim()) break;
       seg = seg.slice(m[0].length).trimStart();
     }
