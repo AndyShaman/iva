@@ -17,7 +17,11 @@ import {
   invalidModelProviderMessage,
 } from "#lib/model-provider.ts";
 import { PLUGIN_SCHEMA_URL } from "#lib/plugin-reader.ts";
-import { pluginRoot, writePluginsState } from "#lib/plugin-store.ts";
+import {
+  pluginConfigFile,
+  pluginRoot,
+  writePluginsState,
+} from "#lib/plugin-store.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { acquireUpdateLock, createVersionStore } from "../lib/version-store.ts";
 import { createDoctorCommand } from "./doctor.ts";
@@ -1301,4 +1305,67 @@ test("doctor checks the plugin units and the health of every MCP proxy", async (
   assert.doesNotMatch(everything, /dropped/u);
   assert.doesNotMatch(everything, /iva-mcp-trace-remote/u);
   assert.doesNotMatch(everything, /iva-plugin-trace-gone/u);
+});
+
+// Конфиг плагина правит владелец руками, и до сих пор его ошибку не называла ни одна
+// поверхность: рантайм молча брал пустой конфиг, сборка — тоже. Доктор существует ровно
+// для таких находок.
+test("doctor names a plugin config the owner cannot have meant", async (t) => {
+  const root = await sandbox(t);
+  writeFileSync(join(root, ".env"), "present=true\n");
+  const data = join(root, "data");
+  plantStorePlugin(data, "trace");
+  writeFileSync(pluginConfigFile(data, "trace"), '{"level": "debug",');
+  await writePluginsState(data, {
+    marketplaces: [],
+    plugins: [
+      {
+        name: "trace",
+        source: "./trace",
+        ref: "",
+        sha: "",
+        digest: "",
+        enabled: true,
+        trusted: false,
+        installedAt: "2026-08-17T12:00:00.000Z",
+      },
+    ],
+  });
+
+  const events = await pluginEvents(root);
+  const damaged = events.filter(([, message]) =>
+    message.includes("trace.config.json"),
+  );
+  assert.equal(damaged.length, 1, "ровно одна строка про испорченный конфиг");
+  assert.equal(damaged[0][0], "bad");
+  assert.match(damaged[0][1], /trace\.config\.json is unusable: .*JSON/iu);
+});
+
+test("doctor says nothing about a plugin whose config is valid or absent", async (t) => {
+  const root = await sandbox(t);
+  writeFileSync(join(root, ".env"), "present=true\n");
+  const data = join(root, "data");
+  plantStorePlugin(data, "trace");
+  plantStorePlugin(data, "quiet");
+  writeFileSync(pluginConfigFile(data, "trace"), '{"level": "debug"}');
+  await writePluginsState(data, {
+    marketplaces: [],
+    plugins: ["trace", "quiet"].map((name) => ({
+      name,
+      source: `./${name}`,
+      ref: "",
+      sha: "",
+      digest: "",
+      enabled: true,
+      trusted: false,
+      installedAt: "2026-08-17T12:00:00.000Z",
+    })),
+  });
+
+  const events = await pluginEvents(root);
+  assert.deepEqual(
+    events.filter(([, message]) => message.includes("unusable")),
+    [],
+    "исправный и отсутствующий конфиг доктор не комментирует",
+  );
 });

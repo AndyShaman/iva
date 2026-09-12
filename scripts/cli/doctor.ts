@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statfsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 // CLI обязан грузиться без authored tree и без "#lib"-маппинга
 // (scripts/cli/entrypoints.test.ts), поэтому run-status и telegram-queue
 // подгружаются динамически в самой проверке, а здесь — только типы.
@@ -765,7 +765,9 @@ export function createDoctorCommand(
         return;
       }
       const { readPlugin } = core.reader;
-      const { pluginRoot, pluginsDir, readPluginsStateSafe } = core.store;
+      const { readPluginConfigState } = core.config;
+      const { pluginConfigFile, pluginRoot, pluginsDir, readPluginsStateSafe } =
+        core.store;
       const directory = pluginsDir(dataDirectory);
       const { state, damaged } = await readPluginsStateSafe(dataDirectory);
       if (damaged) {
@@ -824,6 +826,15 @@ export function createDoctorCommand(
         for (const line of report.diagnostics) {
           warn(`plugin ${entry.name}: ${line}`);
           warnN++;
+        }
+        // Конфиг владельца рантайм читает молча и на ошибке берёт пустой: настройка
+        // исчезает, и назвать файл больше некому.
+        const config = readPluginConfigState(entry.name, dataDirectory);
+        if (config.state === "damaged") {
+          bad(
+            `plugin ${entry.name}: ${basename(pluginConfigFile(dataDirectory, entry.name))} is unusable: ${config.reason}`,
+          );
+          badN++;
         }
         const parts = [`${report.skills.length} skills`];
         if (report.code) parts.push("code");
