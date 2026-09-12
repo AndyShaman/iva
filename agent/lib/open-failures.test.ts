@@ -166,8 +166,33 @@ test("openFailures читает факты с диска и напоминани
   ]);
 });
 
-test("динамическая инструкция 40-open-failures отдаёт тот же блок", async () => {
-  const module = await import("../instructions/40-open-failures.ts");
-  assert.equal(typeof module.openFailuresMarkdown, "function");
-  assert.ok(module.default, "инструкция объявлена");
+test("динамическая инструкция 40-open-failures несёт блок в ход", async () => {
+  // Проводка до хода: инструкция читает таблицу из ASSISTANT_DATA_DIR и отдаёт блок
+  // сама, без аргументов. Напоминаний в каталоге нет — провал расписания приходит один.
+  const dir = mkdtempSync(join(tmpdir(), "t20-instruction-"));
+  const now = Date.now();
+  await recordFact(
+    jobFactsFile(dir),
+    fact({
+      ok: false,
+      error: "exited 2",
+      startedAt: now - 2000,
+      finishedAt: now - 1000,
+    }),
+    now,
+  );
+  const previous = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  try {
+    const instruction = await import("../instructions/40-open-failures.ts");
+    const resolve = instruction.default.events["turn.started"];
+    assert.ok(resolve, "инструкция слушает turn.started");
+    const resolved = await resolve(null, {} as never);
+    const markdown = (resolved as { markdown?: string } | null)?.markdown ?? "";
+    assert.match(markdown, /^## Незакрытые провалы за сутки/u);
+    assert.match(markdown, /memory-daily.*exited 2/u);
+  } finally {
+    if (previous === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previous;
+  }
 });
