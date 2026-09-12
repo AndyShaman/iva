@@ -12,7 +12,9 @@ const ROOT = mkdtempSync(join(tmpdir(), "iva-reminder-late-"));
 process.env.ASSISTANT_DATA_DIR = join(ROOT, "bootstrap");
 mkdirSync(process.env.ASSISTANT_DATA_DIR, { recursive: true });
 
-const { add, fireDue, list } = await import("#lib/reminder-store.ts");
+const { add, fireDue, list, reminderFile } =
+  await import("#lib/reminder-store.ts");
+const { acquireLock, releaseLock } = await import("#lib/json-store.ts");
 const { runReminderFire } = await import("./fire.ts");
 
 beforeEach(() => {
@@ -189,4 +191,41 @@ void test("T34: агентская ветка отступает, когда с�
     ["проверить отчёт"],
     "резерв старого срабатывания выстрелил в строку нового срока",
   );
+});
+
+void test("T34b-v2: упавшая запись факта не даёт второго сообщения", async () => {
+  // Репро критика без подмен стора: лок таблицы держит сосед — recordDelivery
+  // падает по таймауту, хотя текст ушёл. Ветка доставки отдаёт итог send наружу,
+  // и резерв молчит: судить о доставке по null в таблице больше нельзя.
+  const now = 1_800_000_000_000;
+  await add({
+    id: "locked-fact",
+    text: "забрать посылку",
+    schedule: { kind: "at", atMs: now },
+  });
+  await fireDue(now, 10);
+
+  const lockPath = `${reminderFile()}.lock`;
+  let token: string | null = null;
+  const sent: string[] = [];
+  try {
+    await runReminderFire(
+      "locked-fact",
+      deps({
+        send: (_bot: string, _chat: string, text: unknown): Promise<Ack> => {
+          sent.push(String(text));
+          if (String(text) === "забрать посылку")
+            return acquireLock(lockPath).then((held) => {
+              token = held;
+              return success();
+            });
+          return Promise.resolve(success());
+        },
+        runTurn: completed("текст не дошёл, напоминаю: забрать посылку"),
+      }),
+    );
+  } finally {
+    if (token) releaseLock(lockPath, token);
+  }
+  assert.deepEqual(sent, ["забрать посылку"], `дубль: ${JSON.stringify(sent)}`);
 });

@@ -88,44 +88,66 @@ export async function runReminderFire(
   const chat = (dependencies.chat ?? notificationChat)(env);
   const tr = await (dependencies.translator ?? noticeTranslator)(env);
 
+  /** Итог ветки отправки для ветки агента: ушёл ли текст и записался ли факт. */
+  type DeliveryOutcome = {
+    readonly delivered: boolean;
+    readonly recorded: boolean;
+  };
+  // Запись факта — отдельная забота: её падение (лок, диск) не валит ветку и не
+  // меняет итог отправки, но остаётся видимым в журнале.
+  const recordFact = async (outcome: {
+    readonly firedAt: number | null;
+    readonly delivered: boolean;
+    readonly error: string | null;
+  }): Promise<boolean> => {
+    try {
+      await record(id, outcome, { log });
+      return true;
+    } catch (error) {
+      log(`reminders: ${id} delivery fact not recorded: ${message(error)}`);
+      return false;
+    }
+  };
+
   // Ветка (а): текст владельцу как есть. Не глядит ни на модель, ни на вторую ветку.
-  const deliver = async (): Promise<void> => {
+  // Итог send отдаёт наружу итогом: запись факта может упасть (лок, диск), а текст
+  // при этом уйти — ветка (б) обязана молчать по итогу отправки, а не по таблице.
+  const deliver = async (): Promise<DeliveryOutcome> => {
     if (token === "" || chat === null) {
       const reason =
         token === ""
           ? "TELEGRAM_BOT_TOKEN is missing - run: iva config"
           : "no owner chat: set TELEGRAM_DIGEST_CHAT_ID or TELEGRAM_ALLOWED_USER_IDS";
-      await record(
-        id,
-        { firedAt: row.firedAt, delivered: false, error: reason },
-        { log },
-      );
+      const recorded = await recordFact({
+        firedAt: row.firedAt,
+        delivered: false,
+        error: reason,
+      });
       log(`reminders: ${id} not delivered: ${reason}`);
-      return;
+      return { delivered: false, recorded };
     }
     const result = await send(token, chat, row.text, {
       retryTransient: true,
       trace: { source: "reminder" },
     });
-    await record(
-      id,
-      {
-        firedAt: row.firedAt,
-        delivered: result.ok,
-        error: result.ok ? null : result.error,
-      },
-      { log },
-    );
+    const recorded = await recordFact({
+      firedAt: row.firedAt,
+      delivered: result.ok,
+      error: result.ok ? null : result.error,
+    });
     log(
       result.ok
         ? `reminders: ${id} delivered`
         : `reminders: ${id} not delivered: ${result.error}`,
     );
+    return { delivered: result.ok, recorded };
   };
 
   // Ветка (б): ход агента. Своё сообщение отправляет только тогда, когда факт доставки уже
   // известен и текст не дошёл: иначе агент продублировал бы работу кода.
-  const wake = async (delivered: Promise<void>): Promise<void> => {
+  const wake = async (
+    delivered: Promise<DeliveryOutcome | undefined>,
+  ): Promise<void> => {
     let turn: ReminderTurn;
     try {
       turn = await (dependencies.runTurn ?? runReminderTurn)(
@@ -163,9 +185,16 @@ export async function runReminderFire(
       log(`reminders: ${id} ${reason}`);
       return;
     }
-    // Факт отправки может прийти позже хода: ждём завершения ветки отправки. Её падение
-    // не должно валить ветку агента — ветки независимы.
-    await delivered.catch(() => undefined);
+    // Ждём итога ветки отправки, а не записи факта: текст уже ушёл — молчим,
+    // даже если факт не записался. Падение ветки не валит агента — ветки независимы.
+    const outcome = await delivered.catch(() => undefined);
+    if (outcome?.delivered === true) {
+      log(
+        `reminders: ${id} agent woke, text already sent` +
+          (outcome.recorded ? "" : " (fact not recorded)"),
+      );
+      return;
+    }
     const after = (await read()).find((candidate) => candidate.id === id);
     // Тот же фенс, что у записи: судим только факт своего срабатывания. Если строка
     // уже ушла к новому сроку, уведомлением владеет его ветка — поздний резерв сюда
