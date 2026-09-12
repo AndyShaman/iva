@@ -25,6 +25,9 @@ process.env.TELEGRAM_BOT_TOKEN = `bot-${randomUUID()}`;
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = `webhook-${randomUUID()}`;
 process.env.TELEGRAM_BOT_USERNAME = "my_bot";
 process.env.AGENT_LANGUAGE = "en";
+// Проводка канала проверяется в режиме auto: так литерал вместо константы на вызове
+// виден сразу, а сам режим живёт в одном месте файла.
+process.env.TELEGRAM_RICH_REPLIES = "auto";
 
 after(() => {
   rmSync(vault, { recursive: true, force: true });
@@ -38,6 +41,59 @@ type SentBody = { readonly parse_mode?: string; readonly text?: string };
 type ApiCall =
   | { readonly kind: "request"; readonly method: string }
   | { readonly kind: "post"; readonly body: SentBody };
+
+// Спецификатор в переменной — как в scripts/telegram-reply-context.test.ts. Канал один
+// на файл: константа режима вычисляется при импорте, и вторая копия с другим query
+// получила бы то же значение.
+const telegramModule = "../agent/channels/telegram.ts?rich-replies-test";
+const loadChannel = () =>
+  import(telegramModule) as Promise<
+    typeof import("../agent/channels/telegram.ts")
+  >;
+
+// Хендл eve, каким его видит канал: ответ модели приходит событием message.completed,
+// и только этот путь проверяет, что режим доехал до транспорта вместе с констант
+// (agent/channels/telegram.ts).
+type WiringAdapter = {
+  state: Record<string, unknown>;
+  createAdapterContext: (base: {
+    ctx: unknown;
+    session: unknown;
+    state: Record<string, unknown>;
+  }) => unknown;
+  "message.completed": (
+    data: Record<string, unknown>,
+    context: unknown,
+  ) => Promise<void>;
+};
+
+type WiringCall = { readonly method: string; readonly body: unknown };
+
+// Двойник Bot API: все вызовы канала видны по имени метода, ответы успешны.
+function installBotApiDouble(calls: WiringCall[]): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- preserve the original mock's exact String coercion.
+    const requestUrl = String(url);
+    const method = new URL(requestUrl).pathname.split("/").at(-1) ?? "";
+    calls.push({
+      method,
+      body: init.body
+        ? JSON.parse(
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- preserve the original mock's exact String coercion.
+            String(init.body),
+          )
+        : undefined,
+    });
+    return Response.json({
+      ok: true,
+      result: { message_id: 1, chat: { id: 1, type: "private" } },
+    });
+  };
+  return () => {
+    globalThis.fetch = original;
+  };
+}
 
 // Двойник хендла eve: помнит вызовы Bot API, отвечает успехом.
 function telegramDouble() {
@@ -112,11 +168,7 @@ void test("кривое TELEGRAM_RICH_REPLIES валит старт", () => {
 });
 
 void test("never: таблица уходит HTML, auto: rich", async () => {
-  // Спецификатор в переменной — как в scripts/telegram-reply-context.test.ts.
-  const telegramModule = "../agent/channels/telegram.ts?rich-replies-test";
-  const { outboxTransport } = (await import(
-    telegramModule
-  )) as typeof import("../agent/channels/telegram.ts");
+  const { outboxTransport } = await loadChannel();
 
   const off = telegramDouble();
   const plainPath = outboxTransport(off.tg, "never");
@@ -152,4 +204,66 @@ void test("never: таблица уходит HTML, auto: rich", async () => {
     "auto шлёт ровно один sendRichMessage",
   );
   assert.deepEqual(on.calls.map(callLine), ["request:sendRichMessage"]);
+});
+
+void test("канал отдаёт режим в транспорт: при auto таблица уходит rich-сообщением", async (t) => {
+  const calls: WiringCall[] = [];
+  t.after(installBotApiDouble(calls));
+
+  const channel = (await loadChannel()).default;
+  const adapter = (channel as unknown as { adapter: WiringAdapter }).adapter;
+  const [{ ContextContainer, contextStorage }, { SessionKey }] =
+    await Promise.all([
+      import("../node_modules/eve/dist/src/context/container.js"),
+      import("../node_modules/eve/dist/src/context/keys.js"),
+    ]);
+
+  const chatId = "77";
+  const sessionId = "rich-replies-wiring";
+  const ctx = new ContextContainer();
+  ctx.set(SessionKey, {
+    auth: { current: null, initiator: null },
+    sessionId,
+    turn: { id: "turn_0", sequence: 0 },
+  });
+  const context = adapter.createAdapterContext({
+    ctx,
+    session: {
+      id: sessionId,
+      auth: { current: null, initiator: null },
+      continuation: { token: `telegram:${chatId}::`, rekey() {} },
+    },
+    state: {
+      ...adapter.state,
+      chatId,
+      chatType: "private",
+      messageThreadId: null,
+    },
+  });
+
+  // Таблица — та же разметка, что в тестах шва: режим решает только проводка.
+  await contextStorage.run(ctx, () =>
+    adapter["message.completed"](
+      {
+        finishReason: "stop",
+        message: TABLE,
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_rich",
+      },
+      context,
+    ),
+  );
+
+  const rendered = JSON.stringify(calls);
+  assert.equal(
+    calls.filter((call) => call.method === "sendRichMessage").length,
+    1,
+    `auto должен отдать таблицу одним sendRichMessage: ${rendered}`,
+  );
+  assert.equal(
+    calls.filter((call) => call.method === "sendMessage").length,
+    0,
+    `auto не должен идти HTML-путём: ${rendered}`,
+  );
 });
