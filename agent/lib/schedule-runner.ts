@@ -510,7 +510,9 @@ export async function runScheduledJob(
       child.on("error", (error) =>
         settle({ code: null, signal: null, tail, errTail, error }),
       );
-      child.on("exit", (code, signal) =>
+      // close, а не exit: exit приходит до слива потоков, и поздняя причина из stderr
+      // не попадала бы в факт (T30 №8).
+      child.on("close", (code, signal) =>
         settle({ code, signal, tail, errTail }),
       );
     });

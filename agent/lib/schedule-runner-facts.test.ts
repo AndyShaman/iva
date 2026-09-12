@@ -2,6 +2,8 @@
 // Прогон интеграционный, как в schedule-runner.test.ts: настоящий ребёнок-node с
 // --env-file=.env, а пробуждение подменено шпионом.
 import { strict as assert } from "node:assert";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -301,4 +303,45 @@ void test("без factsPath ни факта, ни пробуждения (дос
   });
 
   assert.equal(woken, 0);
+});
+
+void test("T30 №8: поздний stderr после exit доезжает до факта", async () => {
+  const root = await scaffold();
+  await mkdir(join(root, "data"), { recursive: true });
+  const child = new EventEmitter() as EventEmitter & {
+    readonly pid: number;
+    readonly stdout: PassThrough;
+    readonly stderr: PassThrough;
+    readonly kill: () => boolean;
+  };
+  Object.assign(child, {
+    pid: 424242,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => true,
+  });
+  const running = runScheduledJob({
+    name: "late-stderr",
+    argv: ["-e", ""],
+    root,
+    nodeBin: process.execPath,
+    factsPath: join(root, "data/jobs.json"),
+    wake: false,
+    env: {},
+    spawnImpl: (() => child) as never,
+    log: () => {},
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  child.stdout.write("EARLY-REASON\n");
+  child.emit("exit", 0, null);
+  child.stderr.write("LATE-REASON\n");
+  child.emit("close", 0, null);
+  const result = await running;
+  assert.equal(result.ok, true);
+  const rows = await readFacts(join(root, "data/jobs.json"));
+  assert.match(
+    rows[0].tail,
+    /LATE-REASON/u,
+    `поздняя причина не в факте: ${rows[0].tail}`,
+  );
 });
