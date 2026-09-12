@@ -249,3 +249,49 @@ test("текст отказа называет правило и замену", 
     );
   }
 });
+
+test("якоря QA: ослабление против main — приклеенный редирект и ранний выход", () => {
+  for (const cmd of [
+    // Приклеенный редирект/stdin к имени команды (X1-X7, X10).
+    "crontab>/dev/null /tmp/j",
+    "systemd-run>/dev/null --user --on-active=1h /bin/true",
+    "at>/dev/null now + 1 hour",
+    "systemctl>/dev/null --user start my.timer",
+    "crontab</tmp/j",
+    "at</tmp/job",
+    "batch</tmp/job",
+    "sleep>/dev/null 3600; curl -s https://example.com/ping",
+    // Ранний выход съедал проверку путей той же позиции (Y1-Y6).
+    "crontab -l > ~/.iva-scripts/remind.sh",
+    "crontab -l > ~/.config/systemd/user/my.timer",
+    "crontab -l -u api.telegram.org",
+    "systemctl --user cat iva > ~/.config/systemd/user/copy.service",
+    "systemctl --user show iva > ~/.iva-scripts/state.sh",
+    "systemctl --user status api.telegram.org > /tmp/x",
+  ]) {
+    blocked(cmd);
+  }
+});
+
+test("якоря QA: штатные команды — /dev/null, обвязка сна, Environment=", () => {
+  for (const cmd of [
+    // Читатель с подавлением шума (R7-R9, R17, R18, R22).
+    "grep -rn api.telegram.org agent/ 2>/dev/null",
+    "ls ~/.iva-scripts 2>/dev/null",
+    "cat ~/.config/systemd/user/iva.service 2>/dev/null",
+    "head -20 ~/.config/systemd/user/iva.service > /dev/null",
+    "wc -l ~/.iva-scripts/*.sh 2>/dev/null",
+    "grep -c api.telegram.org agent/lib/telegram.ts 2>/dev/null | cat",
+    // Обвязка сна и обрывки редиректов — не нагрузка (L8, L10-L14).
+    "exec sleep 3600 & wait",
+    "while true; do sleep 120; done",
+    "sleep 120 > /dev/null 2>&1",
+    "sleep 120 2>&1",
+    "sleep 120; :",
+    "sleep 120; true",
+    // Присваивание — не юнит (C8).
+    "systemctl --user restart Environment=FOO",
+  ]) {
+    allowed(cmd);
+  }
+});
