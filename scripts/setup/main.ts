@@ -38,6 +38,7 @@ import {
   providerEnvKeys,
 } from "../lib/model-catalog.ts";
 import { keptSetupWritePlan } from "../lib/setup-keep.ts";
+import { isYesAnswer, menuChoice } from "./answers.ts";
 import { validateTimeZone } from "../lib/timezone.ts";
 import { resolveMemorySearchMode } from "../lib/memory-mode.ts";
 import { resolveDataDir } from "../lib/data-dir.ts";
@@ -153,8 +154,8 @@ const ask = async (q: string, def = "") => {
   return a || def;
 };
 const askYesNo = async (q: string, def = false) => {
-  const a = (await ask(`${q} (${def ? "Y/n" : "y/N"})`)).toLowerCase();
-  return a ? a.startsWith("y") : def;
+  const a = await ask(`${q} (${def ? "Y/n" : "y/N"})`);
+  return a ? isYesAnswer(a) : def;
 };
 
 // Free-port selection: ask for the desired port, check availability with the same Probe as
@@ -534,7 +535,7 @@ async function main() {
       "  Choose / Выбор (1/2)",
       existing.AGENT_LANGUAGE === "ru" ? "2" : "1",
     );
-    LANG = langChoice.trim() === "2" ? "ru" : "en";
+    LANG = menuChoice(langChoice) === 2 ? "ru" : "en";
   }
   out.AGENT_LANGUAGE = LANG;
   console.log(
@@ -651,17 +652,17 @@ async function main() {
   );
   const provDef =
     { opencode: "2", codex: "3", openrouter: "4", custom: "5" }[prov0] || "1";
-  const provChoice = (
-    await ask(`  ${t("Provider", "Провайдер")} (1/2/3/4/5)`, provDef)
-  ).trim();
+  const provChoice = menuChoice(
+    await ask(`  ${t("Provider", "Провайдер")} (1/2/3/4/5)`, provDef),
+  );
   const provider =
-    provChoice === "2"
+    provChoice === 2
       ? "opencode"
-      : provChoice === "3"
+      : provChoice === 3
         ? "codex"
-        : provChoice === "4"
+        : provChoice === 4
           ? "openrouter"
-          : provChoice === "5"
+          : provChoice === 5
             ? "custom"
             : "ollama";
   out.MODEL_PROVIDER = provider;
