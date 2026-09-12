@@ -175,18 +175,57 @@ test("запуск сторожа: отправка один раз, состо�
   assert.equal(second, null);
 });
 
-test("неудачная отправка не отмечается — следующий прогон повторит", async () => {
+test("неудачная отправка — отказ наружу, метка не ставится", async () => {
+  // Проверка v6 (HIGH-3): раньше отказ транспорта возвращался как обычный текст, точка
+  // входа финишировала нулём, и запуск сторожа записывался успешным.
   const dataDir = dir();
   await recordFact(jobFactsFile(dataDir), fact(), NOW);
-  const retried = await runJobWatchdog({
-    dataDir,
-    tr,
-    send: () => Promise.resolve(false),
-    now: () => NOW,
-    log: () => {},
-  });
-  assert.match(retried ?? "", /провалов/u);
+  await assert.rejects(
+    () =>
+      runJobWatchdog({
+        dataDir,
+        tr,
+        send: () => Promise.resolve(false),
+        now: () => NOW,
+        log: () => {},
+      }),
+    /not sent|не отправлено/iu,
+  );
   assert.equal(readWatchdogState(watchdogStateFile(dataDir)), null);
+});
+
+test("недоехавший ответ агента не считается состоявшимся ходом", () => {
+  // Проверка v6 (HIGH-2): ответ есть, но владелец его не получил — страховка обязана уйти.
+  assert.match(
+    watchdogDecision({
+      facts: [
+        fact({
+          wake: {
+            at: NOW - 1000,
+            status: "answered",
+            error: "telegram send was refused",
+          },
+        }),
+      ],
+      now: NOW,
+      lastSentAt: null,
+      tr,
+    }) ?? "",
+    /не отвечает/u,
+  );
+});
+
+test("метка из будущего (откат часов) не глушит страховку", () => {
+  // Проверка v6 (MEDIUM-2): отрицательный возраст метки проходил проверку окна.
+  assert.match(
+    watchdogDecision({
+      facts: [fact()],
+      now: NOW,
+      lastSentAt: NOW + 365 * 24 * HOUR,
+      tr,
+    }) ?? "",
+    /провалов расписаний: 1/u,
+  );
 });
 
 test("нечитаемая таблица: сторож говорит о ней, и тоже раз в сутки", async () => {

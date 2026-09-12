@@ -62,6 +62,9 @@ export function agentTurnSeen(
     (fact) =>
       fact.wake !== null &&
       fact.wake.status !== "failed" &&
+      // Ход с записанной причиной (ответ не доехал) состоявшимся не считается: владелец
+      // его не видел, значит страховка ещё нужна.
+      fact.wake.error === null &&
       fact.wake.at >= since,
   );
 }
@@ -104,7 +107,10 @@ export function watchdogDecision({
   readonly lastSentAt: number | null;
   readonly tr: Translate;
 }): string | null {
-  if (lastSentAt !== null && now - lastSentAt < WATCHDOG_SEND_INTERVAL_MS)
+  // Окно считается только вперёд: метка из будущего (часы откатили) значит «не отправляли»,
+  // иначе сторож молчал бы до той даты.
+  const sentAge = lastSentAt === null ? null : now - lastSentAt;
+  if (sentAge !== null && sentAge >= 0 && sentAge < WATCHDOG_SEND_INTERVAL_MS)
     return null;
   if (facts === null) return watchdogUnreadableMessage(tr);
   const failures = openJobFailures(facts, now);
@@ -162,10 +168,12 @@ export async function runJobWatchdog(
   }
   const sent = await deps.send(message);
   if (!sent) {
-    // Не отметили — следующее расписание попробует снова; суточный интервал считаем
-    // от состоявшейся отправки, а не от попытки.
+    // Отказ транспорта — провал запуска, а не тихий возврат: точка входа обязана выйти
+    // ненулём, иначе запуск сторожа записывается успешным, хотя владелец ничего не получил
+    // (слепая приёмка T20 по v6). Метку не ставим: суточное окно считается от состоявшейся
+    // отправки, и следующий запуск попробует снова.
     log("watchdog: message not sent — will retry on the next run");
-    return message;
+    throw new Error(`watchdog: message not sent: ${message}`);
   }
   writeFileAtomicSync(stateFile, JSON.stringify({ lastSentAt: now }, null, 2), {
     mode: 0o600,

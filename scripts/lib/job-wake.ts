@@ -102,9 +102,11 @@ export async function runJobWake(
   } catch (error) {
     sendError = error instanceof Error ? error.message : String(error);
   }
+  // Ответ, который не доехал, — провал хода, а не состоявшийся ответ: владелец не получил
+  // ничего, и страховка обязана считать такой ход не бывшим (слепая приёмка T20 по v6).
   await recordOutcome(deps, name, startedAt, {
     at: now(),
-    status: "answered",
+    status: sendError === null ? "answered" : "failed",
     error: sendError,
   });
   log(
@@ -112,7 +114,7 @@ export async function runJobWake(
       ? `wake: ${name} answered, but the owner did not get it: ${sendError}`
       : `wake: ${name} answered the owner`,
   );
-  return "answered";
+  return sendError === null ? "answered" : "failed";
 }
 
 async function recordOutcome(

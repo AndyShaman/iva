@@ -114,7 +114,27 @@ test("провал хода остаётся фактом с причиной", 
   assert.match(wake?.error ?? "", /no activity/u);
 });
 
-test("отказ отправки не отменяет состоявшийся ход", async () => {
+test("отказ доставки — провал хода, а не состоявшийся ответ", async () => {
+  // Проверка v6 (HIGH-2): владелец не получил ни ответа агента, ни страховки — ход
+  // помечался «answered», и сторож считал его состоявшимся.
+  const factsFile = file();
+  await recordFact(factsFile, fact(), NOW);
+  const status = await runJobWake("memory-daily", fact().startedAt, {
+    factsFile,
+    tr,
+    runTurn: () =>
+      Promise.resolve({ status: "completed", message: "сломалось" }),
+    send: () => Promise.resolve(false),
+    now: () => NOW,
+    log: () => {},
+  });
+  assert.equal(status, "failed");
+  const [written] = await readFacts(factsFile);
+  assert.equal(written?.wake?.status, "failed");
+  assert.match(written?.wake?.error ?? "", /refus|отказ/iu);
+});
+
+test("исключение транспорта — тоже провал хода, причина в строке", async () => {
   const factsFile = file();
   await recordFact(factsFile, fact({ ok: true, error: null }), NOW);
   const status = await runJobWake("memory-daily", NOW - 1000, {
@@ -125,9 +145,9 @@ test("отказ отправки не отменяет состоявшийся
     now: () => NOW + 5,
     log: () => {},
   });
-  assert.equal(status, "answered");
+  assert.equal(status, "failed");
   const wake = (await readFacts(factsFile))[0]?.wake;
-  assert.equal(wake?.status, "answered");
+  assert.equal(wake?.status, "failed");
   assert.match(wake?.error ?? "", /telegram 500/u);
 });
 
