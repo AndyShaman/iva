@@ -530,12 +530,32 @@ function splitHtmlHard(html: string, limit: number): string[] {
 
 // One-call helper: markdown → array of send-ready, balanced HTML chunks, each
 // guaranteed <= limit. (text=4096, caption=1024). NEVER throws.
+// Кнопка живёт только в rich-сообщении. Когда rich отвергнут (BUTTON_DATA_INVALID,
+// старый Bot API) и текст идёт HTML-путём, тег не должен доехать до чата буквами:
+// url-кнопка становится ссылкой, остальные — своей подписью, ряд — строкой подписей.
+export function stripRichButtons(md: string): string {
+  return md
+    .replace(
+      /<tg-button(?=[\s>])([^>]*)>([\s\S]*?)<\/tg-button>/gi,
+      (_m, attrs: string, label: string) => {
+        const url = /\btype="url"/i.test(attrs)
+          ? /\burl="([^"]*)"/i.exec(attrs)?.[1]
+          : undefined;
+        const text = label.trim();
+        return (url ? `[${text}](${url})` : `**${text}**`) + " ";
+      },
+    )
+    .replace(/<\/?tg-button-row\b[^>]*>/gi, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +$/gm, "");
+}
+
 export function toTelegramHtmlChunks(md: unknown, limit = 4096): string[] {
   try {
     const cap = Math.max(1, limit);
     const srcLimit = Math.min(3500, Math.floor(cap * 0.85));
     const result: string[] = [];
-    for (const src of chunkMarkdown(md, srcLimit)) {
+    for (const src of chunkMarkdown(stripRichButtons(String(md)), srcLimit)) {
       const html = mdToTelegramHtml(src);
       if (html.length <= cap) {
         // Кусок, из которого ничего не отрендерилось (пустой забор, пробелы),

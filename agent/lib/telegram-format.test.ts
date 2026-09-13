@@ -88,3 +88,12 @@ await test("chunking and rich routing keep their current boundaries", () => {
   assert.equal(hasRichButtons("<tg-button type=\"url\" url=\"https://t.me\">Открыть</tg-button>"), true);
   assert.equal(hasRichButtons("| a | b |\n|---|---|"), false);
 });
+
+test("HTML path never shows button tags: url becomes a link, the rest their label", () => {
+  const html = toTelegramHtmlChunks(
+    'Готово.\n\n<tg-button-row><tg-button type="callback_data" data="Да">Да</tg-button><tg-button type="url" url="https://iva-agent.com">Сайт</tg-button></tg-button-row>',
+  ).join("\n");
+  assert.doesNotMatch(html, /tg-button/);
+  assert.match(html, /<b>Да<\/b>/);
+  assert.match(html, /<a href="https:\/\/iva-agent\.com">Сайт<\/a>/);
+});

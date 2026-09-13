@@ -109,7 +109,7 @@ Button types:
 
 | `type` | What happens | Attributes |
 |---|---|---|
-| `callback_data` | the tap becomes **the user's next message**, text = `data` | `data` ≤ 64 bytes (≈30 Cyrillic chars) |
+| `callback_data` | the tap becomes **the user's next message**, text = `data` | `data` **≤ 64 bytes = at most 30 Cyrillic letters** (Cyrillic is 2 bytes each); longer → Telegram rejects the whole message and the buttons are lost |
 | `url` | opens a link; the nice way to give a link instead of a bare URL | `url` |
 | `copy_text` | copies a value to the clipboard (commands, ids, keys you were asked to show) | `text` |
 | `web_app` | opens a Mini App; private chats only | `url` |
@@ -125,9 +125,12 @@ navigation. `<tg-button-row align="left|center|right">` holds up to 8 buttons.
 `data` **is the user's reply**: they tap, and exactly that text arrives as their
 message in the same session. So write `data` in the user's words (`Отложи на
 час`, `Покажи список`, `Да`), never codes (`confirm_1`, `opt:b`); make it
-self-sufficient — next turn you see only that text; keep it under 64 bytes; never
-start it with `iva_` or `eve` (reserved for the host's own buttons — such a tap
-never reaches you). 1-4 buttons per reply; more than that is a menu, and the
+self-sufficient — next turn you see only that text; **count the bytes: 64 bytes
+is 30 Cyrillic or 60 Latin characters**, so `data="Про таймер"` is fine and
+`data="Расскажи подробнее про напоминания Ивы"` (70 bytes) kills every button in
+the message — put the long wording in the paragraph next to the button, not in
+`data`; never start it with `iva_` or `eve` (reserved for the host's own buttons —
+such a tap never reaches you). 1-4 buttons per reply; more than that is a menu, and the
 menu is `/menu`.
 
 Private chats only: in a group a tap is not an address to the bot (only a
