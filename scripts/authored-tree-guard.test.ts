@@ -23,8 +23,13 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const AUTHORED = join(ROOT, "agent");
 
 // Every module-looking literal, not just `import`/`export` clauses: a specifier parked in
-// a `const` and fed to a dynamic `import()` escapes the tree exactly as hard.
-const MODULE_LITERAL = /"([^"\n]+\.(?:ts|mts|mjs|js))"/gu;
+// a `const` and fed to a dynamic `import()` escapes the tree exactly as hard. Bare npm
+// packages are none of the guard's business, but the manifest-resolved forms are matched
+// without an extension too: `@iva/<name>` (a `file:packages/<name>` dependency) and
+// `#<alias>/<path>` (the `imports` map). A string has to be exactly the specifier, so prose
+// that merely names one (`# Iva diagnose package`, `#planner` in a comment) stays out.
+const MODULE_LITERAL =
+  /"((?:@iva\/[^"\n]+)|(?:#[A-Za-z0-9._-]+\/[^"\n]*)|(?:[^"\n]+\.(?:ts|mts|mjs|js)))"/gu;
 
 const importsMap = (): [string, string][] => {
   const manifest: unknown = JSON.parse(
@@ -40,10 +45,33 @@ const importsMap = (): [string, string][] => {
   );
 };
 
+// `@iva/<name>` — единственные bare-спецификаторы, ведущие в это же дерево: манифест
+// объявляет их как `file:packages/<name>`, а не как npm-версию. Неизвестное имя обязано
+// упасть с названием: опечатка в импорте не должна молча выпасть из обхода.
+function localPackageDir(specifier: string): string {
+  const manifest: unknown = JSON.parse(
+    readFileSync(join(ROOT, "package.json"), "utf8"),
+  );
+  const dependencies =
+    typeof manifest === "object" &&
+    manifest !== null &&
+    "dependencies" in manifest
+      ? (manifest.dependencies as Record<string, unknown>)
+      : {};
+  const mapped = dependencies[specifier];
+  if (typeof mapped !== "string" || !mapped.startsWith("file:packages/"))
+    throw new Error(
+      `${specifier}: package.json has no "file:packages/<name>" dependency for it, so the guard cannot resolve the import`,
+    );
+  return join(ROOT, mapped.slice("file:".length));
+}
+
 // Absolute path the specifier points at, or null when it names a bare package/builtin.
 function targetOf(specifier: string, fromFile: string): string | null {
   if (specifier.startsWith("."))
     return resolve(dirname(join(ROOT, fromFile)), specifier);
+  if (specifier.startsWith("@iva/"))
+    return join(localPackageDir(specifier), "index.ts");
   if (!specifier.startsWith("#")) return null;
   for (const [pattern, mapped] of importsMap()) {
     const star = pattern.indexOf("*");
@@ -109,10 +137,26 @@ test("the authored tree has only its explicit shared-package edges", () => {
   assert.deepEqual(
     escapes(),
     [
+      "agent/instructions/05-language.ts -> @iva/data-dir",
+      "agent/instructions/20-core.ts -> @iva/vault-dir",
+      "agent/instructions/25-persona.ts -> @iva/vault-dir",
+      "agent/instructions/now.ts -> @iva/data-dir",
+      "agent/instructions/now.ts -> @iva/timezone",
+      "agent/lib/context-window.ts -> @iva/context-window",
       "agent/lib/data-dir.ts -> ../../packages/data-dir/index.ts",
       "agent/lib/job-facts.ts -> ../../packages/secret-redaction/index.ts",
+      "agent/lib/telegram-media-cache.ts -> @iva/vault-dir",
+      "agent/lib/telegram-media.ts -> @iva/vault-dir",
+      "agent/lib/telegram-turn-start.ts -> @iva/vault-dir",
+      "agent/lib/timezone.ts -> @iva/timezone",
+      "agent/lib/vault-daily.ts -> @iva/vault-dir",
+      "agent/lib/vault-error.ts -> @iva/vault-dir",
+      "agent/tools/memory_search.ts -> @iva/vault-dir",
+      "agent/tools/read_file.ts -> @iva/vault-dir",
+      "agent/tools/write_card.ts -> @iva/vault-dir",
+      "agent/tools/write_file.ts -> @iva/vault-dir",
     ],
-    "agent/ may leave its tree only for a shared package Eve bundles: the canonical data-dir, and the one rule that cuts secrets for both `iva diagnose` and the schedule log tail the agent reads (a second copy of that rule is how a token inside `bot<token>` stayed in data/jobs.json)",
+    "agent/ may leave its tree only for the shared packages Eve bundles: @iva/data-dir, @iva/vault-dir, @iva/timezone and @iva/context-window, plus the one rule that cuts secrets for both `iva diagnose` and the schedule log tail the agent reads (a second copy of that rule is how a token inside `bot<token>` stayed in data/jobs.json)",
   );
 });
 
@@ -328,4 +372,17 @@ test("the guard resolves #-aliases through package.json instead of trusting the 
     join(ROOT, "evals/smoke.ts"),
   );
   assert.equal(targetOf("eve/channels", "agent/agent.ts"), null);
+});
+
+test("a missing @iva package is a named error, not a silent null", () => {
+  // Объявленный пакет резолвится по манифесту: `file:packages/<name>` → `packages/<name>/index.ts`.
+  assert.equal(
+    targetOf("@iva/vault-dir", "agent/agent.ts"),
+    join(ROOT, "packages/vault-dir/index.ts"),
+  );
+  // Неизвестный обязан назвать себя: тихий null выбросил бы импорт из обхода молча.
+  assert.throws(
+    () => targetOf("@iva/несуществующий", "agent/agent.ts"),
+    /@iva\/несуществующий/u,
+  );
 });
