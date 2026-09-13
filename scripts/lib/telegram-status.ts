@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { modelSummary } from "./model-summary.ts";
 import { redactTelegramBody } from "./notice.ts";
-import { button } from "./telegram-buttons.ts";
+import { button, screenPayload } from "./telegram-buttons.ts";
 import { updaterTooOldMessage } from "./update-check.ts";
 import type { RestoreReport } from "./update-safety.ts";
 
@@ -252,10 +252,13 @@ export function createTelegramUpdateReporter({
    * своим пояснением, поэтому отдельной клавиатуры у финального экрана больше нет.
    */
   async function finish(markdown: string): Promise<boolean> {
-    const body = { rich_message: { markdown } };
+    const body = screenPayload(markdown);
     if ((await edit(body)).ok) return true;
     try {
-      await call("sendRichMessage", { chat_id: activeJob.chatId, ...body });
+      await call("rich_message" in body ? "sendRichMessage" : "sendMessage", {
+        chat_id: activeJob.chatId,
+        ...body,
+      });
       return true;
     } catch (caught) {
       const error = caught as TelegramError;

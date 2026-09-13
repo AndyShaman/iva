@@ -6,6 +6,7 @@
 // Правило репо: ни одной module-level const с переведённой строкой — все подписи собираются
 // в render() через ctx.tr, иначе язык замёрзнет до рестарта.
 import { button, type RichButtonStyle } from "./buttons.ts";
+import { menuStyle } from "../telegram-buttons.ts";
 
 interface RootContext {
   tr: (english: string, russian: string) => string;
@@ -147,6 +148,19 @@ export default {
           "доктор, чистка vault и обновление.",
         ),
       ),
+      // Новое (rich) меню носит внизу выход в старое: кому не зашло, вернётся одним тапом.
+      ...(menuStyle() === "rich"
+        ? [
+            item(
+              T("◀︎ Classic menu", "◀︎ Старое меню"),
+              "iva_menu:svc:menu:classic",
+              T(
+                "buttons under the message, as before.",
+                "кнопки под сообщением, как раньше.",
+              ),
+            ),
+          ]
+        : []),
       item(
         T("✖ Close", "✖ Закрыть"),
         "iva_menu:r:x",

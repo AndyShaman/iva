@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { readEnvValues } from "../env-file.ts";
 import { acquireUpdateLock, releaseUpdateLock } from "../update-safety.ts";
 import { button } from "./buttons.ts";
+import { menuStyle } from "../telegram-buttons.ts";
+import { writeSettings } from "#lib/settings.ts";
 import {
   LOADERS,
   currentRun,
@@ -262,6 +264,15 @@ function idleView(
       "check for and install a new version.",
       "проверить и поставить новую версию.",
     )}`,
+    menuStyle() === "rich"
+      ? `${button(T("◀︎ Classic menu", "◀︎ Старое меню"), "iva_menu:svc:menu:classic")} — ${T(
+          "buttons under the message, as before 0.4.2.",
+          "кнопки под сообщением, как до 0.4.2.",
+        )}`
+      : `${button(T("✨ New menu", "✨ Новое меню"), "iva_menu:svc:menu:rich", "success")} — ${T(
+          "buttons inside the message, tables; needs a Telegram client from August 2026.",
+          "кнопки внутри сообщения, таблицы; нужен клиент Telegram от августа 2026.",
+        )}`,
     `${button(T("‹ Menu", "‹ Меню"), "iva_menu:r:o")} — ${T(
       "back to the settings.",
       "вернуться в настройки.",
@@ -380,6 +391,10 @@ const service = {
       return ctx.show(st, "svc"); // нечего отменять — перерисовать текущее состояние
     }
     if (verb === "up") return ctx.deps.handleUpdateCheck?.(st.chatId);
+    if (verb === "menu" && (args[0] === "rich" || args[0] === "classic")) {
+      writeSettings({ menuStyle: args[0] });
+      return ctx.show(st, "r"); // корень сразу в новом стиле
+    }
   },
 };
 

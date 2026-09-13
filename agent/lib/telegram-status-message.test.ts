@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +9,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // на загрузке модуля, поэтому окружение выставляем до импорта.
 const dataDir = mkdtempSync(join(tmpdir(), "iva-telegram-status-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
+writeFileSync(
+  join(dataDir, "settings.json"),
+  JSON.stringify({ menuStyle: "rich" }),
+);
 process.env.AGENT_LANGUAGE = "en";
 const load = <T>(name: string): Promise<T> =>
   import(

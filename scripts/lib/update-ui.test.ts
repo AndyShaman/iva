@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- legacy Node test registration and dynamic JavaScript bridge fixtures */
+import "../fixtures/rich-menu-style.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

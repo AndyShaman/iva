@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -94,6 +94,11 @@ type WizardsModule = {
 // и то и другое ставим ДО загрузки модуля, в свежей data-директории.
 const dataDir = mkdtempSync(join(tmpdir(), "iva-control-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
+// Экраны моста в тестах проверяются в rich-стиле (по умолчанию у пользователя classic).
+writeFileSync(
+  join(dataDir, "settings.json"),
+  JSON.stringify({ menuStyle: "rich" }),
+);
 process.env.TELEGRAM_BOT_TOKEN = "424242:test-token";
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = "test-secret";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "42";

@@ -8,7 +8,7 @@
 // Состояние живёт только в памяти этого процесса. Рестарт моста теряет его —
 // протухший тап по кнопке ловится диспатчером как «диалог устарел».
 
-import { blockButtons, legacyRows } from "./telegram-buttons.ts";
+import { legacyRows, screenPayload } from "./telegram-buttons.ts";
 
 const TTL_MS = 15 * 60 * 1000; // как WIZARD_TTL_MS — совпадает с временем жизни codex device-code
 
@@ -131,25 +131,24 @@ export function createFlows({ tg, log = () => {} }: CreateFlowsOptions) {
     markdown: string,
     rows?: TelegramKeyboard | null,
   ): Promise<boolean> {
-    const rich_message = {
-      markdown: blockButtons(
-        rows ? `${markdown}\n\n${legacyRows(rows)}` : markdown,
-      ),
-    };
+    const payload = screenPayload(
+      rows ? `${markdown}\n\n${legacyRows(rows)}` : markdown,
+    );
+    const rich = "rich_message" in payload;
     if (st.msgId) {
       const r = await tg("editMessageText", {
         chat_id: st.chatId,
         message_id: st.msgId,
-        rich_message,
+        ...payload,
       });
       // «message is not modified» = двойной тап перерисовал тот же экран — это успех, не сбой.
       if (r.ok) return messageResultSucceeded(r);
       if (/not modified/i.test(r.description || "")) return true;
       // правка не удалась (сообщение слишком старое / удалено) — падаем на свежее сообщение
     }
-    const r = await tg("sendRichMessage", {
+    const r = await tg(rich ? "sendRichMessage" : "sendMessage", {
       chat_id: st.chatId,
-      rich_message,
+      ...payload,
     });
     const succeeded = messageResultSucceeded(r);
     if (succeeded) st.msgId = r.result!.message_id;

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registration promises. */
+import "../../fixtures/rich-menu-style.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createFlows } from "../tg-flow.ts";

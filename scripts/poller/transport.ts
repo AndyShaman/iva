@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-base-to-string -- Telegram payload fields retain source-compatible permissive coercion. */
 import { execFile } from "node:child_process";
-import { blockButtons } from "../lib/telegram-buttons.ts";
+import { screenPayload } from "../lib/telegram-buttons.ts";
 import { redactTelegramBody } from "../lib/notice.ts";
 import { API, TOKEN, log } from "./config.ts";
 
@@ -125,7 +125,7 @@ async function edit(
     const data = (await tg("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
-      rich_message: { markdown: blockButtons(markdown) },
+      ...screenPayload(markdown),
     })) as TelegramResponse;
     if (!data.ok)
       throw new Error(String(data.description || "editMessageText failed"));

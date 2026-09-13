@@ -12,6 +12,7 @@
 //
 // Про eve модуль не знает: канал передаёт хендл Bot API структурно.
 import { tr } from "./i18n.ts";
+import { readSettings } from "./settings.ts";
 import { chatKeyOf, getChatStatus, setChatStatusIf } from "./run-status.ts";
 import { isPrivateTelegramChatHandle } from "./telegram-private-chat.ts";
 
@@ -96,11 +97,59 @@ function statusBody(tg: TelegramStatusHandle): Record<string, unknown> {
 // (scripts/poller/control.ts, ./telegram-stop.ts). В группе мёртвый контрол хуже
 // отсутствующего, поэтому кнопка в текст не попадает вовсе. Текстовая /stop в группе
 // работает по-прежнему — она через этот путь не ходит.
+// Стиль меню владельца (settings.json menuStyle): classic = обычный текст с клавиатурой
+// под ним, rich = кнопка в rich message. Читается на каждую отправку.
+const classicMenu = () => readSettings().menuStyle !== "rich";
+
+const stopKeyboard = () => ({
+  inline_keyboard: [
+    [
+      {
+        text: tr("⏹ Stop", "⏹ Стоп"),
+        callback_data: TELEGRAM_STOP_CALLBACK,
+        style: "danger",
+      },
+    ],
+  ],
+});
+
+async function sendClassicWorkingStatus(
+  tg: TelegramStatusHandle,
+  withStop: boolean,
+): Promise<number | null> {
+  const base = {
+    ...statusBody(tg),
+    ...(withStop ? { reply_markup: stopKeyboard() } : {}),
+  };
+  if (workLoaderSupported) {
+    const res = await tg.request("sendMessage", {
+      ...base,
+      text: `${WORK_LOADER.alt} ${tr("Working", "Работаю")}`,
+      entities: [
+        {
+          type: "custom_emoji",
+          offset: 0,
+          length: WORK_LOADER.alt.length,
+          custom_emoji_id: WORK_LOADER.customEmojiId,
+        },
+      ],
+    });
+    if (res.ok) return messageIdFromResponse(res);
+    workLoaderSupported = false;
+  }
+  const res = await tg.request("sendMessage", {
+    ...base,
+    text: `${WORK_LOADER.fallback} ${tr("Working", "Работаю")}`,
+  });
+  return res.ok ? messageIdFromResponse(res) : null;
+}
+
 export async function sendWorkingStatus(
   tg: TelegramStatusHandle,
   { canStop = true } = {},
 ): Promise<number | null> {
   const withStop = canStop && isPrivateTelegramChatHandle(tg);
+  if (classicMenu()) return sendClassicWorkingStatus(tg, withStop);
   const base = statusBody(tg);
   if (richStatusSupported) {
     const res = await tg.request("sendRichMessage", {
@@ -139,7 +188,16 @@ export async function enableWorkingStatusStop(
   tg: TelegramStatusHandle,
   messageId: number,
 ): Promise<void> {
-  if (!richStatusSupported || !isPrivateTelegramChatHandle(tg)) return;
+  if (!isPrivateTelegramChatHandle(tg)) return;
+  if (classicMenu()) {
+    await tg.request("editMessageReplyMarkup", {
+      chat_id: tg.chatId,
+      message_id: messageId,
+      reply_markup: stopKeyboard(),
+    });
+    return;
+  }
+  if (!richStatusSupported) return;
   await tg.request("editMessageText", {
     chat_id: tg.chatId,
     message_id: messageId,

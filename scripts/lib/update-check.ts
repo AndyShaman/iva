@@ -11,7 +11,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { notificationChat } from "./notification-chat.ts";
-import { button, escapeRichText } from "./telegram-buttons.ts";
+import { button, escapeRichText, screenPayload } from "./telegram-buttons.ts";
 import { resolveUpdateTarget, type GitResult } from "./update-channel.ts";
 
 export { notificationChat };
@@ -344,15 +344,15 @@ export async function sendUpdateOffer({
   fetchImpl?: TelegramFetch;
 } = {}): Promise<unknown> {
   if (!offer) throw new Error("update offer is required");
+  // Стиль меню владельца: rich message или обычный текст с клавиатурой (classic).
+  const payload = screenPayload(offer.text);
+  const method = "rich_message" in payload ? "sendRichMessage" : "sendMessage";
   const response = await fetchImpl(
-    `https://api.telegram.org/bot${token}/sendRichMessage`,
+    `https://api.telegram.org/bot${token}/${method}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        rich_message: { markdown: offer.text },
-      }),
+      body: JSON.stringify({ chat_id: chatId, ...payload }),
     },
   );
   const data: { ok?: boolean; result?: unknown; description?: string } =

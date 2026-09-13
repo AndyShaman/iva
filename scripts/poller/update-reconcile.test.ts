@@ -22,6 +22,10 @@ const dataDir = realpathSync(
   mkdtempSync(join(tmpdir(), "iva-update-reconcile-")),
 );
 process.env.ASSISTANT_DATA_DIR = dataDir;
+writeFileSync(
+  join(dataDir, "settings.json"),
+  JSON.stringify({ menuStyle: "rich" }),
+);
 process.env.AGENT_LANGUAGE = "en";
 process.env.TELEGRAM_BOT_TOKEN = "token";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "42";

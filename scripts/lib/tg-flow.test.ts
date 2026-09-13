@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- async test double preserves the transport contract. */
+import "../fixtures/rich-menu-style.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createFlows, type TelegramFlowResponse } from "./tg-flow.ts";

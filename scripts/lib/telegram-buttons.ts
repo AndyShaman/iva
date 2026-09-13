@@ -8,7 +8,151 @@
 // для равноправных коротких вариантов (да/нет, список). Нажатие приходит обычным
 // callback_query с тем же data, поэтому обработчики кнопок не меняются.
 
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { dataDirSetting } from "../../packages/data-dir/index.ts";
+
 export type RichButtonStyle = "danger" | "success" | "link";
+
+/**
+ * Стиль меню (решение владельца 13.09.2026): по умолчанию «classic» — обычное сообщение
+ * с inline-клавиатурой под ним, как до 0.4.2; «rich» — кнопки внутри rich message.
+ * Переключается в /menu → Обслуживание («✨ Новое меню» / «◀︎ Старое меню»), живёт в
+ * settings.json, читается свежим на каждую отрисовку — обоим процессам видно сразу.
+ */
+export type MenuStyle = "classic" | "rich";
+
+// Читаем settings.json сами (без #lib/settings.ts): этот модуль грузится и в CLI, а CLI
+// обязан подниматься без authored tree (см. authored-tree-guard). Ошибка чтения = classic.
+export function menuStyle(): MenuStyle {
+  try {
+    const dir = resolve(dataDirSetting(process.env.ASSISTANT_DATA_DIR));
+    const raw = JSON.parse(
+      readFileSync(join(dir, "settings.json"), "utf8"),
+    ) as {
+      menuStyle?: unknown;
+    };
+    return raw.menuStyle === "rich" ? "rich" : "classic";
+  } catch {
+    return "classic";
+  }
+}
+
+export type ClassicScreen = {
+  text: string;
+  reply_markup?: { inline_keyboard: ClassicButton[][] };
+};
+export type ClassicButton = {
+  text: string;
+  callback_data?: string;
+  url?: string;
+  copy_text?: { text: string };
+  style?: "danger" | "success" | "primary";
+};
+
+/**
+ * Один экран в обоих стилях. Экраны пишут rich markdown с кнопками в тексте; для classic
+ * тот же текст разбирается на подпись+клавиатуру: строка с кнопкой становится рядом
+ * клавиатуры (пояснение после «—» уходит в текст строкой), <tg-button-row> — рядом из
+ * нескольких, заголовок теряет «#», таблица становится строками «a — b», экранирование
+ * снимается. Так у экранов один источник, а у пользователя выбор.
+ */
+export function screenPayload(
+  markdown: string,
+): { rich_message: { markdown: string } } | ClassicScreen {
+  return menuStyle() === "rich"
+    ? { rich_message: { markdown: blockButtons(markdown) } }
+    : classicScreen(markdown);
+}
+
+const BUTTON_RE = /<tg-button(?=[\s>])([^>]*)>([\s\S]*?)<\/tg-button>/gi;
+
+function attr(attrs: string, name: string): string | undefined {
+  const m = new RegExp(`\\b${name}="([^"]*)"`, "i").exec(attrs);
+  return m
+    ? m[1]
+        .replaceAll("&quot;", '"')
+        .replaceAll("&lt;", "<")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&amp;", "&")
+    : undefined;
+}
+
+function classicButton(attrs: string, label: string): ClassicButton | null {
+  const text = label.replace(/<[^>]+>/g, "").trim();
+  if (!text) return null;
+  const type = attr(attrs, "type");
+  const style = attr(attrs, "style");
+  const styled: Pick<ClassicButton, "style"> =
+    style === "danger" || style === "success" ? { style } : {};
+  const data = attr(attrs, "data");
+  const url = attr(attrs, "url");
+  const copy = attr(attrs, "text");
+  if (type === "url" && url) return { text, url, ...styled };
+  if (type === "copy_text" && copy)
+    return { text, copy_text: { text: copy }, ...styled };
+  if (data) return { text, callback_data: data, ...styled };
+  return null;
+}
+
+function classicLine(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\\(.)/g, "$1")
+    .replace(/<[^>]+>/g, "")
+    .trimEnd();
+}
+
+export function classicScreen(markdown: string): ClassicScreen {
+  const rows: ClassicButton[][] = [];
+  const text: string[] = [];
+  for (const raw of markdown.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      text.push("");
+      continue;
+    }
+    if (/^<tg-button-row\b/i.test(line)) {
+      const row = [...line.matchAll(BUTTON_RE)]
+        .map((m) => classicButton(m[1], m[2]))
+        .filter((b): b is ClassicButton => b !== null);
+      if (row.length) rows.push(row);
+      continue;
+    }
+    if (/^<tg-button(?=[\s>])/i.test(line)) {
+      const buttons = [...line.matchAll(BUTTON_RE)]
+        .map((m) => classicButton(m[1], m[2]))
+        .filter((b): b is ClassicButton => b !== null);
+      for (const b of buttons) rows.push([b]);
+      const rest = classicLine(line.replace(BUTTON_RE, "")).replace(
+        /^\s*[—–-]\s*/,
+        "",
+      );
+      if (rest && buttons.length === 1)
+        text.push(`${buttons[0].text} — ${rest}`);
+      else if (rest) text.push(rest);
+      continue;
+    }
+    if (/^\|.*\|$/.test(line)) {
+      if (/^[|\-: \t]+$/.test(line)) continue;
+      const cells = line
+        .slice(1, -1)
+        .split("|")
+        .map((c) => classicLine(c.trim()));
+      text.push(cells.filter(Boolean).join(" — "));
+      continue;
+    }
+    text.push(classicLine(line));
+  }
+  const body = text
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return rows.length
+    ? { text: body, reply_markup: { inline_keyboard: rows } }
+    : { text: body };
+}
 
 const STYLES: readonly RichButtonStyle[] = ["danger", "success", "link"];
 

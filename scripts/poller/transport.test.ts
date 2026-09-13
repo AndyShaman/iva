@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations and test doubles return promises. */
+import "../fixtures/rich-menu-style.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
