@@ -43,60 +43,54 @@ type TestState = MenuServiceState & {
 };
 type TelegramBody = Record<string, unknown> & {
   text?: string;
-  entities?: Array<{ custom_emoji_id?: string }>;
-  reply_markup?: unknown;
+  rich_message?: { markdown?: string };
 };
-type TelegramCall = { method: string; body: TelegramBody };
 type Harness = {
   ctx: MenuServiceContext;
   rendered: MenuServiceView[];
-  tgCalls: TelegramCall[];
   st: TestState | null;
 };
 type TestDeps = Partial<MenuServiceContext["deps"]>;
 
-// стенд как в menu-screens.test.ts + захват прямых tg-вызовов раннера
+// Кнопка — тег в markdown: порядок тегов и есть прежний порядок кнопок.
+const buttonsOf = (text: string): Array<[string, string]> =>
+  [
+    ...text.matchAll(
+      /<tg-button[^>]*data="([^"]+)"[^>]*>([^<]*)<\/tg-button>/g,
+    ),
+  ].map((match) => [match[2], match[1]] as [string, string]);
+
+// Стенд как в menu-screens.test.ts: экран отдаёт готовый markdown движку (flows.screen),
+// а движок в тестах — накопитель рендеров.
 function makeCtx({
   lang = "ru",
   deps = {},
 }: { lang?: string; deps?: TestDeps } = {}): Harness {
   const rendered: MenuServiceView[] = [];
-  const tgCalls: TelegramCall[] = [];
   let state: TestState | null = null;
   const flows = {
-    screen: async (
-      st: MenuServiceState,
-      text: string,
-      rows: MenuServiceView["rows"],
-    ) => {
+    screen: async (st: MenuServiceState, text: string) => {
       const testState = st as TestState;
       testState.msgId ??= 1;
-      testState._last = { text, rows };
-      rendered.push({ text, rows });
+      testState._last = { text };
+      rendered.push({ text });
     },
     get: () => state,
     touch: () => {},
   };
   const ctx: MenuServiceContext = {
-    tg: async (method, body) => {
-      tgCalls.push({ method, body });
-      return { ok: true, result: {} };
-    },
     deps: { root: "", envPath: "", dataDir: "", ...deps },
     flows,
     tr: (en: string, ru: string) => (lang === "ru" ? ru : en),
-    btn: (text: string, data: string) => ({ text, callback_data: data }),
-    backRow: () => [{ text: "‹ Назад", callback_data: "iva_menu:r:o" }],
     show: async (st: MenuServiceState, sid: string) => {
       st.screen = sid;
       const v = await service.render(st, ctx);
-      await flows.screen(st, v.text, v.rows);
+      await flows.screen(st, v.text);
     },
   };
   return {
     ctx,
     rendered,
-    tgCalls,
     get st() {
       return state;
     },
@@ -133,16 +127,14 @@ const fastRun = {
   pollMs: 5,
 } satisfies Partial<RunOptions>;
 
-test("svc зарегистрирован в движке, root ведёт на него, Закрыть в своём ряду", () => {
+test("svc зарегистрирован в движке, root ведёт на него, Закрыть в конце", () => {
   assert.equal(SCREENS.svc, service);
   const view = root.render(newState({ screen: "r" }), makeCtx().ctx);
-  const flat = view.rows.flat();
-  assert.ok(flat.some((b) => b.callback_data === "iva_menu:svc:o"));
-  const closeRow = view.rows.find((r) =>
-    r.some((b) => b.callback_data === "iva_menu:r:x"),
-  );
-  assert.ok(closeRow);
-  assert.equal(closeRow.length, 1);
+  const buttons = buttonsOf(view.text);
+  assert.ok(buttons.some(([, data]) => data === "iva_menu:svc:o"));
+  const close = buttons.filter(([, data]) => data === "iva_menu:r:x");
+  assert.equal(close.length, 1);
+  assert.deepEqual(buttons.at(-1), ["✖ Закрыть", "iva_menu:r:x"]);
 });
 
 test("render idle: четыре команды и Назад, ru/en", async () => {
@@ -152,7 +144,7 @@ test("render idle: четыре команды и Назад, ru/en", async () =
     const st = newState();
     h.st = st;
     const view = await service.render(st, h.ctx);
-    const data = view.rows.flat().map((b) => b.callback_data);
+    const data = buttonsOf(view.text).map(([, callback]) => callback);
     for (const cb of [
       "iva_menu:svc:c:doc",
       "iva_menu:svc:c:cln",
@@ -179,10 +171,9 @@ test("render snapshots the current run before returning its promise", async (t) 
     "doc",
     { argv: [process.execPath, "-e", "setTimeout(() => {}, 2000)"] },
     {
-      tg: h.ctx.tg,
+      edit: () => Promise.resolve(),
       chatId: st.chatId,
       messageId: st.msgId,
-      loader: LOADERS.doc,
       progressView: () => ({ text: "running" }),
       ...fastRun,
     },
@@ -202,7 +193,7 @@ test("подтверждение: c:<cmd> рисует описание и ▶ g
   for (const cmd of ["doc", "cln", "mem"]) {
     await service.on("c", [cmd], st, h.ctx);
     assert.ok(st._last);
-    const data = st._last.rows.flat().map((b) => b.callback_data);
+    const data = buttonsOf(st._last.text).map(([, callback]) => callback);
     assert.ok(data.includes(`iva_menu:svc:go:${cmd}`));
     assert.ok(data.includes("iva_menu:svc:o")); // Назад к списку
   }
@@ -250,7 +241,7 @@ test("doc: doctor receives the menu's canonical data directory", async () => {
   assert.equal(spec.env?.ASSISTANT_DATA_DIR, dataDir);
 });
 
-test("go:doc: прогресс с 🔄-entity, финал ✅ с кнопкой Назад", async () => {
+test("go:doc: прогресс с 🔄, финал ✅ с кнопкой Назад", async () => {
   resetForTests();
   const dataDir = mkdtempSync(join(tmpdir(), "iva-data-"));
   const h = makeCtx({
@@ -269,16 +260,14 @@ test("go:doc: прогресс с 🔄-entity, финал ✅ с кнопкой 
   h.st = st;
   await service.on("go", ["doc"], st, h.ctx);
   await waitFor(() => currentRun()?.status === "done");
-  await waitFor(() => h.tgCalls.some((c) => /✅/.test(c.body.text || "")));
-  const rich = h.tgCalls.find((c) => c.body.entities);
-  assert.ok(rich);
-  assert.ok(rich.body.entities);
-  assert.equal(rich.body.entities[0].custom_emoji_id, LOADERS.doc.id);
-  const final = h.tgCalls.filter((c) => /✅/.test(c.body.text || "")).at(-1);
+  await waitFor(() => h.rendered.some((v) => /✅/.test(v.text)));
+  assert.ok(h.rendered.some((v) => v.text.startsWith(LOADERS.doc.alt)));
+  const final = h.rendered.filter((v) => /✅/.test(v.text)).at(-1);
   assert.ok(final);
-  assert.ok(final.body.text);
-  assert.match(final.body.text, /Диагностика пройдена/);
-  assert.ok(JSON.stringify(final.body.reply_markup).includes("iva_menu:svc:o"));
+  assert.match(final.text, /Диагностика пройдена/);
+  assert.ok(
+    buttonsOf(final.text).some(([, data]) => data === "iva_menu:svc:o"),
+  );
 });
 
 test("go:cln: сводка парсит финальную строку cleanup", async () => {
@@ -305,15 +294,12 @@ test("go:cln: сводка парсит финальную строку cleanup"
   h.st = st;
   await service.on("go", ["cln"], st, h.ctx);
   await waitFor(() =>
-    h.tgCalls.some(
-      (c) => /Чистка/.test(c.body.text || "") && /✅/.test(c.body.text || ""),
-    ),
+    h.rendered.some((v) => /Чистка/.test(v.text) && /✅/.test(v.text)),
   );
-  const final = h.tgCalls.filter((c) => /✅/.test(c.body.text || "")).at(-1);
+  const final = h.rendered.filter((v) => /✅/.test(v.text)).at(-1);
   assert.ok(final);
-  assert.ok(final.body.text);
-  assert.match(final.body.text, /3 файл/);
-  assert.match(final.body.text, /224(\.0)? МБ/);
+  assert.match(final.text, /3 файл/);
+  assert.match(final.text, /224(\.0)? МБ/);
 });
 
 test("go:mem: юнит через systemctl, финал «Цикл памяти пройден»", async () => {
@@ -345,7 +331,7 @@ test("go:mem: юнит через systemctl, финал «Цикл памяти 
   h.st = st;
   await service.on("go", ["mem"], st, h.ctx);
   await waitFor(() =>
-    h.tgCalls.some((c) => /Цикл памяти пройден/.test(c.body.text || "")),
+    h.rendered.some((v) => /Цикл памяти пройден/.test(v.text)),
   );
 });
 
@@ -376,9 +362,7 @@ test("busy-гейт: второй go при running — экран «Уже ид
   // отмена через ab
   await service.on("ab", [], st, h.ctx);
   await waitFor(() => currentRun()?.status === "cancelled");
-  await waitFor(() =>
-    h.tgCalls.some((c) => /Прервано/.test(c.body.text || "")),
-  );
+  await waitFor(() => h.rendered.some((v) => /Прервано/.test(v.text)));
 });
 
 test("update-lock: занят — go:doc не стартует, текст про обновление", async () => {
@@ -423,8 +407,8 @@ function gatedStand(
   const originalFetch = globalThis.fetch;
   const originalError = console.error;
   globalThis.fetch = (async (_url: string, init: { body: string }) => {
-    const { text } = JSON.parse(init.body) as { text?: string };
-    sent.push(text ?? "");
+    const body = JSON.parse(init.body) as TelegramBody;
+    sent.push(body.rich_message?.markdown ?? body.text ?? "");
     return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
   }) as unknown as typeof fetch;
   console.error = () => {}; // «[security] outbound leak redacted» на каждый тик
@@ -441,7 +425,6 @@ function gatedStand(
     msgId: 1,
   }) as unknown as MenuServiceState;
   const ctx: MenuServiceContext = {
-    tg: bridgeTg as MenuServiceContext["tg"],
     deps: {
       root: "/x",
       dataDir,
@@ -451,12 +434,10 @@ function gatedStand(
     },
     flows: flows as unknown as MenuServiceContext["flows"],
     tr: (_en: string, ru: string) => ru,
-    btn: (text: string, data: string) => ({ text, callback_data: data }),
-    backRow: () => [{ text: "‹ Назад", callback_data: "iva_menu:r:o" }],
     show: async (state: MenuServiceState, sid: string) => {
       state.screen = sid;
       const v = await service.render(state, ctx);
-      await ctx.flows.screen(state, v.text, v.rows);
+      await ctx.flows.screen(state, v.text);
     },
   };
   return { ctx, st, sent };

@@ -86,8 +86,6 @@ test("the ⏰ screen lists the nearest reminders and the dispatcher tick", async
           ctx: {
             deps: { dataDir: string };
             tr: (english: string, russian: string) => string;
-            btn: (text: string, callbackData: string) => unknown;
-            backRow: (screen: string) => unknown[];
           },
         ) => Promise<{ text: string }>;
       };
@@ -95,19 +93,20 @@ test("the ⏰ screen lists the nearest reminders and the dispatcher tick", async
     const context = {
       deps: { dataDir },
       tr: (english: string) => english,
-      btn: (text: string, callbackData: string) => ({ text, callbackData }),
-      backRow: () => [],
     };
     const tz = resolveTimeZone(process.env.ASSISTANT_TIMEZONE);
 
     const { text } = await screen.default.render({ page: 0 }, context);
     assert.ok(text.includes("⏰ Reminders"));
-    const soonAt = text.indexOf(`• ${formatZoned(soon.nextRunAtMs, tz)} скоро`);
+    // Ближайшие напоминания — строками таблицы | Когда | Напоминание |.
+    const soonAt = text.indexOf(
+      `| ${formatZoned(soon.nextRunAtMs, tz)} | скоро |`,
+    );
     const laterAt = text.indexOf(
-      `• ${formatZoned(later.nextRunAtMs, tz)} позже`,
+      `| ${formatZoned(later.nextRunAtMs, tz)} | позже |`,
     );
     const dailyAt = text.indexOf(
-      `• ${formatZoned(daily.nextRunAtMs, tz)} (repeats) каждый день`,
+      `| ${formatZoned(daily.nextRunAtMs, tz)} | (repeats) каждый день |`,
     );
     assert.ok(soonAt >= 0, text);
     assert.ok(laterAt > soonAt, text);

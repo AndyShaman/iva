@@ -35,7 +35,7 @@ const STUB_SCREENS = {
   // texts.k — экран владеет тем же kind, что ждёт живое меню: только такое ожидание
   // усыновление забирает с собой (чужой kind обрабатывать нечем).
   srch: {
-    render: () => Promise.resolve({ text: "stub", rows: [] }),
+    render: () => Promise.resolve({ text: "stub" }),
     texts: { k: () => Promise.resolve() },
   },
 };

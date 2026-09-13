@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns test registration. */
-// Дешёвый CRAP-тест границы handleWizardCallback: шесть глаголов — что ушло в tg
-// (метод + текст/клавиатура) и что записалось в состояние. Сеть и .env подменены:
-// fetch пишет вызовы, состояние сеется напрямую во flows.
+// Дешёвый CRAP-тест границы handleWizardCallback: шесть глаголов — что ушло в tg (метод +
+// markdown экрана) и что записалось в состояние. Сеть и .env подменены: fetch пишет вызовы,
+// состояние сеется напрямую во flows.
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +20,6 @@ const { flows, handleWizardCallback } = (await import(
 type TgCall = {
   method: string;
   text: string;
-  keyboard: string;
 };
 let seq = 0;
 const nextIds = (): { chat: number; user: string } => {
@@ -67,12 +66,12 @@ function spy() {
     const raw = typeof init?.body === "string" ? init.body : "{}";
     const body = JSON.parse(raw) as {
       text?: string;
-      reply_markup?: unknown;
+      rich_message?: { markdown?: string };
     };
+    // Кнопки теперь живут строкой в markdown: и текст, и callback_data — в одном поле.
     calls.push({
       method: url.split("/").at(-1) ?? "",
-      text: body.text ?? "",
-      keyboard: JSON.stringify(body.reply_markup ?? null),
+      text: body.rich_message?.markdown ?? body.text ?? "",
     });
     if (url.includes("api.telegram.org"))
       return Promise.resolve(
@@ -89,7 +88,7 @@ function edits(): TgCall[] {
   return calls.filter((call) => call.method === "editMessageText");
 }
 
-test("keep закрывает визард текстом и меню-клавиатурой", async () => {
+test("keep закрывает визард текстом и кнопкой меню", async () => {
   spy();
   try {
     const { chat, user, st } = seed("intro");
@@ -100,7 +99,7 @@ test("keep закрывает визард текстом и меню-клави
     );
     assert.equal(edits().length, 1);
     assert.match(edits()[0].text, /Kept the current configuration\./u);
-    assert.match(edits()[0].keyboard, /iva_menu:r:o/u);
+    assert.match(edits()[0].text, /iva_menu:r:o/u);
     assert.equal(st.step, "intro");
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
@@ -114,7 +113,7 @@ test("cancel отвечает отменой из любого шага", async 
     assert.equal(await tap(chat, user, "iva_model:cancel"), true);
     assert.equal(edits().length, 1);
     assert.match(edits()[0].text, /Cancelled\./u);
-    assert.match(edits()[0].keyboard, /iva_menu:r:o/u);
+    assert.match(edits()[0].text, /iva_menu:r:o/u);
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
   }
@@ -128,7 +127,7 @@ test("chg рисует экран провайдеров", async () => {
     assert.equal(st.step, "provider");
     assert.equal(edits().length, 1);
     assert.match(edits()[0].text, /Pick a provider:/u);
-    assert.match(edits()[0].keyboard, /iva_model:prov:ollama/u);
+    assert.match(edits()[0].text, /iva_model:prov:ollama/u);
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
   }

@@ -23,13 +23,13 @@ import {
   VaultDirError,
   resolveVaultDir,
 } from "../../../packages/vault-dir/index.ts";
+import { button, escapeRichText } from "./buttons.ts";
 
 const SID = "core";
 const PARENT = "r";
 const EXCERPT_LIMIT = 400;
 
 type Lang = "en" | "ru";
-type Button = { text: string; callback_data: string };
 type Interview = {
   i: number;
   qa: Array<{ q: string; a: string }>;
@@ -79,13 +79,18 @@ type MenuContext = {
   };
   getLang: () => string;
   tr: (english: string, russian: string) => string;
-  btn: (text: string, callbackData: string) => Button;
-  backRow: (screen: string) => Button[];
   show: (state: MenuState, screen: string) => Promise<void>;
   flows: {
-    screen: (state: MenuState, text: string, rows: Button[][]) => Promise<void>;
+    screen: (state: MenuState, text: string) => Promise<void>;
   };
 };
+
+function backLine(ctx: MenuContext): string {
+  return `${button(ctx.tr("‹ Menu", "‹ Меню"), `iva_menu:${PARENT}:o`)} — ${ctx.tr(
+    "back to the settings.",
+    "вернуться в настройки.",
+  )}`;
+}
 
 function errorMessage(error: unknown): string {
   return (error as { readonly message: string }).message;
@@ -245,26 +250,26 @@ function renderInterviewQuestion(st: MenuState, ctx: MenuContext) {
   const q = INTERVIEW[i];
   st.awaitText = { kind: "interview", secret: false, data: {} };
   const text = [
-    ctx.tr(
+    `# ${ctx.tr(
       `💾 Core memory · ${i + 1}/${INTERVIEW.length}`,
       `💾 Память · ${i + 1}/${INTERVIEW.length}`,
-    ),
-    "",
+    )}`,
     q.text[lang] ?? q.text.ru,
-    "",
     ctx.tr(
       "Reply with text, or skip / finish below.",
       "Ответь текстом, или пропусти / заверши кнопкой ниже.",
     ),
-  ].join("\n");
-  const rows = [
-    [
-      ctx.btn(ctx.tr("Skip", "Пропустить"), `iva_menu:${SID}:skip`),
-      ctx.btn(ctx.tr("Finish", "Завершить"), `iva_menu:${SID}:fin`),
-    ],
-    ctx.backRow(PARENT),
-  ];
-  return ctx.flows.screen(st, text, rows);
+    `${button(ctx.tr("Skip", "Пропустить"), `iva_menu:${SID}:skip`)} — ${ctx.tr(
+      "leave this one and move on.",
+      "оставить этот вопрос и идти дальше.",
+    )}`,
+    `${button(ctx.tr("Finish", "Завершить"), `iva_menu:${SID}:fin`)} — ${ctx.tr(
+      "stop here and send what you've answered.",
+      "остановиться и отдать уже отвеченное.",
+    )}`,
+    backLine(ctx),
+  ].join("\n\n");
+  return ctx.flows.screen(st, text);
 }
 
 // Записать ответ (или пропуск) и перейти к следующему вопросу; после последнего — завершить.
@@ -336,11 +341,10 @@ async function finish(
     const message = errorMessage(error);
     return ctx.flows.screen(
       st,
-      ctx.tr(
+      `${ctx.tr(
         `Couldn't save the interview: ${message}`,
         `Не удалось сохранить интервью: ${message}`,
-      ),
-      [ctx.backRow(PARENT)],
+      )}\n\n${backLine(ctx)}`,
     );
   }
 
@@ -350,11 +354,10 @@ async function finish(
   if (isRunning(key)) {
     return ctx.flows.screen(
       st,
-      ctx.tr(
+      `${ctx.tr(
         "Answers saved to vault/core-interview.md. Iva is busy right now — send her «update your memory core» once she's free.",
         "Ответы сохранены в vault/core-interview.md. Ива сейчас занята — напиши ей «обнови ядро памяти», когда освободится.",
-      ),
-      [ctx.backRow(PARENT)],
+      )}\n\n${backLine(ctx)}`,
     );
   }
 
@@ -370,11 +373,10 @@ async function finish(
   if (delivered === true) {
     await ctx.flows.screen(
       st,
-      ctx.tr(
+      `${ctx.tr(
         "Sent to Iva — she'll distill your answers into the memory core and confirm.",
         "Передал иве — она сожмёт ответы в ядро памяти и подтвердит.",
-      ),
-      [ctx.backRow(PARENT)],
+      )}\n\n${backLine(ctx)}`,
     );
     return true;
   }
@@ -387,31 +389,24 @@ export default {
 
   async render(st: MenuState, ctx: MenuContext) {
     const excerpt = await coreExcerpt();
-    const head = ctx.tr("💾 Memory core", "💾 Ядро памяти");
+    const T = ctx.tr;
+    // Тексты ошибок — не данные пользователя: их не экранируем (обратный слэш в имени
+    // переменной сломал бы и сырой текст, и outbound-гейт, который читает ту же строку).
     const body = excerpt.error
-      ? ctx.tr(
-          `Vault is misconfigured: ${excerpt.error}`,
-          `Хранилище не настроено: ${excerpt.error}`,
-        )
+      ? `${T("Vault is misconfigured:", "Хранилище не настроено:")} ${excerpt.error}`
       : excerpt.text
-        ? `${ctx.tr("Current core:", "Текущее ядро:")}\n\n${excerpt.text}`
-        : ctx.tr("The memory core is empty.", "Ядро памяти пусто.");
-    const hint = ctx.tr(
-      "The interview asks 6 questions; Iva turns your answers into the core.",
-      "Интервью — 6 вопросов; ответы ива сама превратит в ядро.",
-    );
-    return {
-      text: `${head}\n\n${body}\n\n${hint}`,
-      rows: [
-        [
-          ctx.btn(
-            ctx.tr("Take the interview", "Пройти интервью"),
-            `iva_menu:${SID}:go`,
-          ),
-        ],
-        ctx.backRow(PARENT),
-      ],
-    };
+        ? `${T("Current core:", "Текущее ядро:")}\n\n${escapeRichText(excerpt.text)}`
+        : T("The memory core is empty.", "Ядро памяти пусто.");
+    const text = [
+      `# ${T("💾 Memory core", "💾 Ядро памяти")}`,
+      body,
+      `${button(T("Take the interview", "Пройти интервью"), `iva_menu:${SID}:go`)} — ${T(
+        "the interview asks 6 questions; Iva turns your answers into the core.",
+        "интервью — 6 вопросов; ответы ива сама превратит в ядро.",
+      )}`,
+      backLine(ctx),
+    ].join("\n\n");
+    return { text };
   },
 
   async on(

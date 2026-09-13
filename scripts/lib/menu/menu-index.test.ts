@@ -50,15 +50,11 @@ type TextMessage = {
   text: string;
 };
 type ScreenContext = {
-  backRow: (screen: string) => Array<Record<string, unknown>>;
   show: (state: MenuState, screen: string) => Promise<void>;
 };
 type Screen = {
   parent: string | null;
-  render: (
-    state: MenuState,
-    context: ScreenContext,
-  ) => { text: string; rows: Array<Array<Record<string, unknown>>> };
+  render: (state: MenuState, context: ScreenContext) => { text: string };
   on: (verb: string, args: string[]) => unknown;
   texts: {
     demo: (
@@ -101,9 +97,9 @@ function fakeScreens() {
   const log: Log = { render: [], on: [], texts: [] };
   const mk = (sid: string, parent: string | null): Screen => ({
     parent,
-    render(st: MenuState, ctx: ScreenContext) {
+    render(st: MenuState) {
       log.render.push(st.screen);
-      return { text: `[${st.screen}#${st.page}]`, rows: [ctx.backRow("r")] };
+      return { text: `[${st.screen}#${st.page}]` };
     },
     on(verb: string, args: string[]) {
       log.on.push({ sid, verb, args: [...args] });
@@ -547,16 +543,14 @@ test("every button on the root screen resolves to a registered screen", () => {
     {},
     {
       tr: (_english: string, russian: string) => russian,
-      btn: (text: string, callback_data: string) => ({ text, callback_data }),
     },
   );
 
   // Псевдо-sid — хендофф в визарды /model и /think, их обрабатывает сам движок (index.ts).
   const known = new Set([...Object.keys(SCREENS), "mdl", "thk"]);
-  const sids = view.rows
-    .flat()
-    .map((button: { callback_data: string }) => button.callback_data)
-    .map((data: string) => data.replace(/^iva_menu:/u, "").split(":")[0]);
+  const sids = [...view.text.matchAll(/<tg-button[^>]*data="([^"]+)"/g)]
+    .map((match) => match[1])
+    .map((data) => data.replace(/^iva_menu:/u, "").split(":")[0]);
 
   assert.ok(sids.length > 0, "the root screen must have buttons at all");
   for (const sid of sids)
