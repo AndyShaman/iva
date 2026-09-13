@@ -21,6 +21,8 @@ import { readEnvValues, upsertEnv } from "../lib/env-file.ts";
 import { createFlows } from "../lib/tg-flow.ts";
 import {
   button,
+  buttonRow,
+  escapeRichText,
   richRow,
   type RichButton,
   type RichButtonStyle,
@@ -29,7 +31,6 @@ import type { ModelOption } from "../lib/model-catalog.ts";
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { ALLOWED, DATA_DIR_ABS, ENV_PATH, log } from "./config.ts";
 import { reply, sc, tg } from "./transport.ts";
-import { button, buttonRow, escapeRichText } from "../lib/menu/buttons.ts";
 
 type FlowId = number | string;
 
