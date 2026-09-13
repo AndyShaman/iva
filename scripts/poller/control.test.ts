@@ -16,6 +16,10 @@ type CancelCall = {
 };
 type ControlUpdate = Record<string, unknown>;
 type ControlModule = {
+  applyTelegramButtonTap: (
+    update: ControlUpdate,
+    callback: Record<string, unknown>,
+  ) => boolean;
   handleAwaitNonText: (
     message: CaptureMessage & Record<string, unknown>,
     pending: CaptureState,
@@ -43,6 +47,7 @@ type ControlModule = {
     },
   ) => Promise<boolean>;
   OUT_OF_BAND_COMMANDS: string[];
+  TELEGRAM_EVE_CALLBACK_PREFIXES: readonly string[];
 };
 type RunStatusModule = {
   setChatStatus: (chatKey: string, patch: Record<string, unknown>) => void;
@@ -104,8 +109,13 @@ const [controlModule, runStatusModule, wizardsModule, queueModule, mainModule] =
     import("./queue.ts"),
     import("./main.ts"),
   ])) as [unknown, unknown, unknown, unknown, unknown];
-const { handleAwaitNonText, handleControl, OUT_OF_BAND_COMMANDS } =
-  controlModule as ControlModule;
+const {
+  applyTelegramButtonTap,
+  handleAwaitNonText,
+  handleControl,
+  OUT_OF_BAND_COMMANDS,
+  TELEGRAM_EVE_CALLBACK_PREFIXES,
+} = controlModule as ControlModule;
 const status = runStatusModule as RunStatusModule;
 const { flows } = wizardsModule as WizardsModule;
 const queue = queueModule as QueueModule;
@@ -708,6 +718,207 @@ test("a non-private rejection does not reveal controls to an untrusted user", as
   assert.equal(await handleControl(update, deps), true);
   assert.deepEqual(cancels, []);
   assert.deepEqual(acks, [["cq-5", undefined]]);
+});
+
+// Кнопка, написанная моделью: её data — реплика пользователя, поэтому тап уходит
+// дальше обычным сообщением (allowlist, очередь и доставка — как у текста), а не
+// колбэком в eve: сессию наполняет inbound pipeline, а он читает сообщения.
+test("тап по кнопке модели уходит дальше обычным сообщением", async () => {
+  const { acks, deps } = recordingDeps();
+  const update: ControlUpdate = {
+    update_id: 61,
+    callback_query: {
+      id: "cq-tap",
+      from: trustedFrom,
+      data: "Отложи на час",
+      message: {
+        message_id: 77,
+        date: 1_700_000_000,
+        message_thread_id: 5,
+        chat,
+        from: { id: 424242, is_bot: true },
+        text: "Напомнить?",
+      },
+    },
+  };
+
+  assert.equal(
+    await handleControl(update, deps),
+    false,
+    "тап идёт в admission",
+  );
+  assert.deepEqual(acks, [["cq-tap", undefined]]);
+  assert.equal(update.callback_query, undefined, "колбэк больше не колбэк");
+  assert.deepEqual(update.message, {
+    message_id: 77,
+    date: 1_700_000_000,
+    message_thread_id: 5,
+    chat,
+    from: { id: 42, is_bot: false },
+    text: "Отложи на час",
+  });
+});
+
+// Отправителя — нажавшего, не бота, и чат — тот же, где стоит кнопка: иначе ответ
+// уедет в чужой чат, а allowlist будет судить чат-бота.
+test("тап отвечает от нажавшего и в чат кнопки, а не в чат бота", async () => {
+  const update: ControlUpdate = {
+    update_id: 62,
+    callback_query: {
+      id: "cq-sender",
+      from: { id: 42, is_bot: false, username: "owner" },
+      data: "Да",
+      message: {
+        message_id: 78,
+        chat: { id: 7, type: "private", title: "bot chat" },
+        from: { id: 424242, is_bot: true },
+      },
+    },
+  };
+
+  assert.equal(
+    applyTelegramButtonTap(update, update.callback_query as never),
+    true,
+  );
+  const tap = update.message as Record<string, unknown>;
+  assert.deepEqual(tap.from, { id: 42, is_bot: false, username: "owner" });
+  assert.deepEqual(tap.chat, { id: 7, type: "private", title: "bot chat" });
+});
+
+// eve владеет двумя префиксами: подтверждения HITL и кнопки входа в подключения.
+// Подмена их сообщением молча теряет подтверждение или вход, поэтому они уходят в eve.
+test("колбэки eve мост не подменяет сообщением", async () => {
+  const eve = (await import("eve/channels/telegram")) as {
+    TELEGRAM_HITL_CALLBACK_PREFIX: string;
+  };
+  assert.equal(
+    TELEGRAM_EVE_CALLBACK_PREFIXES[0],
+    eve.TELEGRAM_HITL_CALLBACK_PREFIX,
+    "префикс HITL-колбэка обязан совпадать с eve",
+  );
+
+  for (const data of ["eve:1", "eve_auth:42"]) {
+    const { acks, deps } = recordingDeps();
+    const update: ControlUpdate = {
+      update_id: 63,
+      callback_query: {
+        id: `cq-${data}`,
+        from: trustedFrom,
+        message: { message_id: 1, date: 1, chat },
+        data,
+      },
+    };
+
+    assert.equal(await handleControl(update, deps), false, data);
+    assert.equal(update.message, undefined, data);
+    assert.ok(update.callback_query, data);
+    assert.deepEqual(acks, [], data);
+  }
+});
+
+// Пространство `iva_*` — моста: незнакомый его колбэк остаётся колбэком (сегодня его
+// доставляет eve), в сообщение его не превращаем даже когда экрана для него ещё нет.
+test("незнакомый iva-колбэк остаётся в пространстве моста", async () => {
+  const { acks, deps } = recordingDeps();
+  const update: ControlUpdate = {
+    update_id: 64,
+    callback_query: {
+      id: "cq-iva-future",
+      from: trustedFrom,
+      message: { message_id: 1, date: 1, chat },
+      data: "iva_future:x",
+    },
+  };
+
+  assert.equal(await handleControl(update, deps), false);
+  assert.equal(update.message, undefined);
+  assert.deepEqual(acks, []);
+});
+
+// Чужому тапу — пустой ack без подсказок (наличие контрола знать нечего), а решение
+// по allowlist остаётся за admission: он же пишет отброс в журнал.
+test("чужой тап гасит спиннер и не становится сообщением", async () => {
+  const { acks, deps } = recordingDeps();
+  const update: ControlUpdate = {
+    update_id: 65,
+    callback_query: {
+      id: "cq-stranger",
+      from: { id: 999, is_bot: false },
+      message: { message_id: 1, date: 1, chat },
+      data: "Отложи на час",
+    },
+  };
+
+  assert.equal(await handleControl(update, deps), false);
+  assert.deepEqual(acks, [["cq-stranger", undefined]]);
+  assert.equal(update.message, undefined);
+  assert.ok(update.callback_query, "allowlist судит admission, а не мост");
+});
+
+// В группе текст принимается только как упоминание, команда или reply боту, а нажатие
+// кнопки — ни то, ни другое: тап там не доедет, поэтому говорим про личку прямо.
+test("тап в группе отвечает подсказкой про личный чат", async () => {
+  const { acks, deps } = recordingDeps();
+  const update: ControlUpdate = {
+    update_id: 66,
+    callback_query: {
+      id: "cq-group-tap",
+      from: trustedFrom,
+      message: {
+        message_id: 1,
+        date: 1,
+        chat: { id: -1001, type: "supergroup" },
+      },
+      data: "Отложи на час",
+    },
+  };
+
+  assert.equal(await handleControl(update, deps), true, "тап проглочен");
+  assert.equal(acks.length, 1);
+  assert.match(acks[0][1] ?? "", /private|личн/u);
+  assert.equal(update.message, undefined);
+  assert.ok(update.callback_query, "подсказка — не доставка");
+});
+
+// Конверт без сообщения (inline_message_id) или без чата сообщением стать не может —
+// гасим тап здесь, иначе admission запишет его и очередь встанет на повторе.
+test("неполный конверт тапа не превращается в сообщение", async () => {
+  for (const callback of [
+    { id: "cq-inline", from: trustedFrom, data: "Да" },
+    {
+      id: "cq-no-chat",
+      from: trustedFrom,
+      data: "Да",
+      message: { message_id: 1, date: 1 },
+    },
+  ]) {
+    const { acks, deps } = recordingDeps();
+    const update: ControlUpdate = { update_id: 67, callback_query: callback };
+    const label = String(callback.id);
+
+    assert.equal(await handleControl(update, deps), true, label);
+    assert.deepEqual(acks, [[String(callback.id), undefined]], label);
+    assert.equal(update.message, undefined, label);
+    assert.ok(update.callback_query, label);
+  }
+});
+
+// Тап без отправителя — не наш: allowlist судит admission по from, а его нет.
+test("тап без отправителя не подменяется, его снимает admission", async () => {
+  const { acks, deps } = recordingDeps();
+  const update: ControlUpdate = {
+    update_id: 68,
+    callback_query: {
+      id: "cq-no-from",
+      data: "Да",
+      message: { message_id: 1, date: 1, chat },
+    },
+  };
+
+  assert.equal(await handleControl(update, deps), false);
+  assert.deepEqual(acks, [["cq-no-from", undefined]]);
+  assert.equal(update.message, undefined);
+  assert.ok(update.callback_query);
 });
 
 test("malformed update callback is not claimed as a local control", async () => {

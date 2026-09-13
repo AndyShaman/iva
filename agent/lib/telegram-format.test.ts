@@ -76,4 +76,8 @@ await test("chunking and rich routing keep their current boundaries", () => {
 
   assert.equal(needsRichMessage("- [ ] todo"), true);
   assert.equal(needsRichMessage("**bold** and `code`"), false);
+  assert.equal(
+    needsRichMessage('<tg-button data="Отложи на час">На час</tg-button>'),
+    true,
+  );
 });

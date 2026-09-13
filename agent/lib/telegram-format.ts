@@ -559,12 +559,17 @@ export function toTelegramHtmlChunks(md: unknown, limit = 4096): string[] {
 // ── rich-message routing ────────────────────────────────────────────────────────
 // True when the text has a construct that Telegram's rich messages
 // (sendRichMessage, Bot API 10.1) render natively but parse_mode=HTML CANNOT:
-// GFM tables, task lists, <details>, block math. Headings/quotes/bold/etc.
-// render fine in HTML, so — like hermes-agent — we do NOT route on those: normal
-// replies stay on the proven HTML path. Conservative by design: a false negative
-// is just today's behavior; a false positive falls back on API rejection anyway.
+// GFM tables, task lists, <details>, block math, or a button inside the text
+// (<tg-button>, the model's own control — in HTML it would stay visible as a tag).
+// Headings/quotes/bold/etc. render fine in HTML, so — like hermes-agent — we do NOT
+// route on those: normal replies stay on the proven HTML path. Conservative by
+// design: a false negative is just today's behavior; a false positive falls back on
+// API rejection anyway.
 export function needsRichMessage(md: unknown): boolean {
   const s = String(md);
+  // Кнопка в строке ответа: клавиатуры у нас больше нет, поэтому такой ответ
+  // обязан уехать rich-путём — иначе пользователь увидит сам тег.
+  if (s.includes("<tg-button")) return true;
   // GFM table delimiter row: a line of only pipes/dashes/colons/space with a dash run.
   // Plain prose effectively never produces such a line, so this alone is a safe signal.
   for (const line of s.split("\n")) {

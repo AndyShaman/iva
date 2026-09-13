@@ -22,6 +22,15 @@ const runStatus =
 
 type Call = { method: string; body: Record<string, unknown> };
 
+// Markdown из тела rich-вызова: и статус, и правки несут его в rich_message.
+const markdownOf = (call: Call): string =>
+  String(
+    (call.body.rich_message as { markdown?: unknown } | undefined)?.markdown,
+  );
+
+const STOP_BUTTON =
+  '<tg-button type="callback_data" style="danger" data="iva_cancel">⏹ Stop</tg-button>';
+
 function handle(
   reply: (
     call: Call,
@@ -45,25 +54,30 @@ function handle(
   };
 }
 
-await test("статус уходит анимированным эмодзи и несёт кнопку «Стоп»", async () => {
+await test("статус уходит rich-сообщением с кнопкой «Стоп» в строке текста", async () => {
   const { calls, tg } = handle();
 
   assert.equal(await status.sendWorkingStatus(tg), 500);
   assert.equal(calls.length, 1);
-  assert.ok(Array.isArray(calls[0].body.entities));
-  assert.deepEqual(calls[0].body.reply_markup, status.stopReplyMarkup());
+  assert.equal(calls[0].method, "sendRichMessage");
+  const markdown = markdownOf(calls[0]);
+  assert.match(markdown, /^<tg-emoji emoji-id="5818797194127346654">💬<\/tg-emoji> Working… /u);
+  assert.ok(markdown.endsWith(STOP_BUTTON));
+  assert.equal(calls[0].body.reply_markup, undefined);
 });
 
 await test("отказ Telegram на custom_emoji роняет лоадер на ⏳ навсегда", async () => {
   const rejectCustom = handle((call, index) =>
-    index === 0 && call.body.entities
+    index === 0 && markdownOf(call).includes("tg-emoji")
       ? { ok: false, body: { description: "Bad Request: custom emoji" } }
       : { ok: true, body: { result: { message_id: 501 } } },
   );
 
   assert.equal(await status.sendWorkingStatus(rejectCustom.tg), 501);
   assert.equal(rejectCustom.calls.length, 2);
-  assert.match(String(rejectCustom.calls[1].body.text), /^⏳ /u);
+  // Кнопка живёт в тексте, поэтому падение анимации её не снимает.
+  assert.match(markdownOf(rejectCustom.calls[1]), /^⏳ Working… /u);
+  assert.ok(markdownOf(rejectCustom.calls[1]).endsWith(STOP_BUTTON));
 
   const next = handle();
   assert.equal(
@@ -71,8 +85,7 @@ await test("отказ Telegram на custom_emoji роняет лоадер на
     500,
   );
   assert.equal(next.calls.length, 1);
-  assert.equal(next.calls[0].body.entities, undefined);
-  assert.equal(next.calls[0].body.reply_markup, undefined);
+  assert.match(markdownOf(next.calls[0]), /^⏳ Working…$/u);
 });
 
 await test("вне лички кнопку «Стоп» не показываем и не дорисовываем", async () => {
@@ -83,7 +96,7 @@ await test("вне лички кнопку «Стоп» не показывае�
 
   assert.equal(await status.sendWorkingStatus(groupTg), 500);
   assert.equal(supergroup.calls.length, 1);
-  assert.equal(supergroup.calls[0].body.reply_markup, undefined);
+  assert.equal(markdownOf(supergroup.calls[0]).includes("<tg-button"), false);
 
   await status.enableWorkingStatusStop(groupTg, 500);
   assert.equal(supergroup.calls.length, 1);
@@ -96,15 +109,17 @@ await test("вне лички кнопку «Стоп» не показывае�
     500,
   );
   assert.equal(proactive.calls.length, 1);
-  assert.equal(proactive.calls[0].body.reply_markup, undefined);
+  assert.equal(markdownOf(proactive.calls[0]).includes("<tg-button"), false);
 
-  // В личке правило прежнее: кнопка и в статусе, и в дорисовке.
+  // В личке правило прежнее: кнопка и в статусе, и в дорисовке — она часть текста,
+  // поэтому кнопку дорисовывает editMessageText, а не editMessageReplyMarkup.
   const direct = handle();
   assert.equal(await status.sendWorkingStatus(direct.tg), 500);
-  assert.deepEqual(direct.calls[0].body.reply_markup, status.stopReplyMarkup());
+  assert.ok(markdownOf(direct.calls[0]).endsWith(STOP_BUTTON));
   await status.enableWorkingStatusStop(direct.tg, 500);
-  assert.equal(direct.calls[1].method, "editMessageReplyMarkup");
-  assert.deepEqual(direct.calls[1].body.reply_markup, status.stopReplyMarkup());
+  assert.equal(direct.calls[1].method, "editMessageText");
+  assert.equal(direct.calls[1].body.message_id, 500);
+  assert.ok(markdownOf(direct.calls[1]).endsWith(STOP_BUTTON));
 });
 
 await test("обычный финал гасит статус и убирает сообщение, повтор — no-op", async () => {
@@ -149,7 +164,8 @@ await test("отмена переписывает статус и оставля
     true,
   );
   assert.equal(calls[0].method, "editMessageText");
-  assert.match(String(calls[0].body.text), /^⏹ Stopped/u);
+  assert.match(markdownOf(calls[0]), /^⏹ Stopped/u);
+  assert.equal(calls[0].body.text, undefined);
   assert.equal(runStatus.getChatStatus(key)?.wasCancelled, true);
 });
 

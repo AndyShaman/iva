@@ -181,6 +181,12 @@ const telegram = telegramChannel({
   // ВАЖНО: наличие этого хука закрывает дефолтную ветку eve НАВСЕГДА — «Unsupported
   // action.» на не-HITL колбэки больше не отправляется. Поэтому чужой колбэк гасим
   // сами пустым answerCallbackQuery: иначе у нажавшего вечный спиннер на кнопке.
+  //
+  // Кнопки, написанные моделью, в long-poll до этого хука не доходят вовсе: мост
+  // превращает тап в обычное сообщение (scripts/poller/control.ts) и отдаёт его
+  // inbound pipeline — подать сообщение в сессию каналу нечем, у него только Bot API,
+  // а inbound pipeline читает сообщения. В webhook-режиме (моста нет) такой тап
+  // остаётся без доставки: здесь он только гаснет.
   onCallbackQuery: async (ctx, query) => {
     const ack = async (text?: string) => {
       try {
