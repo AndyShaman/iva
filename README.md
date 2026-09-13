@@ -161,9 +161,15 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 ## What's New
 
 <details>
-<summary><b>v0.4.1 · 13.09.2026 — expand the latest releases</b></summary>
+<summary><b>v0.4.2 · 13.09.2026 — expand the latest releases</b></summary>
 
 ### 13.09.2026
+
+#### v0.4.2
+
+- 🔘 **Buttons moved inside the message**: the menu, the `/model` and `/think` wizards, the update offer and the "Working" status with ⏹ are Telegram rich messages now — every button sits in a line of text next to what it does, screens have headings, status and timers are tables, "close/turn off" is red and "save/enable" is green. Iva also offers buttons in her own replies when there are two to four options, and a tap comes back to her as your message; the `rich-replies` skill covers the whole palette (headings, tables, folds, footnotes, formulas, pictures, slideshows, maps, link/copy/choice buttons). Needs a Telegram client from August 2026; in groups the reply buttons don't work. [ADR-0015](docs/adr/0015-buttons-live-inside-the-message.md)
+- 💬 **Rich replies and voice are set from the menu**: two new `/menu` screens — a switch for rich replies (`Auto`: tables, task lists, folds and formulas go as rich messages; `Plain text`: ordinary messages) and `🎤 Voice` with the Deepgram key and the recognition language (`Auto`/`Русский`/`English`/`Oʻzbek`); the key is taken from your next message in a private chat and deleted from the chat, and both screens offer a restart after saving.
+- 📦 **Dependencies cleaned up**: the unused `@vercel/connect` is gone, `fast-uri`, `hono` and `qs` under `@modelcontextprotocol/sdk` are bumped past their vulnerabilities (`npm audit`: 0 high, 0 moderate), and the `ai` pin is lifted to `^7.0.82`, the peer eve 0.51.1 requires.
 
 #### v0.4.1
 
