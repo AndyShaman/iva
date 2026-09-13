@@ -328,11 +328,12 @@ test("the daily notice says what is new, in the language of the notice", async (
     sent[0].offer.text,
     /• 🔁 Reply на старое сообщение больше не вешает бота\n/,
   );
+  // What's New sits between the body and the buttons; the buttons close the message.
   assert.match(
     sent[0].offer.text,
-    /Полный список: https:\/\/github\.com\/smixs\/iva-agent\/releases$/,
+    /Полный список: https:\/\/github\.com\/smixs\/iva-agent\/releases\n\n<tg-button [^]*iva_update:skip[^]*<\/tg-button> — напомню завтра$/,
   );
-  // Sent without parse_mode: no markdown marker may reach the chat.
+  // Rich markdown: no stray markdown marker may reach the chat.
   assert.doesNotMatch(sent[0].offer.text, /[`*]/);
 });
 

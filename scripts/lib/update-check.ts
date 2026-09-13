@@ -22,6 +22,8 @@ export type GitCommand = (
 ) => Promise<GitResult | string>;
 type UpdateOffer = {
   text: string;
+  // Кнопки — последний абзац text; отдаются отдельно, чтобы вставить блок между телом и ними.
+  actions: string;
 };
 type TelegramResponse = {
   ok: boolean;
@@ -326,6 +328,7 @@ export function updateOffer(
   );
   return {
     text: `${head}\n\n${tail}\n\n${actions}`,
+    actions,
   };
 }
 
