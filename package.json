@@ -43,8 +43,7 @@
     "@iva/timezone": "file:packages/timezone",
     "@iva/vault-dir": "file:packages/vault-dir",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@vercel/connect": "0.2.2",
-    "ai": "7.0.39",
+    "ai": "^7.0.82",
     "croner": "10.0.1",
     "eve": "0.51.1",
     "just-bash": "^3.0.0",
@@ -62,12 +61,6 @@
     "prettier": "^3.9.6",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.66.0"
-  },
-  "overrides": {
-    "ai": "7.0.39"
-  },
-  "resolutions": {
-    "ai": "7.0.39"
   },
   "engines": {
     "node": "24.x"
