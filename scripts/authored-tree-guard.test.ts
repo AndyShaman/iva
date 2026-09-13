@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 // Guard for the authored tree: eve rebuilds `agent/` at service start, so any module
 // specifier there that resolves outside `agent/` drags `scripts/` into the bundle — the
-// failure that produced the 0.3.14 crash loop (issue #176). There are no escapes left and
-// no list to add one to: the tree is closed, and a new specifier out of `agent/` is red on
-// sight. `#`-aliases are resolved through package.json instead of trusted.
+// failure that produced the 0.3.14 crash loop (issue #176). agent/ never imports
+// scripts/; the only exits are shared packages via @iva/*, and the explicit edge
+// list is pinned by the test below — a new edge out of `agent/` is red on sight.
 //
 // What replaced the last of them is the seam: the half the authored tree needs lives in
 // `agent/lib`, the half `iva` loads on an install whose `agent/` is missing stays in

@@ -1844,3 +1844,92 @@ test("T30 №9: authoredTreeMissing различает дерево и паке�
   );
   assert.equal(authoredTreeMissing(authored), true);
 });
+
+async function doctorOutputPastSystemdGate(
+  root: string,
+): Promise<Array<[string, string]>> {
+  // Секция rollup-status.json стоит ниже раннего выхода systemd, поэтому
+  // штатный doctorOutput (hasSystemd: false) до неё не доходит и на Linux, и
+  // на macOS. Здесь та же обвязка, но systemd есть: двойник отвечает, что всё
+  // выключено/не найдено, и секции идут дальше своим ходом.
+  const events: Array<[string, string]> = [];
+  const runtime: CliRuntime = {
+    ...createCliRuntime(root),
+    C: NO_COLOR,
+    ok: (message) => events.push(["ok", message]),
+    warn: (message) => events.push(["warn", message]),
+    bad: (message) => events.push(["bad", message]),
+    readEnv: completeEnv,
+    hasSystemd: () => true,
+    systemd: {
+      query: () => ({ code: 1, out: "", err: "" }),
+      isEnabled: () => false,
+      isActive: () => false,
+      activate: () => undefined,
+      resetFailed: () => undefined,
+      restart: () => undefined,
+      daemonReload: () => undefined,
+    } as never,
+  };
+  await createDoctorCommand(runtime, lifecycle(), {
+    nodeVersion: "24.19.0",
+    log: () => {},
+    exit: () => undefined,
+  })();
+  return events;
+}
+
+test("rollup-status свежий и здоровый — строка ok", async (t) => {
+  const root = await sandbox(t);
+  mkdirSync(join(root, "data"), { recursive: true });
+  writeFileSync(
+    join(root, "data/rollup-status.json"),
+    JSON.stringify({
+      "memory-daily": { lastSuccessAt: Date.now(), lastExitCode: 0 },
+    }),
+  );
+
+  const events = await doctorOutputPastSystemdGate(root);
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "ok" &&
+        /memory-daily schedule last succeeded 0h ago/u.test(message),
+    ),
+    `нет ok-строки свежего расписания: ${JSON.stringify(events)}`,
+  );
+});
+
+test("rollup-status старый и с провалом — строки предупреждения", async (t) => {
+  const root = await sandbox(t);
+  mkdirSync(join(root, "data"), { recursive: true });
+  writeFileSync(
+    join(root, "data/rollup-status.json"),
+    JSON.stringify({
+      "memory-daily": {
+        lastSuccessAt: Date.now() - 30 * 60 * 60 * 1000,
+        lastExitCode: 1,
+      },
+    }),
+  );
+
+  const events = await doctorOutputPastSystemdGate(root);
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /memory-daily schedule hasn't succeeded in 30h \(> 26h\)/u.test(
+          message,
+        ),
+    ),
+    `нет warn-строки протухшего расписания: ${JSON.stringify(events)}`,
+  );
+  assert.ok(
+    events.some(
+      ([level, message]) =>
+        level === "warn" &&
+        /memory-daily schedule's last run exited 1/u.test(message),
+    ),
+    `нет warn-строки кода провала: ${JSON.stringify(events)}`,
+  );
+});
