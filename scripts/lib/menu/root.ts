@@ -50,6 +50,22 @@ export default {
         ),
       ),
       item(
+        T("💬 Rich replies", "💬 Богатые ответы"),
+        "iva_menu:rich:o",
+        T(
+          "tables and folds as a rich message or as plain text.",
+          "таблицы и свёртки богатым сообщением или обычным текстом.",
+        ),
+      ),
+      item(
+        T("🎤 Voice", "🎤 Голос"),
+        "iva_menu:voice:o",
+        T(
+          "the key that transcribes voice notes, and the language.",
+          "ключ распознавания голосовых и язык.",
+        ),
+      ),
+      item(
         T("🌐 Language", "🌐 Язык"),
         "iva_menu:lang:o",
         T("the language of the menu and replies.", "язык меню и ответов."),

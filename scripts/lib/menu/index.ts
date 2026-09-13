@@ -8,7 +8,7 @@
 //
 // Грамматика callback_data: "iva_menu:<sid>:<verb>[:<arg>[:<arg>]]" — ASCII, только
 // enum/индексы, <=64 байта (тот же принцип, что m:<index> в /model). Никаких user data.
-// sid: r srch lang chr core ub gws cron ntc sk st turn svc (+псевдо mdl/thk — хендофф в визарды).
+// sid: r srch rich voice lang chr core ub gws cron ntc sk st turn svc (+псевдо mdl/thk — хендофф в визарды).
 // verbs: o(навигация) x(закрыть) pg:<n> rf(обновить) + data-вербы экрана (set key rs go
 // q:<i>:<v> skip fin redo apply do).
 
@@ -29,6 +29,8 @@ import { isPrivateTelegramChat } from "#lib/telegram-private-chat.ts";
 
 import root from "./root.ts";
 import search from "./search.ts";
+import rich from "./rich.ts";
+import voice from "./voice.ts";
 import lang from "./lang.ts";
 import character from "./character.ts";
 import core from "./core.ts";
@@ -171,6 +173,8 @@ function telegramCallOk(value: unknown): boolean {
 export const SCREENS = {
   r: root,
   srch: search,
+  rich,
+  voice,
   lang,
   chr: character,
   core,
