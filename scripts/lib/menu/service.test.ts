@@ -423,8 +423,13 @@ function gatedStand(
   const originalFetch = globalThis.fetch;
   const originalError = console.error;
   globalThis.fetch = (async (_url: string, init: { body: string }) => {
-    const { text } = JSON.parse(init.body) as { text?: string };
-    sent.push(text ?? "");
+    const body = JSON.parse(init.body) as {
+      text?: string;
+      rich_message?: { markdown?: string };
+    };
+    // Экраны меню уходят rich-сообщением (rich_message.markdown), старый text — только
+    // от раннера обслуживания. Гейт у обоих путей один и тот же (transport.tg).
+    sent.push(body.rich_message?.markdown ?? body.text ?? "");
     return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
   }) as unknown as typeof fetch;
   console.error = () => {}; // «[security] outbound leak redacted» на каждый тик

@@ -199,14 +199,14 @@ const cb = (
   data,
 });
 
-test("open рисует root, заводит menu-стейт и шлёт новое сообщение", async () => {
+test("open рисует root, заводит menu-стейт и шлёт новое rich-сообщение", async () => {
   const { menu, flows, calls } = setup();
   const st = await menu.open(10, "20");
   assert.equal(st.flow, "menu");
   assert.equal(st.screen, "r");
-  assert.ok(st.msgId); // sendMessage выдал message_id
+  assert.ok(st.msgId); // sendRichMessage выдал message_id
   assert.equal(flows.get(10, "20"), st);
-  assert.equal(calls[0].method, "sendMessage");
+  assert.equal(calls[0].method, "sendRichMessage");
 });
 
 test("грамматика: одноаргументный data-верб уходит в screen.on(verb, args)", async () => {
@@ -352,7 +352,8 @@ test("stale: нет стейта, data-верб -> «устарело» (editMes
   assert.equal(flows.get(10, "20"), null); // стейт не создан
   assert.equal(log.on.length, 0); // экран не тронут
   const edit = calls.find((c) => c.method === "editMessageText");
-  assert.ok(edit && /устарело|expired/i.test(edit.params.text ?? ""));
+  const rich = edit?.params.rich_message as { markdown?: string } | undefined;
+  assert.ok(edit && /устарело|expired/i.test(rich?.markdown ?? ""));
 });
 
 test("stale: msgId mismatch на data-верб -> «устарело», экран не тронут", async () => {
@@ -366,7 +367,10 @@ test("stale: msgId mismatch на data-верб -> «устарело», экра
     calls.some(
       (c) =>
         c.method === "editMessageText" &&
-        /устарело|expired/i.test(c.params.text ?? ""),
+        /устарело|expired/i.test(
+          ((c.params.rich_message ?? {}) as { markdown?: string }).markdown ??
+            "",
+        ),
     ),
   );
 });
@@ -418,14 +422,18 @@ test("allowlist пуст: любой тап проглочен", async () => {
   assert.equal(log.on.length, 0);
 });
 
-test("close r:x снимает стейт и убирает клавиатуру (edit без reply_markup)", async () => {
+test("close r:x снимает стейт и убирает кнопки из текста (edit без reply_markup)", async () => {
   const { menu, flows, calls } = setup();
   const st = await menu.open(10, "20");
   await menu.onCallback(cb("iva_menu:r:x", { messageId: st.msgId }));
   assert.equal(flows.get(10, "20"), null);
   const lastEdit = calls.filter((c) => c.method === "editMessageText").at(-1);
   assert.ok(lastEdit);
-  assert.equal(lastEdit.params.reply_markup, undefined); // клавиатура снята
+  assert.equal(lastEdit.params.reply_markup, undefined); // клавиатуры нет вовсе
+  // Финальный экран — rich: кнопок в нём не осталось (они жили в тексте прежнего экрана).
+  const rich = lastEdit.params.rich_message as
+    { markdown?: string } | undefined;
+  assert.equal(rich?.markdown, "Меню закрыто.");
 });
 
 test("close без стейта: правит тапнутое сообщение, не создаёт стейт", async () => {

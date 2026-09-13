@@ -76,8 +76,15 @@ function telegram(
   });
   mutableGlobal.fetch = (url, init) => {
     const method = url.split("/").at(-1) ?? "";
-    const body = JSON.parse(init.body) as { text?: string };
-    calls.push({ method, text: body.text ?? "" });
+    const body = JSON.parse(init.body) as {
+      text?: string;
+      rich_message?: { markdown?: string };
+    };
+    // Финальные экраны обновления — rich: их markdown лежит в rich_message.markdown.
+    calls.push({
+      method,
+      text: body.rich_message?.markdown ?? body.text ?? "",
+    });
     const answer = reply(method, calls.length);
     return Promise.resolve({
       ok: answer.ok,
@@ -233,7 +240,11 @@ test("a delivery Telegram refuses keeps the job for the next start", async (t) =
   await reconcileUpdateJobs({ root });
 
   assert.equal(existsSync(path), true, "an undelivered final is not dropped");
-  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  // Финал — rich-экран: отказанную правку reporter добивает sendRichMessage'ом.
+  assert.equal(
+    calls.filter((call) => call.method === "sendRichMessage").length,
+    1,
+  );
   assert.ok(
     errors.some((line) => /chat not found/u.test(line)),
     errors.join("\n"),

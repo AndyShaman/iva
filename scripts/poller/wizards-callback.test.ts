@@ -68,11 +68,14 @@ function spy() {
     const body = JSON.parse(raw) as {
       text?: string;
       reply_markup?: unknown;
+      rich_message?: { markdown?: string };
     };
+    // Экраны визарда — rich: текст и кнопки лежат в rich_message.markdown, клавиатуры нет.
+    const markdown = body.rich_message?.markdown;
     calls.push({
       method: url.split("/").at(-1) ?? "",
-      text: body.text ?? "",
-      keyboard: JSON.stringify(body.reply_markup ?? null),
+      text: markdown ?? body.text ?? "",
+      keyboard: markdown ?? JSON.stringify(body.reply_markup ?? null),
     });
     if (url.includes("api.telegram.org"))
       return Promise.resolve(

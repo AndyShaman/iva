@@ -14,6 +14,11 @@
 
 import { getLang } from "#lib/i18n.ts";
 import type { TelegramFlowState } from "../tg-flow.ts";
+import {
+  button,
+  type RichButton,
+  type RichButtonStyle,
+} from "../telegram-buttons.ts";
 import type {
   TelegramCallbackQuery as CallbackQuery,
   TelegramId,
@@ -37,6 +42,9 @@ import turnPolicy from "./turn-policy.ts";
 import service from "./service.ts";
 
 type MaybePromise<T> = T | Promise<T>;
+// Старый ряд экрана: пока экраны не переписаны на rich (D3), они отдают движку
+// "{text, callback_data}"; ряд доезжает до текста через legacyRows в tg-flow.
+// ctx.btn уже возвращает rich-строку — в старом ряду её место держит тип RichButton.
 type MenuButton = { text: string; callback_data: string };
 type MenuAwaitText = { kind: string; secret: boolean; [key: string]: unknown };
 type MenuState = TelegramFlowState;
@@ -84,9 +92,13 @@ type MenuContext = {
   lang: string;
   tr: (english: string, russian: string) => string;
   getLang: () => string;
-  btn: (text: string, callbackData: string) => MenuButton;
+  btn: (
+    text: string,
+    callbackData: string,
+    style?: RichButtonStyle,
+  ) => RichButton;
   show: (state: MenuState, screen: string) => Promise<void>;
-  backRow: (screen: string) => MenuButton[];
+  backRow: (screen: string) => RichButton[];
 };
 type MenuCallbackEvent = {
   updateId: number;
@@ -95,7 +107,10 @@ type MenuCallbackEvent = {
   messageId: number;
   userId: string;
 };
-type MenuView = { text: string; rows: Array<MenuButton[]> };
+// text — markdown rich-сообщения; кнопки экран ставит в него сам (button()). Пока экран
+// отдаёт старый rows, движок сам дописывает его в текст шимом legacyRows — поле rows
+// уйдёт, когда D3 перепишет экраны.
+type MenuView = { text: string; rows?: Array<MenuButton[]> };
 type MenuScreen = {
   render?: (
     state: MenuState,
@@ -191,7 +206,7 @@ export function createMenu({
     lang: "ru",
     tr: (en, ru) => (ctx.lang === "ru" ? ru : en),
     getLang: () => ctx.lang,
-    btn: (text, data) => ({ text, callback_data: data }),
+    btn: (text, data, style) => button(text, data, style),
     // Переключить экран и перерисовать. Страницу НЕ сбрасывает — этим управляет вызывающий
     // (движок сбрасывает page на o-верб; экраны, зовущие show для под-экранов, — сами).
     show: async (st, sid) => {
@@ -311,7 +326,8 @@ export function createMenu({
       return true;
     }
 
-    // Закрытие: снять стейт + убрать клавиатуру. editMessageText без reply_markup её снимает.
+    // Закрытие: снять стейт и переписать сообщение финальным текстом — он идёт без кнопок,
+    // и кнопки прежнего экрана (они были частью его текста) исчезают вместе с ним.
     if (verb === "x") {
       const st = flows.get(chatId, userId);
       const closed = ctx.tr("Menu closed.", "Меню закрыто.");
@@ -324,7 +340,7 @@ export function createMenu({
         await tg("editMessageText", {
           chat_id: chatId,
           message_id: messageId,
-          text: closed,
+          rich_message: { markdown: closed },
         }).catch(() => {});
       }
       return true;
@@ -394,10 +410,12 @@ export function createMenu({
         await tg("editMessageText", {
           chat_id: chatId,
           message_id: messageId,
-          text: ctx.tr(
-            "Menu expired — send /menu",
-            "Меню устарело — отправь /menu заново",
-          ),
+          rich_message: {
+            markdown: ctx.tr(
+              "Menu expired — send /menu",
+              "Меню устарело — отправь /menu заново",
+            ),
+          },
         }).catch(() => {});
         return true;
       }
@@ -506,8 +524,11 @@ export function createMenu({
   }
 
   // /menu: заводит свежий стейт и рисует root. opts.msgId (опц.) — редактировать существующее
-  // сообщение вместо нового (напр. возврат из визарда). Двойной /menu заменяет стейт и
-  // best-effort снимает клавиатуру со старого меню — мёртвое сообщение не зовёт на протухшие тапы.
+  // сообщение вместо нового (напр. возврат из визарда). Двойной /menu заменяет стейт; старое
+  // сообщение кнопок не теряет — бот снимал их editMessageReplyMarkup'ом, а rich-кнопка живёт
+  // в самом тексте и без переписывания всего экрана не снимается. Тапы по старому меню
+  // само-лечатся и без этого шага: нав-вербы усыновляют сообщение, data-вербы отвечают
+  // «меню устарело», закрытие x редактирует именно это сообщение (см. onCallback).
   async function open(
     chatId: TelegramId,
     userId: TelegramId,
@@ -515,14 +536,6 @@ export function createMenu({
   ) {
     ctx.lang = getLang();
     const uid = String(userId);
-    const prev = flows.get(chatId, uid);
-    if (prev && prev.flow === "menu" && prev.msgId) {
-      await tg("editMessageReplyMarkup", {
-        chat_id: chatId,
-        message_id: prev.msgId,
-        reply_markup: { inline_keyboard: [] },
-      }).catch(() => {});
-    }
     const st = flows.start(chatId, uid, "menu", {
       screen: "r",
       page: 0,

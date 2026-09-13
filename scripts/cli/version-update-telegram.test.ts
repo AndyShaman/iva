@@ -136,11 +136,16 @@ function world(
   });
   mutableGlobal.fetch = (url, init) => {
     const method = url.split("/").at(-1) ?? "";
-    const body = JSON.parse(init.body) as { text?: string };
-    calls.push({ method, text: body.text ?? "" });
+    const body = JSON.parse(init.body) as {
+      text?: string;
+      rich_message?: { markdown?: string };
+    };
+    // Финальные экраны обновления — rich: их текст лежит в rich_message.markdown.
+    const text = body.rich_message?.markdown ?? body.text ?? "";
+    calls.push({ method, text });
     // The one line the child process also writes to: the order between an edit
     // and the build that blocks this event loop is what the fix is about.
-    appendFileSync(log, `${method} ${body.text ?? ""}\n`);
+    appendFileSync(log, `${method} ${text}\n`);
     return Promise.resolve({
       ok: true,
       status: 200,

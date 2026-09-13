@@ -19,6 +19,12 @@ import { compactNumber, modelSummary } from "../lib/model-summary.ts";
 import { getLang, tr } from "#lib/i18n.ts";
 import { readEnvValues, upsertEnv } from "../lib/env-file.ts";
 import { createFlows } from "../lib/tg-flow.ts";
+import {
+  button,
+  richRow,
+  type RichButton,
+  type RichButtonStyle,
+} from "../lib/telegram-buttons.ts";
 import type { ModelOption } from "../lib/model-catalog.ts";
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { ALLOWED, DATA_DIR_ABS, ENV_PATH, log } from "./config.ts";
@@ -231,10 +237,22 @@ export async function currentConfig({
   };
 }
 
-const btn = (text: string, callback_data: string) => ({ text, callback_data });
+// Кнопка — rich-строка: кнопка стоит в самом тексте сообщения, рядом со своим пояснением.
+// RichButton — переходный тип: пока экраны визарда возвращают старые ряды «text + rows»,
+// строка обязана проходить и в {text, callback_data}. D3 снимает ряды — уйдёт и тип.
+const btn = (
+  text: string,
+  callback_data: string,
+  style?: RichButtonStyle,
+): RichButton => button(text, callback_data, style);
 // cancelRow/menuRow — функции (tr на месте вызова), не module-level const с переведённой строкой.
-const cancelRow = () => [btn(tr("Cancel", "Отмена"), "iva_model:cancel")];
-const retryBackRows = () => [
+// Каждая — абзац «кнопка — что она делает» (контракт rich), обёрнутый в старый ряд richRow.
+const cancelRow = () =>
+  richRow(
+    `${btn(tr("Cancel", "Отмена"), "iva_model:cancel", "danger")} — ${tr("leave without changes", "выйти без изменений")}`,
+  );
+// Два равноправных варианта без пояснений — один ряд кнопок.
+const retryBackRows = (): RichButton[][] => [
   [
     btn(tr("Retry", "Повторить"), "iva_model:retry"),
     btn(tr("‹ Back", "‹ Назад"), "iva_model:back"),
@@ -242,7 +260,11 @@ const retryBackRows = () => [
 ];
 // Ряд «‹ Меню» на терминальных экранах визарда — возврат в /menu. r:o усыновляет
 // это сообщение даже без живого стейта (движок меню само-чинится после рестарта моста).
-const menuRow = () => [[btn(tr("‹ Menu", "‹ Меню"), "iva_menu:r:o")]];
+const menuRow = (): RichButton[][] => [
+  richRow(
+    `${btn(tr("‹ Menu", "‹ Меню"), "iva_menu:r:o")} — ${tr("back to settings", "вернуться в настройки")}`,
+  ),
+];
 
 // Секреты (API-ключи) принимаем ТОЛЬКО в личке: в группе бот может не иметь прав удалить
 // сообщение с ключом (deleteMessage вернёт !ok), и его увидят все участники. Знак chatId

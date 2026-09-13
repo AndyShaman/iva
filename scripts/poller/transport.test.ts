@@ -103,7 +103,8 @@ test("every Bot API call the bridge makes leaves with its text gated", async (t)
   );
   assert.equal(bodies[1].caption, "snapshot [REDACTED]");
   assert.equal(bodies[2].text, "reply [REDACTED]");
-  assert.equal(bodies[3].text, "edit [REDACTED]");
+  // Правка моста — rich: текст едет в rich_message.markdown и гейтится там же.
+  assert.deepEqual(bodies[3].rich_message, { markdown: "edit [REDACTED]" });
 });
 
 // The same wire, carrying the shapes this installation's keys actually have: an

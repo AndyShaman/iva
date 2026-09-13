@@ -874,10 +874,11 @@ test("model keep callback is retained when only spinner ack succeeds", async () 
     const consumed = await handleControl(callback);
 
     assert.equal(consumed, false);
+    // Терминальный экран визарда — rich-сообщение: новый экран уходит sendRichMessage'ом.
     assert.deepEqual(methods, [
       "answerCallbackQuery",
       "editMessageText",
-      "sendMessage",
+      "sendRichMessage",
     ]);
 
     globalThis.fetch = async (input) => {

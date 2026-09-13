@@ -342,12 +342,16 @@ await test("двойной тап и двойной open не плодят со�
     const st2 = await menu.open(11, "111");
     assert.equal(states.size, 1);
     assert.notEqual(st1, st2);
+    // Клавиатуру со старого меню больше не снимают (кнопка — часть rich-текста), но
+    // свежий корень обязан быть отрисован: flows.screen здесь — это Bot API на живом стенде.
     assert.ok(
       calls.some(
         (call) =>
+          call.method === "flows.screen" ||
           call.method === "editMessageReplyMarkup" ||
           call.method === "editMessageText" ||
-          call.method === "sendMessage",
+          call.method === "sendMessage" ||
+          call.method === "sendRichMessage",
       ),
     );
   } finally {

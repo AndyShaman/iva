@@ -48,6 +48,16 @@ const { handleUpdateCallback, handleUpdateCheck, removeStaleUpdateJobs } =
     removeStaleUpdateJobs: () => Promise<void>;
   };
 
+/** Текст экрана из тела вызова Telegram: финальные экраны — rich (markdown), начальные — text. */
+function screenText(body: {
+  text?: unknown;
+  rich_message?: { markdown?: unknown };
+}): string {
+  const markdown = body.rich_message?.markdown;
+  if (typeof markdown === "string") return markdown;
+  return typeof body.text === "string" ? body.text : "";
+}
+
 test("stale update-job cleanup removes only expired JSON job files", async () => {
   const jobs = join(dataDir, "update-jobs");
   await import("node:fs/promises").then(({ mkdir }) => mkdir(jobs));
@@ -146,8 +156,12 @@ async function press(launcher: string): Promise<string[]> {
   const previousFetch = mutableGlobal.fetch;
   const previousPath = process.env.PATH;
   mutableGlobal.fetch = (_url, init) => {
-    const body = JSON.parse(init.body ?? "{}") as { text?: string };
-    if (typeof body.text === "string") texts.push(body.text);
+    const body = JSON.parse(init.body ?? "{}") as {
+      text?: unknown;
+      rich_message?: { markdown?: unknown };
+    };
+    const text = screenText(body);
+    if (text) texts.push(text);
     return Promise.resolve({
       json: () => Promise.resolve({ ok: true, result: {} }),
     });
@@ -304,13 +318,7 @@ test("saved update view explains a preserved change set with no conflicts", asyn
   }
 
   const edit = calls.find((call) => call.method === "editMessageText");
-  const text =
-    edit?.body &&
-    typeof edit.body === "object" &&
-    "text" in edit.body &&
-    typeof edit.body.text === "string"
-      ? edit.body.text
-      : "";
+  const text = screenText(edit?.body ?? {});
   assert.match(text, /saved in full/i);
   assert.doesNotMatch(text, /Saved local conflicts:/);
 });
@@ -375,8 +383,12 @@ async function check(root: string): Promise<string[]> {
   const texts: string[] = [];
   const previousFetch = mutableGlobal.fetch;
   mutableGlobal.fetch = (_url, init) => {
-    const body = JSON.parse(init.body ?? "{}") as { text?: string };
-    if (typeof body.text === "string") texts.push(body.text);
+    const body = JSON.parse(init.body ?? "{}") as {
+      text?: unknown;
+      rich_message?: { markdown?: unknown };
+    };
+    const text = screenText(body);
+    if (text) texts.push(text);
     return Promise.resolve({
       json: () => Promise.resolve({ ok: true, result: { message_id: 10 } }),
     });
