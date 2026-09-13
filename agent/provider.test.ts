@@ -58,6 +58,18 @@ function userText(...texts: string[]): Message {
   };
 }
 
+// Промпт в форме параметров middleware: остальные поля не нужны, важны только роли и текст.
+type MiddlewareParams = Parameters<
+  NonNullable<ReturnType<typeof attachImagesMiddleware>["transformParams"]>
+>[0]["params"];
+
+const middlewareParams = (text: string): MiddlewareParams => ({
+  prompt: [userText(text)],
+});
+
+// Предикат для моделей, собранных в тестах заголовков: картинки в этих прогонах не едут.
+const blindToImages = (): Promise<boolean> => Promise.resolve(false);
+
 function filesOf(message: Message): FilePart[] {
   const content = (message as { content: { type: string }[] }).content;
   assert.ok(Array.isArray(content));
@@ -382,19 +394,45 @@ await test("промпт без ссылок уходит нетронутым �
     globalThis.fetch = original;
   });
 
-  const params = {
-    prompt: [userText("привет, что там по задачам?")],
-  } as unknown as Parameters<
-    NonNullable<typeof attachImagesMiddleware.transformParams>
-  >[0]["params"];
+  const params = middlewareParams("привет, что там по задачам?");
+  const middleware = attachImagesMiddleware(() => {
+    throw new Error("предикат не должен спрашиваться без ссылок");
+  });
 
-  const result = await attachImagesMiddleware.transformParams?.({
+  const result = await middleware.transformParams?.({
     type: "generate",
     params,
     model: {} as never,
   });
 
   assert.equal(result, params);
+});
+
+// Шов provider ↔ vision: предикат приходит параметром, а не импортом, и его ответ решает,
+// дойдёт ли промпт до чтения Vault. Файл тут заведомо нечитаем, поэтому виден ровно шаг
+// решения: слепой предикат до чтения не доводит, зрячий — доводит.
+await test("предикат решает, дойдёт ли ссылка до чтения картинки", async (t) => {
+  const logs = muteErrors(t);
+  const ref = `vault/${REF}`;
+  const run = (sees: boolean) =>
+    attachImagesMiddleware(() => Promise.resolve(sees)).transformParams?.({
+      type: "generate",
+      params: middlewareParams(`посмотри ${ref}`),
+      model: {} as never,
+    });
+  const readVault = () =>
+    logs.some(
+      (line) => line.includes(REF) && line.includes("из Vault не прочитал"),
+    );
+
+  await run(false);
+  assert.equal(
+    readVault(),
+    false,
+    "слепой предикат не доводит до чтения Vault",
+  );
+  await run(true);
+  assert.ok(readVault(), "зрячий предикат доводит промпт до чтения Vault");
 });
 
 await test("метаданные без контента обрываются по deadline и не отравляют сессию", async (t) => {
@@ -796,7 +834,10 @@ await test("Go: запрос несёт ID диалога сессии и User-A
   assert.equal(go.providerName, "opencode");
   const headers = await requestHeadersOf(
     t,
-    go.makeTextModel({ sessionId: "sess_01ABC" }),
+    go.makeTextModel({
+      sessionId: "sess_01ABC",
+      chatModelSeesImages: blindToImages,
+    }),
   );
   assert.equal(headers.get("x-opencode-session"), "sess_01ABC");
   assert.equal(headers.get("user-agent"), go.IVA_USER_AGENT);
@@ -806,10 +847,16 @@ await test("Go: запрос несёт ID диалога сессии и User-A
 
 await test("Go без сессии: ID процесса, непустой и один на все вызовы", async (t) => {
   const go = await loadOpencodeProvider();
-  const first = await requestHeadersOf(t, go.makeTextModel());
+  const first = await requestHeadersOf(
+    t,
+    go.makeTextModel({ chatModelSeesImages: blindToImages }),
+  );
   const second = await requestHeadersOf(
     t,
-    go.makeTextModel({ sessionId: "  " }),
+    go.makeTextModel({
+      sessionId: "  ",
+      chatModelSeesImages: blindToImages,
+    }),
   );
   const id = first.get("x-opencode-session");
   assert.ok(id && id.length > 0);
@@ -823,7 +870,10 @@ await test("не-Go провайдер заголовков Go не шлёт", a
   assert.equal(ollama.providerRequestHeaders("sess_01ABC"), undefined);
   const headers = await requestHeadersOf(
     t,
-    makeTextModelOllama({ sessionId: "sess_01ABC" }),
+    makeTextModelOllama({
+      sessionId: "sess_01ABC",
+      chatModelSeesImages: blindToImages,
+    }),
   );
   assert.equal(headers.get("x-opencode-session"), null);
   assert.notEqual(headers.get("user-agent"), ollama.IVA_USER_AGENT);

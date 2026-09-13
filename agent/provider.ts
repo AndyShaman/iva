@@ -12,7 +12,6 @@ import {
   MAX_IMAGE_BYTES,
 } from "./lib/attachment-ref.ts";
 import { resolveAttachmentPath } from "./lib/telegram-media-cache.ts";
-import { chatModelSeesImages } from "./vision.ts";
 import {
   CODEX_BASE_URL,
   codexAuthHeaders,
@@ -471,23 +470,35 @@ export function attachVaultImages(
   });
 }
 
-export const attachImagesMiddleware: LanguageModelMiddleware = {
-  async transformParams({ params }) {
-    // Ссылки ищем ДО пробника: ход без картинок не будит сеть, и сам пробник (он идёт
-    // через makeTextModel, то есть через этот же middleware) не ждёт собственного вердикта.
-    if (!Array.isArray(params.prompt)) return params;
-    const hasRefs = params.prompt.some(
-      (message) =>
-        isUserMessage(message) && imageRefsInMessage(message).length > 0,
-    );
-    if (!hasRefs) return params;
-    if (!(await chatModelSeesImages())) return params;
-    return {
-      ...params,
-      prompt: attachVaultImages(params.prompt, { readImage: readVaultImage }),
-    };
-  },
-};
+/**
+ * Прикладывает картинки Vault к промпту. Предикат «текстовая модель видит картинки»
+ * приходит параметром, а не импортом `vision.ts`: vision сам зовёт `makeTextModel()`
+ * для пробника, и этот импорт замыкал цикл provider ↔ vision. Форма — как у эффектов
+ * telegram-media: потребитель (agent.ts, planner, vision) отдаёт свою реализацию.
+ */
+export type ImageCapability = () => Promise<boolean>;
+
+export function attachImagesMiddleware(
+  chatModelSeesImages: ImageCapability,
+): LanguageModelMiddleware {
+  return {
+    async transformParams({ params }) {
+      // Ссылки ищем ДО пробника: ход без картинок не будит сеть, и сам пробник (он идёт
+      // через makeTextModel, то есть через этот же middleware) не ждёт собственного вердикта.
+      if (!Array.isArray(params.prompt)) return params;
+      const hasRefs = params.prompt.some(
+        (message) =>
+          isUserMessage(message) && imageRefsInMessage(message).length > 0,
+      );
+      if (!hasRefs) return params;
+      if (!(await chatModelSeesImages())) return params;
+      return {
+        ...params,
+        prompt: attachVaultImages(params.prompt, { readImage: readVaultImage }),
+      };
+    },
+  };
+}
 
 // Silent provider streams can keep a turn open indefinitely.
 // Remove when eve forwards ai SDK `timeout.firstChunkMs` to ToolLoopAgent (vercel/ai#17315 added the option; no eve issue yet).
@@ -617,10 +628,16 @@ export const modelFirstChunkDeadlineMiddleware: LanguageModelMiddleware = {
  * Текстовая модель активного провайдера. Общая для КАЖДОГО узла графа: корень и субагенты
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
  */
-export function makeTextModel(options: { sessionId?: string } = {}) {
+export function makeTextModel(options: {
+  sessionId?: string;
+  chatModelSeesImages: ImageCapability;
+}) {
   return wrapLanguageModel({
     model: makeBareTextModel(options.sessionId),
-    middleware: [attachImagesMiddleware, modelFirstChunkDeadlineMiddleware],
+    middleware: [
+      attachImagesMiddleware(options.chatModelSeesImages),
+      modelFirstChunkDeadlineMiddleware,
+    ],
   });
 }
 

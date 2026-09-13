@@ -186,7 +186,7 @@ export function makeVisionProbe(
 const probe = makeVisionProbe(
   async () => {
     const result = await generateText({
-      model: makeTextModel(),
+      model: makeTextModel({ chatModelSeesImages }),
       // Ответ в одно слово, но потолок высокий: думающая модель тратит на reasoning
       // сотни токенов ДО первого слова ответа, и на десятке их ответ пуст.
       maxOutputTokens: 1024,

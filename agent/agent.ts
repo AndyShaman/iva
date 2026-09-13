@@ -8,6 +8,7 @@ import {
   withReasoningStripped,
   makeTextModel,
 } from "./provider.js";
+import { chatModelSeesImages } from "./vision.js";
 
 export default defineAgent({
   // Модель строится на каждом шаге хода, а не при сборке: OpenCode Go требует ID диалога в
@@ -21,7 +22,10 @@ export default defineAgent({
     events: {
       "step.started": (_event, ctx) => ({
         model: withReasoningStripped(
-          makeTextModel({ sessionId: ctx.session.id }),
+          makeTextModel({
+            sessionId: ctx.session.id,
+            chatModelSeesImages,
+          }),
         ),
         // Кастомный провайдер не отдаёт метаданные окна через AI Gateway — задаём вручную;
         // без явного значения eve пошёл бы за ним в Gateway, которого у self-host нет.
