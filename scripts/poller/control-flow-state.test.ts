@@ -35,42 +35,67 @@ test("isTelegramFlowState: валидное состояние проходит 
   );
 });
 
+const REQUIRED_KEYS = [
+  "flow",
+  "chatId",
+  "userId",
+  "createdAt",
+  "msgId",
+  "page",
+  "data",
+] as const;
+
+type RequiredKey = (typeof REQUIRED_KEYS)[number];
+
+// Заведомо невалидные значения по ключам: ни одно не проходит свой пункт предиката
+// (массивы для data валидны — объект не-null, — поэтому их здесь нет).
+const WRONG: Record<RequiredKey, readonly unknown[]> = {
+  flow: [42, null, true, {}],
+  chatId: [null, true, {}, []],
+  userId: [null, false, {}],
+  createdAt: ["x", null, true, {}],
+  msgId: ["x", true, {}],
+  page: ["0", null, false],
+  data: [null, 42, "x", true],
+};
+
 test("isTelegramFlowState: мусор и недозаполненное — false (seed 20260913)", () => {
+  // На каждый обязательный ключ — вариант «ключ отсутствует» и «ключ не того
+  // типа», остальное валидное: срез префиксов держал ноль на 7 из 8 пунктов.
+  const perKey = REQUIRED_KEYS.map((victim) =>
+    fc.oneof(
+      fc.record({
+        victim: fc.constant(victim),
+        mode: fc.constant("missing" as const),
+      }),
+      ...WRONG[victim].map((bad) =>
+        fc.record({
+          victim: fc.constant(victim),
+          mode: fc.constant("wrong" as const),
+          bad: fc.constant(bad),
+        }),
+      ),
+    ),
+  );
   fc.assert(
     fc.property(
-      fc.anything().filter((v) => v !== undefined && v !== null),
-      fc.integer({ min: 0, max: 15 }),
-      (junk, drop) => {
-        const shaped = (
-          junk !== null && typeof junk === "object" && !Array.isArray(junk)
-            ? { ...valid(), ...junk }
-            : junk
-        ) as Record<string, unknown>;
-        const keys = Object.keys(valid());
-        const cut =
-          shaped !== null &&
-          typeof shaped === "object" &&
-          !Array.isArray(shaped)
-            ? Object.fromEntries(
-                Object.entries(shaped).filter(
-                  ([key]) =>
-                    !keys.slice(0, drop % (keys.length + 1)).includes(key),
-                ),
-              )
-            : shaped;
-        // Полное совпадение с валидным пропускаем: это дело якоря выше.
-        if (
-          cut !== null &&
-          typeof cut === "object" &&
-          keys.every(
-            (key) => (cut as Record<string, unknown>)[key] !== undefined,
-          )
-        )
-          return;
+      fc.oneof(...perKey),
+      ({
+        victim,
+        mode,
+        bad,
+      }: {
+        victim: RequiredKey;
+        mode: "missing" | "wrong";
+        bad?: unknown;
+      }) => {
+        const obj: Record<string, unknown> = { ...valid() };
+        if (mode === "missing") delete obj[victim];
+        else obj[victim] = bad;
         assert.equal(
-          isTelegramFlowState(cut as never),
+          isTelegramFlowState(obj as never),
           false,
-          `мусор прошёл предикат: ${JSON.stringify(cut)?.slice(0, 120)}`,
+          `${mode} ${victim} прошёл предикат: ${JSON.stringify(obj)?.slice(0, 120)}`,
         );
       },
     ),

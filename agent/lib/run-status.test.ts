@@ -406,10 +406,12 @@ test("markTelegramSessionForRetirement помечает ровно нужную 
     ...over,
   });
   const calls: unknown[][] = [];
+  // Приманки ПЕРЕД целью: выключение любого условия ниже обязано дать лишний вызов.
   const listStatusesImpl = () => [
-    { chatKey: "tg:1", status: running() },
-    { chatKey: "tg:2", status: running({ sessionId: "other" }) },
     { chatKey: "tg:3", status: running({ status: "idle" }) },
+    { chatKey: "tg:2", status: running({ sessionId: "other" }) },
+    { chatKey: "tg:4", status: running({ turnId: "other" }) },
+    { chatKey: "tg:1", status: running() },
   ];
   const setStatusIfImpl = (...args: unknown[]) => {
     calls.push(args);
@@ -422,6 +424,10 @@ test("markTelegramSessionForRetirement помечает ровно нужную 
       setStatusIfImpl,
     }),
     true,
+  );
+  assert.ok(
+    calls.every(([chatKey]) => chatKey === "tg:1"),
+    `приманки не помечены: ${JSON.stringify(calls)}`,
   );
   assert.deepEqual(calls, [
     [
