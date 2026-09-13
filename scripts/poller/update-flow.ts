@@ -359,10 +359,14 @@ export async function handleUpdateCallback(
   const r = await launchSelfUpdate(jobId);
   if (!r.ok) {
     await rm(join(jobsDir(), `${jobId}.json`), { force: true });
+    // systemd-run's own words go to the journal, and the first line reaches the chat:
+    // without them «couldn't start» is undebuggable (13.09.2026, three users at once).
+    const reason = r.msg.split("\n")[0].slice(0, 200);
+    log("self-update launch failed:", r.msg || "(no output)");
     const failureNotice = await edit(
       chatId as string | number,
       messageId as number,
-      tr("⚠️ Couldn't start the update", "⚠️ Не удалось запустить обновление"),
+      `${tr("⚠️ Couldn't start the update", "⚠️ Не удалось запустить обновление")}${reason ? `\n\n${reason}` : ""}\n\n${tr("Run on the server: iva update", "Запустите на сервере: iva update")}`,
     );
     return messageEditSucceeded(failureNotice);
   }
