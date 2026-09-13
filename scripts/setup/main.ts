@@ -572,7 +572,8 @@ async function pickFromList(
   return items[idx];
 }
 
-export async function main(): Promise<void> {
+export async function main(entryUrl = import.meta.url): Promise<void> {
+  if (!isEntrypoint(entryUrl)) return;
   const existing = await loadExistingEnv();
   const out = { ...existing };
   out.ASSISTANT_BEARER = isAssistantBearer(existing.ASSISTANT_BEARER)
@@ -813,8 +814,7 @@ function createSetupContext(): SetupContext {
   };
 }
 
-if (isEntrypoint(import.meta.url)) {
-  main().catch((error) => {
+void main().catch((error) => {
     const caught = error as ThrownSetupError | null | undefined;
     console.error(
       `${C.r}${t("Setup aborted:", "Настройка прервана:")}${C.x}`,
@@ -822,4 +822,3 @@ if (isEntrypoint(import.meta.url)) {
     );
     process.exit(1);
   });
-}
