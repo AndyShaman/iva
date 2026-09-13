@@ -151,7 +151,9 @@ function replySucceeded(value: SentMessage | null | undefined): boolean {
   return typeof value?.message_id === "number";
 }
 
-function isTelegramFlowState(value: PendingFlow): value is TelegramFlowState {
+export function isTelegramFlowState(
+  value: PendingFlow,
+): value is TelegramFlowState {
   return (
     typeof value.flow === "string" &&
     (typeof value.chatId === "string" || typeof value.chatId === "number") &&
