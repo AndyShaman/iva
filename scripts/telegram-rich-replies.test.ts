@@ -172,7 +172,6 @@ void test("never: таблица уходит HTML, auto: rich", async () => {
 
   const off = telegramDouble();
   const plainPath = outboxTransport(off.tg, "never");
-  assert.equal("sendRich" in plainPath, false);
   const offResult = await sendThroughOutbox(TABLE, plainPath);
   assert.equal(offResult.ok, true);
   assert.equal(offResult.delivered, 1);
@@ -187,6 +186,20 @@ void test("never: таблица уходит HTML, auto: rich", async () => {
     "never шлёт ровно один post",
   );
   assert.deepEqual(off.calls.map(callLine), ["post:HTML"]);
+
+  // Кнопка живёт только в rich-сообщении (ADR-0015): при never ответ с <tg-button>
+  // всё равно уходит sendRichMessage, иначе тег доехал бы текстом.
+  const buttons = telegramDouble();
+  const buttonResult = await sendThroughOutbox(
+    'Поставил.\n\n<tg-button type="callback_data" data="Отмени">Отменить</tg-button> — сниму напоминание.',
+    outboxTransport(buttons.tg, "never"),
+  );
+  assert.equal(buttonResult.ok, true);
+  assert.equal(
+    buttons.calls.filter((call) => call.kind === "post").length,
+    0,
+    "кнопка при never не должна идти HTML-путём",
+  );
 
   const on = telegramDouble();
   const richPath = outboxTransport(on.tg, "auto");

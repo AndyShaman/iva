@@ -81,8 +81,8 @@ export default {
     const text = [
       `# ${ctx.tr("💬 Rich replies", "💬 Богатые ответы")}`,
       ctx.tr(
-        "Tables, task lists, folds and formulas go as a Telegram rich message; the menu, Stop and update buttons work either way. A button inside Iva's reply lives only in a rich message: in an ordinary one it shows up as a tag.",
-        "Таблицы, чек-листы, свёртки и формулы уходят богатым сообщением Telegram; кнопки меню, «стоп» и обновления работают в любом режиме. Кнопка в ответе Ивы живёт только в богатом сообщении: в обычном она покажется тегом.",
+        "Tables, task lists, folds, formulas and pictures go as a Telegram rich message. Buttons work either way: a reply with a button is always sent rich.",
+        "Таблицы, чек-листы, свёртки, формулы и картинки уходят богатым сообщением Telegram. Кнопки работают в любом режиме: ответ с кнопкой всегда уходит богатым.",
       ),
       ...(invalid === null
         ? []

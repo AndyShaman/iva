@@ -10,8 +10,10 @@ import { POST } from "eve/channels";
 import {
   noticeSender,
   sendThroughOutbox,
+  type OutboxAck,
   type OutboxTransport,
 } from "../lib/outbox.js";
+import { hasRichButtons } from "../lib/telegram-format.js";
 import {
   TELEGRAM_RICH_REPLIES,
   type RichReplies,
@@ -116,36 +118,49 @@ export function outboxTransport(
       }
     },
   };
-  if (richReplies === "auto")
-    // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
-    // рендерятся нативно — HTML-путь так не умеет. Любая ошибка (старый Bot API, парс,
-    // лимит 32768, RICH_MESSAGE_*) уводит шов в HTML-путь, то есть в поведение до rich.
-    // request() = raw Bot API call, транспорт JSON, поэтому rich_message шлём объектом.
-    transport.sendRich = async (markdown) => {
-      try {
-        const res = await tg.request("sendRichMessage", {
-          chat_id: tg.chatId,
-          rich_message: { markdown },
-          ...(tg.messageThreadId !== undefined
-            ? { message_thread_id: tg.messageThreadId }
-            : {}),
-        });
-        if (res.ok) return { ok: true };
-        console.error(
-          "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-          res.status,
-          JSON.stringify(res.body).slice(0, 300),
-        );
-        return {
-          ok: false,
-          error: `sendRichMessage ${res.status}`,
-          retryPlain: false,
-        };
-      } catch (err) {
-        console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
-        return { ok: false, error: String(err), retryPlain: false };
-      }
-    };
+  // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы/
+  // кнопки рендерятся нативно — HTML-путь так не умеет. Любая ошибка (старый Bot API,
+  // парс, лимит 32768, RICH_MESSAGE_*) уводит шов в HTML-путь, то есть в поведение до
+  // rich. request() = raw Bot API call, транспорт JSON, поэтому rich_message шлём объектом.
+  const sendRich = async (markdown: string): Promise<OutboxAck> => {
+    try {
+      const res = await tg.request("sendRichMessage", {
+        chat_id: tg.chatId,
+        rich_message: { markdown },
+        ...(tg.messageThreadId !== undefined
+          ? { message_thread_id: tg.messageThreadId }
+          : {}),
+      });
+      if (res.ok) return { ok: true };
+      console.error(
+        "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
+        res.status,
+        JSON.stringify(res.body).slice(0, 300),
+      );
+      return {
+        ok: false,
+        error: `sendRichMessage ${res.status}`,
+        retryPlain: false,
+      };
+    } catch (err) {
+      console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
+      return { ok: false, error: String(err), retryPlain: false };
+    }
+  };
+  // TELEGRAM_RICH_REPLIES=never держит таблицы и прочее на HTML-пути, но кнопка живёт
+  // только в rich-сообщении (ADR-0015): ответ с <tg-button> уходит rich в любом режиме,
+  // иначе тег доехал бы до чата текстом.
+  transport.sendRich =
+    richReplies === "auto"
+      ? sendRich
+      : async (markdown) =>
+          hasRichButtons(markdown)
+            ? sendRich(markdown)
+            : {
+                ok: false,
+                error: "TELEGRAM_RICH_REPLIES=never",
+                retryPlain: false,
+              };
   return transport;
 }
 
