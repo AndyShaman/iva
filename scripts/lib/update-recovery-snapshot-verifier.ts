@@ -1,4 +1,16 @@
 import { verifyIgnoredCollisionDirectories } from "./update-ignored-collisions.ts";
+import {
+  type IndexFlags,
+  metadataFor,
+  type RecoverySnapshot,
+  sameFlags,
+  sameLiveEntries,
+  sameStrings,
+  sameTreeEntries,
+  type SnapshotTreeEntry,
+} from "./update-recovery-manifest.ts";
+import type { RecoveryObjectStore } from "./update-recovery-objects.ts";
+
 type CommandResult = { code: number; stdout: string; stderr: string };
 
 /**
@@ -16,17 +28,6 @@ export type RecoveryGit = {
     stderr: string;
   }>;
 };
-import {
-  type IndexFlags,
-  metadataFor,
-  type RecoverySnapshot,
-  sameFlags,
-  sameLiveEntries,
-  sameStrings,
-  sameTreeEntries,
-  type SnapshotTreeEntry,
-} from "./update-recovery-manifest.ts";
-import type { RecoveryObjectStore } from "./update-recovery-objects.ts";
 
 export const RECOVERY_METADATA_PREFIX = "iva-recovery-metadata-v1:";
 
