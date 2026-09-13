@@ -39,12 +39,19 @@ import {
 type TelegramBody = {
   message_id?: number;
   text?: string;
+  rich_message?: { markdown?: string };
   entities?: { custom_emoji_id?: string }[];
   reply_markup?: {
     inline_keyboard: { text?: string; callback_data: string }[][];
   };
 };
 type TelegramCall = { method: string | undefined; body: TelegramBody };
+// Финальные экраны обновления стали rich-сообщениями: markdown лежит в rich_message, а
+// фазы по-прежнему едут обычным text. Читаем экран одним помощником, как его видит чат.
+function screenOf(body?: TelegramBody): string {
+  const markdown = body?.rich_message?.markdown;
+  return typeof markdown === "string" ? markdown : (body?.text ?? "");
+}
 type MockResponse = {
   ok: boolean;
   status: number;
@@ -224,8 +231,8 @@ test("Telegram update edits one message through every phase and final result", a
       `${UPDATE_LOADER.alt} Собираю Iva`,
     ],
   );
-  assert.match(edits[3]?.body.text ?? "", /Iva обновлена/);
-  assert.match(edits[3]?.body.text ?? "", /OpenAI · gpt-5.5/);
+  assert.match(screenOf(edits[3]?.body), /Iva обновлена/);
+  assert.match(screenOf(edits[3]?.body), /OpenAI · gpt-5.5/);
   assert.equal(edits[3].body.entities, undefined);
 });
 
@@ -272,13 +279,17 @@ test("Telegram reports a successful core update when local files conflict", asyn
   });
 
   const final = calls.at(-1)?.body;
-  assert.match(final?.text ?? "", /✅ Iva обновлена/);
-  assert.match(final?.text ?? "", /Новое ядро активно/);
-  assert.doesNotMatch(final?.text ?? "", /Не удалось собрать/);
-  assert.equal(
-    final?.reply_markup?.inline_keyboard[0]?.[0]?.callback_data,
-    "iva_update:conflicts:2026-08-06T12-00-00-000Z-deadbeef1234",
+  assert.match(screenOf(final), /✅ Iva обновлена/);
+  assert.match(screenOf(final), /Новое ядро активно/);
+  assert.doesNotMatch(screenOf(final), /Не удалось собрать/);
+  // Кнопка — строка самого текста: тот же callback_data, рядом со своим пояснением.
+  assert.ok(
+    screenOf(final).includes(
+      'data="iva_update:conflicts:2026-08-06T12-00-00-000Z-deadbeef1234"',
+    ),
+    screenOf(final),
   );
+  assert.match(screenOf(final), /не удалось перенести/u);
 });
 
 test("Telegram omits an oversized recovery callback", async () => {
@@ -310,8 +321,8 @@ test("Telegram omits an oversized recovery callback", async () => {
   });
 
   const final = calls.at(-1)?.body;
-  assert.match(final?.text ?? "", /Iva updated/);
-  assert.equal(final?.reply_markup, undefined);
+  assert.match(screenOf(final), /Iva updated/);
+  assert.doesNotMatch(screenOf(final), /<tg-button/u);
 });
 
 test("Telegram does not recreate phase messages after the active message was deleted", async () => {
@@ -348,7 +359,7 @@ test("Telegram does not recreate phase messages after the active message was del
   await reporter.complete({ beforeVersion: "v1", afterVersion: "v2" });
   reporter.dispose();
   assert.equal(
-    calls.filter((call) => call.method === "sendMessage").length,
+    calls.filter((call) => call.method === "sendRichMessage").length,
     1,
     "only the final result is recreated",
   );
@@ -504,8 +515,8 @@ test("Telegram update failure replaces the active phase in the same message", as
     calls.map((call) => call.body.message_id),
     [100, 100],
   );
-  assert.match(calls[1]?.body.text ?? "", /Couldn't get the update/);
-  assert.match(calls[1]?.body.text ?? "", /still running v1/);
+  assert.match(screenOf(calls[1]?.body), /Couldn't get the update/);
+  assert.match(screenOf(calls[1]?.body), /still running v1/);
 });
 
 test("Telegram says an update is already running in the message it was asked from", async () => {
@@ -533,7 +544,7 @@ test("Telegram says an update is already running in the message it was asked fro
     calls.map((call) => call.body.message_id),
     [100, 100],
   );
-  assert.match(calls[1]?.body.text ?? "", /Обновление уже идёт/u);
+  assert.match(screenOf(calls[1]?.body), /Обновление уже идёт/u);
 });
 
 test("a final Telegram refuses to edit is sent as its own message", async (t) => {
@@ -572,10 +583,10 @@ test("a final Telegram refuses to edit is sent as its own message", async (t) =>
     true,
   );
 
-  const sent = calls.filter((call) => call.method === "sendMessage");
+  const sent = calls.filter((call) => call.method === "sendRichMessage");
   assert.equal(sent.length, 1, "the user is told the update finished");
-  assert.match(sent[0]?.body.text ?? "", /Iva updated/);
-  assert.match(sent[0]?.body.text ?? "", /v1 → v2/);
+  assert.match(screenOf(sent[0]?.body), /Iva updated/);
+  assert.match(screenOf(sent[0]?.body), /v1 → v2/);
   assert.ok(
     errors.some((line) =>
       /update status edit failed: 400 .*FROZEN/u.test(line),
@@ -632,7 +643,7 @@ test("a version reported without the one before it names the version that runs",
 
   assert.equal(await reporter.complete({ afterVersion: "0.3.19-abc" }), true);
 
-  const final = calls.at(-1)?.body.text ?? "";
+  const final = screenOf(calls.at(-1)?.body);
   assert.match(final, /Iva обновлена/u);
   assert.match(final, /Версия: 0\.3\.19-abc/u);
   assert.doesNotMatch(final, /→/u);
@@ -679,7 +690,7 @@ test("a refused phase edit is reported and the update carries on", async (t) => 
     errors.some((line) => /update status edit failed: 500/u.test(line)),
     errors.join("\n"),
   );
-  assert.match(calls.at(-1)?.body.text ?? "", /Iva updated/);
+  assert.match(screenOf(calls.at(-1)?.body), /Iva updated/);
   assert.equal(calls.filter((call) => call.method === "sendMessage").length, 0);
 });
 
@@ -770,7 +781,7 @@ test("up-to-date check shows the model from fresh .env, not this process's snaps
       }),
     });
     const edit = calls.find((call) => call.method === "editMessageText");
-    assert.match(edit?.body.text ?? "", /OpenAI · fresh-model/);
+    assert.match(screenOf(edit?.body), /OpenAI · fresh-model/);
   } finally {
     mutableGlobal.fetch = previousFetch;
     for (const [key, value] of Object.entries(previousEnv)) {
@@ -818,7 +829,13 @@ test("manual update offer keeps commit-based behavior and marks a stable release
       calls.map((call) => call.method),
       ["sendMessage", "editMessageText"],
     );
-    assert.equal(calls[1]?.body.reply_markup?.inline_keyboard[0]?.length, 2);
+    // Предложение обновления — rich: обе кнопки стоят в markdown, а не в клавиатуре.
+    assert.deepEqual(
+      [...screenOf(calls[1]?.body).matchAll(/data="([^"]+)"/gu)].map(
+        (match) => match[1],
+      ),
+      ["iva_update:do", "iva_update:skip"],
+    );
     assert.deepEqual(marked, ["1.2.4"]);
   } finally {
     mutableGlobal.fetch = previousFetch;
@@ -2784,7 +2801,7 @@ test("a post-commit failure reaches the chat with its secret redacted", async ()
   await reporter.postCommitFailure(`systemctl refused: ${planted}`);
   reporter.dispose();
 
-  const text = calls.at(-1)?.body.text ?? "";
+  const text = screenOf(calls.at(-1)?.body);
   assert.match(text, /systemctl refused: \[REDACTED\]/);
   assert.doesNotMatch(text, /zzzz/);
 });
@@ -2815,7 +2832,7 @@ test("a build failure carrying a real key shape is redacted the same way", async
   );
   reporter.dispose();
 
-  const text = calls.at(-1)?.body.text ?? "";
+  const text = screenOf(calls.at(-1)?.body);
   assert.match(text, /provider check failed: \[REDACTED\]/);
   assert.doesNotMatch(text, /sk-or-v1|4f9c1e77/);
 });
@@ -2845,7 +2862,7 @@ test("the update reporter refuses a bad provider in the language of the job", as
 
     await reporter.badProvider("ollmaa", "ollama, opencode, codex, openrouter");
 
-    const text = calls.at(-1)?.body.text ?? "";
+    const text = screenOf(calls.at(-1)?.body);
     assert.match(text, expected, locale);
     assert.match(text, /"ollmaa"/u, locale);
     assert.match(text, /ollama, opencode, codex, openrouter/u, locale);
@@ -2880,7 +2897,7 @@ test("a failed build tells the chat why, redacted and trimmed", async () => {
     'Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter — run: iva config',
   );
 
-  const text = calls.at(-1)?.body.text ?? "";
+  const text = screenOf(calls.at(-1)?.body);
   assert.match(text, /Couldn't build Iva/u);
   assert.match(text, /Invalid MODEL_PROVIDER "ollmaa"/u);
   assert.match(text, /iva config/u);
@@ -2908,13 +2925,13 @@ test("a failure detail is capped and passes the outbound gate", async () => {
   const secret = `sk-or-v1-${"a".repeat(48)}`;
   await reporter.fail("build", "0.3.19", `${"x".repeat(2000)}\nkey ${secret}`);
 
-  const text = calls.at(-1)?.body.text ?? "";
+  const text = screenOf(calls.at(-1)?.body);
   assert.equal(text.includes(secret), false);
   assert.equal(text.length < 900, true, String(text.length));
 
   // Без причины сообщение остаётся ровно таким, каким было.
   await reporter.fail("build", "0.3.19");
-  const plain = calls.at(-1)?.body.text ?? "";
+  const plain = screenOf(calls.at(-1)?.body);
   assert.match(plain, /Couldn't build Iva/u);
   assert.doesNotMatch(plain, /xxxx/u);
 });
@@ -2945,7 +2962,7 @@ test("the update reporter hands the repair command to the chat whole", async () 
     await reporter.updaterTooOld("0.3.20");
 
     const body = calls.at(-1)?.body ?? {};
-    const text = body.text ?? "";
+    const text = screenOf(body);
     assert.match(text, expected, locale);
     assert.equal(text.includes(REPAIR_COMMAND), true, text);
     // Ни parse_mode, ни entities: любая разметка съела бы часть команды.

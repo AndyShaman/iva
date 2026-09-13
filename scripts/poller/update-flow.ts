@@ -3,10 +3,11 @@ import { basename, join } from "node:path";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { readEnvFresh } from "../lib/env-file.ts";
+import { escapeRichText } from "../lib/telegram-buttons.ts";
 import {
   inspectUpstream,
   markVersionNotified,
-  updateOffer,
+  updateOfferActionLines,
 } from "../lib/update-check.ts";
 import { modelSummary } from "../lib/model-summary.ts";
 import { reporterFor } from "../lib/telegram-status.ts";
@@ -144,14 +145,19 @@ export async function handleUpdateCheck(
           `v${info.localVersion ?? "?"} → newer build`,
           `v${info.localVersion ?? "?"} → новая сборка`,
         );
+  // Кнопки предложения — строки самого сообщения (rich): каждая рядом со своим пояснением.
+  // Тот же помощник собирает их для ежедневного Alert'а — одна формулировка на оба экрана.
+  const target =
+    info.remoteVersion && info.remoteVersion !== info.localVersion
+      ? `v${info.remoteVersion}`
+      : tr("a newer build", "новую сборку");
   const offered = await edit(
     chatId,
     status.message_id,
     tr(
       `⬆️ Update available\n\n${bump}\nSettings and local changes will be preserved.`,
       `⬆️ Доступно обновление\n\n${bump}\nНастройки и локальные изменения будут сохранены.`,
-    ),
-    updateOffer(info.localVersion, info.remoteVersion, getLang()).replyMarkup,
+    ) + `\n\n${updateOfferActionLines(getLang(), target)}`,
   );
   const offerShown = messageEditSucceeded(offered);
   if (offerShown && info.hasVersionUpdate) {
@@ -240,7 +246,11 @@ async function showSavedUpdateConflicts(
       ),
     );
   }
-  const visible = report.conflicts.slice(0, 10).map(({ path }) => `- ${path}`);
+  // Путь из отчёта — пользовательские данные: в rich markdown он обязан быть
+  // экранирован, иначе `*`, `#` или `<` в имени файла сломают разметку сообщения.
+  const visible = report.conflicts
+    .slice(0, 10)
+    .map(({ path }) => `- ${escapeRichText(path)}`);
   if (report.conflicts.length > visible.length) {
     const remaining = report.conflicts.length - visible.length;
     visible.push(
@@ -271,7 +281,6 @@ async function showSavedUpdateConflicts(
           "Напишите Иве: «восстанови мои изменения после обновления».",
         ),
       ].join("\n"),
-      { inline_keyboard: [] },
     ),
   );
 }
@@ -293,11 +302,12 @@ export async function handleUpdateCallback(
   if (from === null) return false;
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true; // explicit terminal drop for a known untrusted sender
   if (parsed.action === "skip") {
+    // Правка несёт новый markdown целиком: кнопки предложения жили в тексте, а снимать
+    // прежнюю клавиатуру (пустым рядом) больше не нужно — её просто нет.
     const edited = await edit(
       chatId as string | number,
       messageId as number,
       tr("– Update postponed", "– Обновление отложено"),
-      { inline_keyboard: [] },
     );
     return messageEditSucceeded(edited);
   }
@@ -320,7 +330,6 @@ export async function handleUpdateCallback(
       chatId as string | number,
       messageId as number,
       tr("⚠️ An update is already running", "⚠️ Обновление уже идёт"),
-      { inline_keyboard: [] },
     );
     return messageEditSucceeded(edited);
   }
@@ -346,7 +355,6 @@ export async function handleUpdateCallback(
     chatId as string | number,
     messageId as number,
     tr("◇ Saving your changes", "◇ Сохраняю ваши изменения"),
-    { inline_keyboard: [] },
   );
   const r = await launchSelfUpdate(jobId);
   if (!r.ok) {

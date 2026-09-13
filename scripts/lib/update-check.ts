@@ -11,6 +11,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { notificationChat } from "./notification-chat.ts";
+import { button, escapeRichText } from "./telegram-buttons.ts";
 import { resolveUpdateTarget, type GitResult } from "./update-channel.ts";
 
 export { notificationChat };
@@ -21,7 +22,6 @@ export type GitCommand = (
 ) => Promise<GitResult | string>;
 type UpdateOffer = {
   text: string;
-  replyMarkup: { inline_keyboard: { text: string; callback_data: string }[][] };
 };
 type TelegramResponse = {
   ok: boolean;
@@ -287,6 +287,21 @@ export async function inspectUpstream({
   };
 }
 
+/**
+ * Строки «кнопка — что она делает» для предложения обновления. Одна сборка на оба
+ * экрана, которые его показывают: ежедневный Alert (updateOffer) и /update в мосте.
+ * `what` — что именно поставит кнопка: «v0.4.2» или «новую сборку», когда номер тот же.
+ */
+export function updateOfferActionLines(locale: string, what: string): string {
+  const ru = locale === "ru";
+  const update = ru ? "⬆️ Обновить" : "⬆️ Update";
+  const later = ru ? "Позже" : "Later";
+  return [
+    `${button(update, "iva_update:do", "success")} — ${ru ? `поставить ${what}` : `install ${what}`}`,
+    `${button(later, "iva_update:skip")} — ${ru ? "напомню завтра" : "I'll remind you tomorrow"}`,
+  ].join("\n\n");
+}
+
 export function updateOffer(
   localVersion: string | null | undefined,
   remoteVersion: string | null | undefined,
@@ -297,26 +312,20 @@ export function updateOffer(
 ): UpdateOffer {
   const ru = locale === "ru";
   const head = ru
-    ? `⬆️ Доступна новая версия Ивы\n\nv${localVersion} → v${remoteVersion}`
-    : `⬆️ A new Iva version is available\n\nv${localVersion} → v${remoteVersion}`;
+    ? `⬆️ Доступна новая версия Ивы\n\nv${escapeRichText(String(localVersion))} → v${escapeRichText(String(remoteVersion))}`
+    : `⬆️ A new Iva version is available\n\nv${escapeRichText(String(localVersion))} → v${escapeRichText(String(remoteVersion))}`;
   const tail = updaterTooOld
     ? repairInstructions(locale)
     : ru
       ? "Настройки и локальные изменения будут сохранены."
       : "Settings and local changes will be preserved.";
+  // Кнопки — строки самого сообщения: каждая рядом со своим пояснением (контракт rich).
+  const actions = updateOfferActionLines(
+    locale,
+    `v${escapeRichText(String(remoteVersion))}`,
+  );
   return {
-    text: `${head}\n${tail}`,
-    replyMarkup: {
-      inline_keyboard: [
-        [
-          {
-            text: ru ? "⬆️ Обновить" : "⬆️ Update",
-            callback_data: "iva_update:do",
-          },
-          { text: ru ? "Позже" : "Later", callback_data: "iva_update:skip" },
-        ],
-      ],
-    },
+    text: `${head}\n\n${tail}\n\n${actions}`,
   };
 }
 
@@ -333,14 +342,13 @@ export async function sendUpdateOffer({
 } = {}): Promise<unknown> {
   if (!offer) throw new Error("update offer is required");
   const response = await fetchImpl(
-    `https://api.telegram.org/bot${token}/sendMessage`,
+    `https://api.telegram.org/bot${token}/sendRichMessage`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: offer.text,
-        reply_markup: offer.replyMarkup,
+        rich_message: { markdown: offer.text },
       }),
     },
   );

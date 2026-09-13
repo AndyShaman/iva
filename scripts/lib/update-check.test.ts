@@ -33,7 +33,7 @@ import {
 type UpdateOfferRequest = {
   token: string;
   chatId: string;
-  offer: { text: string; replyMarkup: { inline_keyboard: unknown[][] } };
+  offer: { text: string };
 };
 type DailyUpdateResult = {
   status: string;
@@ -61,6 +61,11 @@ const { runDailyUpdateCheck } = require("../check-update.mjs") as unknown as {
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+/** callback_data кнопок в порядке появления в rich-тексте сообщения. */
+function actionCallbacks(text: string): string[] {
+  return [...text.matchAll(/data="([^"]+)"/gu)].map((match) => match[1]);
+}
 
 function repoFixture() {
   const temp = mkdtempSync(join(tmpdir(), "iva-update-check-"));
@@ -248,7 +253,11 @@ test("daily check sends one offer per version and records only successful sends"
   };
   assert.equal((await runDailyUpdateCheck(options)).status, "notified");
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].offer.replyMarkup.inline_keyboard[0].length, 2);
+  // Кнопки — строки rich-текста: обе на месте, рядом со своими пояснениями.
+  assert.deepEqual(actionCallbacks(sent[0].offer.text), [
+    "iva_update:do",
+    "iva_update:skip",
+  ]);
   assert.match(sent[0].offer.text, /Доступна новая версия Ивы/);
   assert.equal((await runDailyUpdateCheck(options)).status, "already-notified");
   assert.equal(sent.length, 1);
@@ -395,10 +404,10 @@ test("offer copy is bilingual and keeps existing callback actions", () => {
   const ru = updateOffer("1.2.3", "1.2.4", "ru");
   assert.match(en.text, /new Iva version/);
   assert.match(ru.text, /новая версия Ивы/);
-  assert.deepEqual(
-    en.replyMarkup.inline_keyboard[0].map((button) => button.callback_data),
-    ["iva_update:do", "iva_update:skip"],
-  );
+  assert.deepEqual(actionCallbacks(en.text), [
+    "iva_update:do",
+    "iva_update:skip",
+  ]);
 });
 
 test("systemd templates schedule a persistent 10:00 local check and lifecycle commands include it", () => {
@@ -771,12 +780,10 @@ test("the update Alert carries the repair command only for an updater that is to
     assert.match(stuck.text, /v1\.2\.3 → v1\.2\.4/);
     assert.ok(stuck.text.includes(REPAIR_COMMAND), stuck.text);
     // The buttons stay: the tap now earns the same words instead of a broken update.
-    assert.deepEqual(
-      stuck.replyMarkup.inline_keyboard[0].map(
-        (button) => button.callback_data,
-      ),
-      ["iva_update:do", "iva_update:skip"],
-    );
+    assert.deepEqual(actionCallbacks(stuck.text), [
+      "iva_update:do",
+      "iva_update:skip",
+    ]);
   }
 
   // End to end: the flag comes off the remote marker the daily check already fetched.

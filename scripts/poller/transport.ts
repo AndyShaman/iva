@@ -112,20 +112,20 @@ async function reply(chatId: number | string, text: string) {
   }
 }
 
+// Правка rich-экрана моста: кнопки теперь живут в самом markdown, поэтому клавиатуры
+// (четвёртого параметра) у этой функции нет вовсе. reply() рядом остаётся обычным
+// sendMessage: голый текст без кнопок не обязан быть rich-сообщением.
 async function edit(
   chatId: number | string,
   messageId: number,
-  text: string,
-  replyMarkup?: unknown,
+  markdown: string,
 ) {
   try {
-    const body: Record<string, unknown> = {
+    const data = (await tg("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
-      text,
-    };
-    if (replyMarkup !== undefined) body.reply_markup = replyMarkup;
-    const data = (await tg("editMessageText", body)) as TelegramResponse;
+      rich_message: { markdown },
+    })) as TelegramResponse;
     if (!data.ok)
       throw new Error(String(data.description || "editMessageText failed"));
     return data.result;

@@ -2,6 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { modelSummary } from "./model-summary.ts";
 import { redactTelegramBody } from "./notice.ts";
+import { button } from "./telegram-buttons.ts";
 import { updaterTooOldMessage } from "./update-check.ts";
 import type { RestoreReport } from "./update-safety.ts";
 
@@ -247,15 +248,14 @@ export function createTelegramUpdateReporter({
    * message, whatever the reason: a message Telegram will not let this process
    * edit is indistinguishable, from here, from one it lost - and both leave the
    * chat saying an update is still running.
+   * Финал — rich message: кнопка «посмотреть конфликты» стоит в самом тексте, рядом со
+   * своим пояснением, поэтому отдельной клавиатуры у финального экрана больше нет.
    */
-  async function finish(
-    text: string,
-    replyMarkup?: Record<string, unknown>,
-  ): Promise<boolean> {
-    const body = replyMarkup ? { text, reply_markup: replyMarkup } : { text };
+  async function finish(markdown: string): Promise<boolean> {
+    const body = { rich_message: { markdown } };
     if ((await edit(body)).ok) return true;
     try {
-      await call("sendMessage", { chat_id: activeJob.chatId, ...body });
+      await call("sendRichMessage", { chat_id: activeJob.chatId, ...body });
       return true;
     } catch (caught) {
       const error = caught as TelegramError;
@@ -341,7 +341,6 @@ export function createTelegramUpdateReporter({
         `${lang === "ru" ? "Модель" : "Model"}: ${model.line}`,
       ];
       lines.push(copy.preserved);
-      let replyMarkup: Record<string, unknown> | undefined;
       if (
         restoreReport?.status === "conflicted" ||
         restoreReport?.status === "preserved"
@@ -354,14 +353,18 @@ export function createTelegramUpdateReporter({
         );
         const bundleId = basename(restoreReport.recoveryDir);
         const callbackData = `iva_update:conflicts:${bundleId}`;
+        // Кнопка — строка текста: callback_data всё та же, её ждёт handleUpdateCallback.
         if (Buffer.byteLength(callbackData, "utf8") <= 64)
-          replyMarkup = {
-            inline_keyboard: [
-              [{ text: copy.review, callback_data: callbackData }],
-            ],
-          };
+          lines.push(
+            "",
+            `${button(copy.review, callbackData)} — ${
+              lang === "ru"
+                ? "показать, что не удалось перенести"
+                : "show what couldn't be carried over"
+            }`,
+          );
       }
-      return finish(lines.join("\n"), replyMarkup);
+      return finish(lines.join("\n"));
     },
     dispose() {},
   };
