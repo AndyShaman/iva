@@ -485,7 +485,6 @@ function checkEnvFile(ctx: DoctorContext): boolean {
   // codex — доступ по OAuth-токену (data/codex-auth.json), у остальных — ключ в .env.
   const required = [
     ...providerEnvKeys(provider),
-    "DEEPGRAM_API_KEY",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS",
     "ASSISTANT_BEARER",
@@ -524,6 +523,11 @@ function checkEnvOptions(ctx: DoctorContext): void {
   }
   // old .env without IVA_PORT (or with :3000) — migrate right here
   if (ctx.migrateEnv()) ctx.fix();
+  // voice is optional: without the key voice notes are saved but not transcribed
+  if (!(ctx.env.DEEPGRAM_API_KEY || "").trim())
+    ctx.warn(
+      "voice notes are not transcribed (no DEEPGRAM_API_KEY) — /menu → 🎤 Voice",
+    );
   // web search is optional; check the key of the SELECTED provider (SEARCH_PROVIDER)
   const searchKey: Record<string, string> = {
     tavily: "TAVILY_API_KEY",

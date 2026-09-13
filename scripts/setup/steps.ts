@@ -515,7 +515,9 @@ export async function askProviderSettings(
   return out;
 }
 
-/** Шаг 2: Deepgram — расшифровка голоса и видео. */
+/** Шаг 2: Deepgram — расшифровка голоса и видео. Необязателен: из части стран
+ *  console.deepgram.com не открывается, а бот без голосовых работает; ключ можно
+ *  добавить потом в /menu → 🎤 Голос или через iva config. */
 async function askDeepgramSettings(
   state: SetupState,
   ctx: SetupContext,
@@ -524,8 +526,8 @@ async function askDeepgramSettings(
   ctx.head(
     2,
     ctx.t(
-      "Deepgram — voice and video transcription",
-      "Deepgram — расшифровка голоса и видео",
+      "Deepgram — voice and video transcription (optional)",
+      "Deepgram — расшифровка голоса и видео (необязательно)",
     ),
   );
   ctx.print(
@@ -536,14 +538,33 @@ async function askDeepgramSettings(
   );
   ctx.print("    2) API Keys → Create a New API Key");
   ctx.print(`    3) ${ctx.t("copy the key", "скопируйте ключ")}`);
-  out.DEEPGRAM_API_KEY = await ctx.askRequired(
-    `  ${ctx.t("Paste the Deepgram API key", "Вставьте Deepgram API key")}`,
-    {
-      existing:
-        ctx.envValue("DEEPGRAM_API_KEY") || existing.DEEPGRAM_API_KEY || "",
-      validate: ctx.deepgramCheck,
-    },
+  ctx.print(
+    `  ${C.y}${ctx.t("Enter — skip: voice notes stay untranscribed until you add the key in /menu → 🎤 Voice or iva config.", "Enter — пропустить: голосовые не расшифровываются, пока не добавите ключ в /menu → 🎤 Голос или iva config.")}${C.x}`,
   );
+  const keyExisting =
+    ctx.envValue("DEEPGRAM_API_KEY") || existing.DEEPGRAM_API_KEY || "";
+  let key: string;
+  for (;;) {
+    key = (
+      (await ctx.ask(
+        `  ${ctx.t("Paste the Deepgram API key", "Вставьте Deepgram API key")}`,
+        keyExisting ? ctx.mask(keyExisting) : "",
+        keyExisting,
+      )) || ""
+    ).trim();
+    if (!key) break;
+    const err = await ctx.deepgramCheck(key);
+    if (!err) break;
+    ctx.print(`  ${C.y}${ctx.t("not ok", "не ок")}: ${err}${C.x}`);
+  }
+  out.DEEPGRAM_API_KEY = key;
+  if (!key) {
+    out.DEEPGRAM_LANGUAGE = out.DEEPGRAM_LANGUAGE || "multi";
+    ctx.print(
+      `  ${ctx.t("Voice is off for now — enable it later in /menu → 🎤 Voice.", "Голос пока выключен — включите потом в /menu → 🎤 Голос.")}`,
+    );
+    return;
+  }
   out.DEEPGRAM_LANGUAGE = await ctx.ask(
     `  ${ctx.t("Recognition language (multi = auto ru/uz/en)", "Язык распознавания (multi = авто ru/uz/en)")}`,
     out.DEEPGRAM_LANGUAGE || "multi",
@@ -985,7 +1006,7 @@ function printSetupSummary(
     }${C.x}`,
   );
   ctx.print(
-    `  ${ctx.t("Provider", "Провайдер")}: ${provider} · ${ctx.t("Model", "Модель")}: ${C.g}${chosenModel}${C.x} · Deepgram: ${out.DEEPGRAM_LANGUAGE} · ${ctx.t("Bot", "Бот")}: ${C.g}@${out.TELEGRAM_BOT_USERNAME}${C.x}`,
+    `  ${ctx.t("Provider", "Провайдер")}: ${provider} · ${ctx.t("Model", "Модель")}: ${C.g}${chosenModel}${C.x} · ${ctx.t("Voice", "Голос")}: ${out.DEEPGRAM_API_KEY ? out.DEEPGRAM_LANGUAGE : ctx.t("off (/menu → Voice)", "выкл (/menu → Голос)")} · ${ctx.t("Bot", "Бот")}: ${C.g}@${out.TELEGRAM_BOT_USERNAME}${C.x}`,
   );
   ctx.print(
     `  ${ctx.t("Access", "Доступ")}: ${out.TELEGRAM_ALLOWED_USER_IDS} · TZ: ${out.ASSISTANT_TIMEZONE} · vault: ${out.ASSISTANT_VAULT_DIR} · ${ctx.t("lang", "язык")}: ${out.AGENT_LANGUAGE}`,

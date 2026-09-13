@@ -27,6 +27,7 @@ process.env.ASSISTANT_DATA_DIR = join(root, "data");
 process.env.ASSISTANT_VAULT_DIR = join(root, "vault");
 process.env.ASSISTANT_TIMEZONE = "UTC";
 process.env.AGENT_LANGUAGE = "en";
+process.env.DEEPGRAM_API_KEY = "dg-test";
 process.env.TELEGRAM_BOT_TOKEN = "1:test-token";
 
 const media = await import("./telegram-media.ts");

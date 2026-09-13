@@ -906,7 +906,7 @@ test("opencode diagnostics preserve required-key order", async (t) => {
 
   assert.equal(
     failures[0],
-    ".env incomplete, missing: OPENCODE_API_KEY, OPENCODE_MODEL, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_IDS, ASSISTANT_BEARER — run: iva config",
+    ".env incomplete, missing: OPENCODE_API_KEY, OPENCODE_MODEL, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_IDS, ASSISTANT_BEARER — run: iva config",
   );
 });
 

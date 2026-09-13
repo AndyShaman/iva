@@ -48,9 +48,7 @@ test("экран памяти показывает причину, а не «я�
       deps: {},
       flows: {},
     };
-    const view = (await screen.render({} as never, context as never)) as {
-      text: string;
-    };
+    const view = await screen.render({} as never, context as never);
     assert.match(view.text, /Хранилище не настроено/);
     assert.match(view.text, /ASSISTANT_VAULT_DIR/);
     assert.ok(!view.text.includes("Ядро памяти пусто"));

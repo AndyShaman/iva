@@ -660,7 +660,6 @@ function existingConfiguration(existing: Env): ExistingConfiguration {
   const provKey = cat0?.keyVar ?? null;
   const REQUIRED = [
     ...(cat0 ? providerEnvKeys(cat0) : []),
-    "DEEPGRAM_API_KEY",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS",
   ];
@@ -815,10 +814,10 @@ function createSetupContext(): SetupContext {
 }
 
 void main().catch((error) => {
-    const caught = error as ThrownSetupError | null | undefined;
-    console.error(
-      `${C.r}${t("Setup aborted:", "Настройка прервана:")}${C.x}`,
-      caught?.message || error,
-    );
-    process.exit(1);
-  });
+  const caught = error as ThrownSetupError | null | undefined;
+  console.error(
+    `${C.r}${t("Setup aborted:", "Настройка прервана:")}${C.x}`,
+    caught?.message || error,
+  );
+  process.exit(1);
+});

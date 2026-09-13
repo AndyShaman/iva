@@ -103,9 +103,12 @@ test("шаг провайдера: failure — отказ ключа возвр�
 
 test("шаг ключей: happy — Deepgram, поиск и память остаются на бесплатной базе", async () => {
   const ctx = makeContext({
-    askRequired: async () => "dg-key",
     ask: async (question) =>
-      question.includes("Recognition language") ? "ru" : "",
+      question.includes("Deepgram API key")
+        ? "dg-key"
+        : question.includes("Recognition language")
+          ? "ru"
+          : "",
     askYesNo: async () => false,
   });
   const s = state("ollama");
@@ -117,19 +120,46 @@ test("шаг ключей: happy — Deepgram, поиск и память ост
   assert.equal(s.out.MEMORY_SEARCH_MODE, "grep");
 });
 
-test("шаг ключей: failure — отказ Deepgram называет причину", async () => {
-  const captured: Array<string | null> = [];
+test("шаг ключей: Enter на ключе Deepgram — пропуск, язык не спрашивается, голос выключен", async () => {
+  const asked: string[] = [];
+  const printed: string[] = [];
   const ctx = makeContext({
-    deepgramCheck: async () =>
-      "Deepgram rejected the key (401/403). Copy the key in full.",
-    askRequired: async (_label, options) => {
-      captured.push((await options?.validate?.("bad")) ?? null);
-      return "bad";
+    ask: async (question) => {
+      asked.push(question);
+      return "";
     },
+    print: (line) => printed.push(String(line)),
+    askYesNo: async () => false,
   });
-  await askKeysSettings(state("ollama"), ctx);
-  assert.equal(captured.length, 1);
-  assert.match(String(captured[0]), /Deepgram rejected the key/u);
+  const s = state("ollama");
+  await askKeysSettings(s, ctx);
+  assert.equal(s.out.DEEPGRAM_API_KEY, "");
+  assert.equal(s.out.DEEPGRAM_LANGUAGE, "multi");
+  assert.ok(!asked.some((q) => q.includes("Recognition language")));
+  assert.ok(printed.some((l) => /\/menu → 🎤 Voice/u.test(l)));
+});
+
+test("шаг ключей: failure — отказ Deepgram называет причину и просит ключ снова", async () => {
+  const printed: string[] = [];
+  let attempts = 0;
+  const ctx = makeContext({
+    deepgramCheck: async (key) =>
+      key === "bad"
+        ? "Deepgram rejected the key (401/403). Copy the key in full."
+        : null,
+    ask: async (question) => {
+      if (!question.includes("Deepgram API key")) return "";
+      attempts += 1;
+      return attempts === 1 ? "bad" : "good";
+    },
+    print: (line) => printed.push(String(line)),
+    askYesNo: async () => false,
+  });
+  const s = state("ollama");
+  await askKeysSettings(s, ctx);
+  assert.equal(attempts, 2);
+  assert.equal(s.out.DEEPGRAM_API_KEY, "good");
+  assert.ok(printed.some((l) => /Deepgram rejected the key/u.test(l)));
 });
 
 test("шаг Telegram: happy — токен даёт username, найденный ID идёт в доступ", async () => {

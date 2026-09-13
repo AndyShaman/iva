@@ -110,8 +110,13 @@ export async function processMediaPart(
     // Старое описание из кэша остаётся в силе: второй раз за ту же картинку не платим.
     const undecidedImage = isStillImage && cached?.vision === undefined;
     let chatSeesImage = false;
+    // Голос необязателен: без ключа Deepgram запись сохраняется, а модели идёт подводка
+    // «расшифровка не настроена» вместо заведомого 401 от провайдера.
+    const voiceConfigured = Boolean(
+      (process.env.DEEPGRAM_API_KEY ?? "").trim(),
+    );
     const needsTranscript =
-      media.transcribe && cached?.transcript === undefined;
+      media.transcribe && voiceConfigured && cached?.transcript === undefined;
     if (!rel || undecidedImage || needsTranscript) {
       let bytes: ArrayBuffer | undefined;
       if (rel) {
@@ -294,18 +299,23 @@ export async function processMediaPart(
                 `${tag} пользователь прислал изображение: ${path}. Посмотри его своими инструментами/` +
                   `скиллами и ответь по содержимому; не можешь — так и скажи.`,
               )
-            : media.transcribe
-              ? // Транскрипция сорвалась (провайдер упал или вернул пустое). Отсылать
-                // модель в скилл `documents` тут — предложить ей парсить .ogg: честнее
-                // сказать владельцу, что записи нет.
-                tr(
-                  `${tag} the recording is saved (${path}) but transcription failed. Say so honestly and ask for a retry or text; do not try to decode the audio yourself.`,
-                  `${tag} запись сохранена (${path}), но расшифровать её не удалось. Скажи об этом честно и предложи переслать заново или написать текстом; сам разбирать аудиофайл не пытайся.`,
+            : media.transcribe && !voiceConfigured
+              ? tr(
+                  `${tag} the recording is saved (${path}) but voice transcription is not set up. Say so and suggest /menu → 🎤 Voice to add the Deepgram key, or ask for text; do not try to decode the audio yourself.`,
+                  `${tag} запись сохранена (${path}), но расшифровка голоса не настроена. Скажи об этом и предложи /menu → 🎤 Голос, чтобы добавить ключ Deepgram, или попроси написать текстом; сам разбирать аудиофайл не пытайся.`,
                 )
-              : tr(
-                  `${tag} the user sent a file: ${path}. Load the \`documents\` skill and reply on its content.`,
-                  `${tag} пользователь прислал файл: ${path}. Загрузи скилл \`documents\` и ответь по содержимому файла.`,
-                );
+              : media.transcribe
+                ? // Транскрипция сорвалась (провайдер упал или вернул пустое). Отсылать
+                  // модель в скилл `documents` тут — предложить ей парсить .ogg: честнее
+                  // сказать владельцу, что записи нет.
+                  tr(
+                    `${tag} the recording is saved (${path}) but transcription failed. Say so honestly and ask for a retry or text; do not try to decode the audio yourself.`,
+                    `${tag} запись сохранена (${path}), но расшифровать её не удалось. Скажи об этом честно и предложи переслать заново или написать текстом; сам разбирать аудиофайл не пытайся.`,
+                  )
+                : tr(
+                    `${tag} the user sent a file: ${path}. Load the \`documents\` skill and reply on its content.`,
+                    `${tag} пользователь прислал файл: ${path}. Загрузи скилл \`documents\` и ответь по содержимому файла.`,
+                  );
     const context = [lead];
     if (gatedVision) {
       if (visionFlagged) {
