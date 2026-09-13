@@ -218,6 +218,7 @@ async function remindersEvents(
     pulseAgoMs,
     rows = [],
     brokenTable,
+    logs,
   }: {
     now: number;
     pulseAgoMs: number | null;
@@ -228,6 +229,8 @@ async function remindersEvents(
       delivered?: boolean | null;
     }>;
     brokenTable?: string;
+    // Сводка и разделители идут через log, а не ok/warn/bad — их ловит эта тетрадь.
+    logs?: string[];
   },
 ): Promise<Array<[string, string]>> {
   const data = join(root, "data");
@@ -296,7 +299,7 @@ async function remindersEvents(
     await createDoctorCommand(runtime, lifecycle(), {
       nodeVersion: "24.19.0",
       now: () => now,
-      log: () => undefined,
+      log: (...args: unknown[]) => void logs?.push(args.map(String).join(" ")),
       exit: () => undefined,
     })();
   } finally {
@@ -414,6 +417,36 @@ test("doctor показывает провалы напоминаний за с�
         kind === "warn" && /has not ticked yet/u.test(message),
     ),
     JSON.stringify(none),
+  );
+});
+
+// Сводка считает раздел, а не число строк: список провалов — одно предупреждение, как у
+// расписаний (doctor.ts:644-647). Двойной счёт в цикле давал Summary с лишними warn.
+test("список провалов напоминаний добавляет сводке одно предупреждение", async (t) => {
+  const now = Date.now();
+  const failures = [
+    { id: "r1", firedAt: now - 60_000, error: "sendMessage 400: first" },
+    { id: "r2", firedAt: now - 120_000, error: "sendMessage 400: second" },
+  ];
+  const summaryOf = async (rows: typeof failures) => {
+    const root = await sandbox(t);
+    const logs: string[] = [];
+    await remindersEvents(root, { now, pulseAgoMs: 30_000, rows, logs });
+    const summary = logs.find((line) => line.startsWith("Summary:"));
+    assert.ok(summary, `сводка не напечатана: ${JSON.stringify(logs)}`);
+    return summary;
+  };
+  const warns = (line: string): number => {
+    const match = /· (\d+) warn ·/u.exec(line);
+    assert.ok(match, `в сводке нет счётчика warn: ${line}`);
+    return Number(match[1]);
+  };
+  const withFailures = warns(await summaryOf(failures));
+  const withoutFailures = warns(await summaryOf([]));
+  assert.equal(
+    withFailures - withoutFailures,
+    1,
+    "два провала напоминаний дали сводке не одно предупреждение, как на базе",
   );
 });
 

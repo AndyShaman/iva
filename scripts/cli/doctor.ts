@@ -960,7 +960,9 @@ function checkReminderFailures(
           : row.delivered === null
             ? "the delivery fact was not recorded"
             : `went out, a later step failed: ${code}`;
-      ctx.warn(
+      // Печать на каждый провал, счёт — один на весь список: сводка считает раздел,
+      // а не число строк (как в checkScheduleFacts).
+      ctx.printWarn(
         `reminders: #${reminderIdHash(row.id)} fired ${Math.round((ctx.now() - (row.firedAt ?? 0)) / 60_000)}m ago and ${verdict}`,
       );
     }
