@@ -22,8 +22,8 @@ import {
   isEntrypoint,
   refreshOwnedShim,
   SHIM_PATH,
-  throughLink,
 } from "./lib/version-layout.ts";
+import { throughLink } from "./lib/link-target.ts";
 import {
   quarantinePath,
   rewriteRunStatusesForUpdate,

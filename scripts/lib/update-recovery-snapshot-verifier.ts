@@ -1,5 +1,21 @@
 import { verifyIgnoredCollisionDirectories } from "./update-ignored-collisions.ts";
-import type { RecoveryGit } from "./update-recovery.ts";
+type CommandResult = { code: number; stdout: string; stderr: string };
+
+/**
+ * Порт git для верификатора. Объявлен у потребителя: `update-recovery.ts` зовёт этот
+ * модуль как значение, и обратный `import type` замыкал цикл (B4b).
+ */
+export type RecoveryGit = {
+  run(
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; input?: Buffer; rawOutput?: boolean },
+  ): Promise<CommandResult>;
+  runBuffer(args: string[]): Promise<{
+    code: number;
+    stdout: Buffer;
+    stderr: string;
+  }>;
+};
 import {
   type IndexFlags,
   metadataFor,

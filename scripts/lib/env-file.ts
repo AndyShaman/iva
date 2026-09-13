@@ -16,7 +16,7 @@ import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { parseEnv } from "node:util";
-import { throughLink } from "./version-layout.ts";
+import { throughLink } from "./link-target.ts";
 
 // Locator, not a parser: upsertEnv edits lines in place and needs to know which line
 // carries which key. Values are never read out of it — that is parseEnv's job alone.

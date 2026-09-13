@@ -31,21 +31,8 @@ import { RecoveryObjectStore } from "./update-recovery-objects.ts";
 import {
   RECOVERY_METADATA_PREFIX,
   RecoverySnapshotVerifier,
+  type RecoveryGit,
 } from "./update-recovery-snapshot-verifier.ts";
-
-type CommandResult = { code: number; stdout: string; stderr: string };
-
-export type RecoveryGit = {
-  run(
-    args: string[],
-    options?: { env?: NodeJS.ProcessEnv; input?: Buffer; rawOutput?: boolean },
-  ): Promise<CommandResult>;
-  runBuffer(args: string[]): Promise<{
-    code: number;
-    stdout: Buffer;
-    stderr: string;
-  }>;
-};
 
 export type RecoveryFileOps = RawTrackedHooks & {
   remove(path: string): void;

@@ -27,8 +27,8 @@ import {
 import {
   UpdateRecoveryOwner,
   type RecoveryFileOps,
-  type RecoveryGit,
 } from "./update-recovery.ts";
+import type { RecoveryGit } from "./update-recovery-snapshot-verifier.ts";
 import { UpdateResourceOwners } from "./update-resource-owners.ts";
 
 const LOCK_TTL_MS = 6 * 60 * 60 * 1000;

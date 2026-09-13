@@ -13,7 +13,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -23,7 +22,7 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createVersionStore, parseVersionName } from "./version-store.ts";
 
@@ -42,20 +41,6 @@ export type Install = {
 export function real(path: string): string {
   try {
     return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * What a symlink names, target or no target. One hop, not a full resolve: writing
- * *through* the link is what keeps a version from turning shared state into its own.
- */
-export function throughLink(path: string): string {
-  try {
-    return lstatSync(path).isSymbolicLink()
-      ? resolve(dirname(path), readlinkSync(path))
-      : path;
   } catch {
     return path;
   }

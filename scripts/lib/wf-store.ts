@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { throughLink } from "./version-layout.ts";
+import { throughLink } from "./link-target.ts";
 
 export const TRASH_KEEP = 2;
 
