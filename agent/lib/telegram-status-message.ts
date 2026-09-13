@@ -64,7 +64,7 @@ function workingMarkdown({
   const loader = animated
     ? `<tg-emoji emoji-id="${WORK_LOADER.customEmojiId}">${WORK_LOADER.alt}</tg-emoji>`
     : WORK_LOADER.fallback;
-  const line = `${loader} ${tr("Working…", "Работаю…")}`;
+  const line = `${loader} ${tr("Working", "Работаю")}`;
   return withStop
     ? `${line} <tg-button type="callback_data" style="danger" data="${TELEGRAM_STOP_CALLBACK}">${tr("⏹ Stop", "⏹ Стоп")}</tg-button>`
     : line;

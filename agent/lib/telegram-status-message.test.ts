@@ -61,7 +61,7 @@ await test("статус уходит rich-сообщением с кнопко�
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "sendRichMessage");
   const markdown = markdownOf(calls[0]);
-  assert.match(markdown, /^<tg-emoji emoji-id="5818797194127346654">💬<\/tg-emoji> Working… /u);
+  assert.match(markdown, /^<tg-emoji emoji-id="5818797194127346654">💬<\/tg-emoji> Working /u);
   assert.ok(markdown.endsWith(STOP_BUTTON));
   assert.equal(calls[0].body.reply_markup, undefined);
 });
@@ -76,7 +76,7 @@ await test("отказ Telegram на custom_emoji роняет лоадер на
   assert.equal(await status.sendWorkingStatus(rejectCustom.tg), 501);
   assert.equal(rejectCustom.calls.length, 2);
   // Кнопка живёт в тексте, поэтому падение анимации её не снимает.
-  assert.match(markdownOf(rejectCustom.calls[1]), /^⏳ Working… /u);
+  assert.match(markdownOf(rejectCustom.calls[1]), /^⏳ Working /u);
   assert.ok(markdownOf(rejectCustom.calls[1]).endsWith(STOP_BUTTON));
 
   const next = handle();
@@ -85,7 +85,7 @@ await test("отказ Telegram на custom_emoji роняет лоадер на
     500,
   );
   assert.equal(next.calls.length, 1);
-  assert.match(markdownOf(next.calls[0]), /^⏳ Working…$/u);
+  assert.match(markdownOf(next.calls[0]), /^⏳ Working$/u);
 });
 
 await test("вне лички кнопку «Стоп» не показываем и не дорисовываем", async () => {
