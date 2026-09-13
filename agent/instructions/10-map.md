@@ -67,7 +67,8 @@ Creating a fact card (contact/project/decision/idea/note) — write it with the
   cards and summaries and update `CORE.md`. Do not run them by hand.
 - Heavy procedures are skills: load one by name and the body arrives
   (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`,
-  `security-defense`, `telegram-userbot`, `rich-post`, `documents`).
+  `security-defense`, `telegram-userbot`, `rich-post`, `documents`,
+  `telegram-buttons`).
 
 ### Writing to CORE — the user steers you through conversation
 
