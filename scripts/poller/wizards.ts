@@ -867,125 +867,70 @@ async function showSaved(st: WizardState) {
   ]);
 }
 
-// Inline-button taps for /model and /think. Mirrors handleUpdateCallback: ack the
-// spinner first, swallow untrusted taps, then dispatch on the wizard state.
-async function handleWizardCallback(cq: {
-  id: string;
-  data: string;
-  from?: { id?: string | number };
-  message?: { chat?: { id?: number }; message_id?: number };
-}) {
-  const senderId = cq.from?.id;
-  const from = senderId === undefined ? null : String(senderId);
-  const chatId = cq.message?.chat?.id;
-  const messageId = cq.message?.message_id;
-  await tg("answerCallbackQuery", { callback_query_id: cq.id }); // spinner only; never primary proof
-  if (from === null) return false;
-  if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true; // swallow untrusted taps
-  const action = cq.data.replace(/^iva_(model|think):/, "");
-  const st = getWizard(chatId, from);
-  // No state (bridge restarted / TTL) or a tap on an older wizard message → stale.
-  if (isStaleWizard(st, messageId) || st === null) {
-    const expired = await tg("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: tr(
-        "This dialog has expired — send /model again.",
-        "Диалог устарел — отправь /model заново.",
-      ),
+type WizardVerbHandler = (st: WizardState, action: string) => Promise<boolean>;
+
+function onWizardKeep(st: WizardState): Promise<boolean> {
+  return endWizard(
+    st,
+    st.flow === "think"
+      ? tr(
+          "Kept the current thinking level.",
+          "Оставил текущий уровень размышлений.",
+        )
+      : tr("Kept the current configuration.", "Оставил текущую конфигурацию."),
+    menuRow(),
+  );
+}
+
+function onWizardCancel(st: WizardState): Promise<boolean> {
+  return endWizard(st, tr("Cancelled.", "Отменено."), menuRow());
+}
+
+function onWizardChg(st: WizardState): Promise<boolean> {
+  return showProviderScreen(st);
+}
+
+async function onWizardNokey(st: WizardState): Promise<boolean> {
+  if (CATALOG[st.provider]?.auth !== "key-optional") return false;
+  st.awaitText = null;
+  st.pendingKey = null;
+  st.dropKey = true;
+  return showModelScreen(st);
+}
+
+async function onWizardProv(st: WizardState, action: string): Promise<boolean> {
+  const p = action.slice("prov:".length);
+  return CATALOG[p] ? pickProvider(st, p) : false;
+}
+
+async function onWizardRetry(st: WizardState): Promise<boolean> {
+  if (st.flow === "think") {
+    return handleThinkCmd(st.chatId, st.userId, {
+      msgId: st.msgId ?? undefined,
     });
-    return messageCallSucceeded(expired);
   }
-  if (!wizardActionAllowed(st, action)) return false;
-  if (action === "keep") {
+  return showModelScreen(st);
+}
+
+function onWizardBack(st: WizardState): Promise<boolean> {
+  if (st.flow === "think") {
     return endWizard(
       st,
-      st.flow === "think"
-        ? tr(
-            "Kept the current thinking level.",
-            "Оставил текущий уровень размышлений.",
-          )
-        : tr(
-            "Kept the current configuration.",
-            "Оставил текущую конфигурацию.",
-          ),
+      tr("Kept the current configuration.", "Оставил текущую конфигурацию."),
       menuRow(),
     );
   }
-  if (action === "cancel") {
-    return endWizard(st, tr("Cancelled.", "Отменено."), menuRow());
-  }
-  if (action === "chg") {
-    return showProviderScreen(st);
-  }
-  if (action === "nokey") {
-    if (CATALOG[st.provider]?.auth !== "key-optional") return false;
-    st.awaitText = null;
-    st.pendingKey = null;
-    st.dropKey = true;
-    return showModelScreen(st);
-  }
-  if (action.startsWith("prov:")) {
-    const p = action.slice("prov:".length);
-    return CATALOG[p] ? pickProvider(st, p) : false;
-  }
-  if (action === "retry") {
-    if (st.flow === "think") {
-      return handleThinkCmd(st.chatId, st.userId, {
-        msgId: st.msgId ?? undefined,
-      });
-    }
-    return showModelScreen(st);
-  }
-  if (action === "back") {
-    if (st.flow === "think") {
-      return endWizard(
-        st,
-        tr("Kept the current configuration.", "Оставил текущую конфигурацию."),
-        menuRow(),
-      );
-    }
-    return showProviderScreen(st);
-  }
-  if (action.startsWith("m:")) {
-    const option = selectWizardModel(st, action.slice("m:".length));
-    if (!option) return false;
-    if (option.reasoningLevels.length === 0) {
-      st.effort = null;
-      try {
-        await saveWizard(st);
-      } catch (e) {
-        if (!wizardIsCurrent(st)) return false;
-        if (e instanceof ModelValidationError) {
-          return showModelValidationError(st, e);
-        }
-        return endWizard(
-          st,
-          tr(
-            "Couldn't save .env: " + String(errorMessage(e)),
-            "Не удалось сохранить .env: " + String(errorMessage(e)),
-          ),
-          menuRow(),
-        );
-      }
-      // The validated configuration is durably written before any UI rendering.
-      if (!wizardIsCurrent(st)) return true;
-      await showSaved(st);
-      return true;
-    }
-    st.step = "effort";
-    return wizScreen(
-      st,
-      tr(
-        `Thinking level for ${option.id}:`,
-        `Уровень размышлений для ${option.id}:`,
-      ),
-      effortRows("iva_model", false, st.efforts),
-    );
-  }
-  if (action.startsWith("eff:")) {
-    const v = action.slice("eff:".length);
-    if (!selectWizardEffort(st, v)) return false;
+  return showProviderScreen(st);
+}
+
+async function onWizardModel(
+  st: WizardState,
+  action: string,
+): Promise<boolean> {
+  const option = selectWizardModel(st, action.slice("m:".length));
+  if (!option) return false;
+  if (option.reasoningLevels.length === 0) {
+    st.effort = null;
     try {
       await saveWizard(st);
     } catch (e) {
@@ -1007,49 +952,168 @@ async function handleWizardCallback(cq: {
     await showSaved(st);
     return true;
   }
-  if (action === "rs:later") {
+  st.step = "effort";
+  return wizScreen(
+    st,
+    tr(
+      `Thinking level for ${option.id}:`,
+      `Уровень размышлений для ${option.id}:`,
+    ),
+    effortRows("iva_model", false, st.efforts),
+  );
+}
+
+async function onWizardEffort(
+  st: WizardState,
+  action: string,
+): Promise<boolean> {
+  const v = action.slice("eff:".length);
+  if (!selectWizardEffort(st, v)) return false;
+  try {
+    await saveWizard(st);
+  } catch (e) {
+    if (!wizardIsCurrent(st)) return false;
+    if (e instanceof ModelValidationError) {
+      return showModelValidationError(st, e);
+    }
     return endWizard(
       st,
       tr(
-        "Saved. It'll apply after a restart (/restart).",
-        "Сохранил. Применится после перезапуска (/restart).",
+        "Couldn't save .env: " + String(errorMessage(e)),
+        "Не удалось сохранить .env: " + String(errorMessage(e)),
       ),
       menuRow(),
     );
   }
-  if (action === "rs:now") {
-    await endWizard(
-      st,
+  // The validated configuration is durably written before any UI rendering.
+  if (!wizardIsCurrent(st)) return true;
+  await showSaved(st);
+  return true;
+}
+
+function onWizardRestartLater(st: WizardState): Promise<boolean> {
+  return endWizard(
+    st,
+    tr(
+      "Saved. It'll apply after a restart (/restart).",
+      "Сохранил. Применится после перезапуска (/restart).",
+    ),
+    menuRow(),
+  );
+}
+
+async function onWizardRestartNow(st: WizardState): Promise<boolean> {
+  await endWizard(
+    st,
+    tr(
+      "Restarting the agent… (~30s). The current conversation resumes after the restart.",
+      "Перезапускаю агента… (~30 сек). Текущий диалог продолжится после перезапуска.",
+    ),
+    menuRow(),
+  );
+  // Plain restart: a config change is not a recovery — parked
+  // conversations in .workflow-data survive and resume under the new model.
+  const ok = await sc("restart", "iva.service");
+  if (ok) {
+    const { provider, model, effort } = await currentConfig();
+    await reply(
+      st.chatId,
       tr(
-        "Restarting the agent… (~30s). The current conversation resumes after the restart.",
-        "Перезапускаю агента… (~30 сек). Текущий диалог продолжится после перезапуска.",
+        `Done — the new configuration is active: ${provider} · ${model} · thinking: ${effortLabel(effort)}.`,
+        `Готово — новая конфигурация активна: ${provider} · ${model} · размышления: ${effortLabel(effort)}.`,
       ),
-      menuRow(),
     );
-    // Plain restart: a config change is not a recovery — parked
-    // conversations in .workflow-data survive and resume under the new model.
-    const ok = await sc("restart", "iva.service");
-    if (ok) {
-      const { provider, model, effort } = await currentConfig();
-      await reply(
-        chatId as number,
-        tr(
-          `Done — the new configuration is active: ${provider} · ${model} · thinking: ${effortLabel(effort)}.`,
-          `Готово — новая конфигурация активна: ${provider} · ${model} · размышления: ${effortLabel(effort)}.`,
-        ),
-      );
-      return true;
-    } else {
-      const failed = await reply(
-        chatId as number,
-        tr(
-          "Couldn't restart (systemctl). Check the service on the server.",
-          "Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
-        ),
-      );
-      return replySucceeded(failed);
-    }
+    return true;
+  } else {
+    const failed = await reply(
+      st.chatId,
+      tr(
+        "Couldn't restart (systemctl). Check the service on the server.",
+        "Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+      ),
+    );
+    return replySucceeded(failed);
   }
+}
+
+// Таблица глагол → обработчик. Точные совпадения — по ключу, префиксные глаголы
+// (prov:/m:/eff:) — по началу действия.
+const WIZARD_VERB_HANDLERS: Record<string, WizardVerbHandler> = {
+  keep: onWizardKeep,
+  cancel: onWizardCancel,
+  chg: onWizardChg,
+  nokey: onWizardNokey,
+  retry: onWizardRetry,
+  back: onWizardBack,
+  "rs:later": onWizardRestartLater,
+  "rs:now": onWizardRestartNow,
+};
+
+function wizardHandlerFor(action: string): WizardVerbHandler | null {
+  const exact = WIZARD_VERB_HANDLERS[action];
+  if (exact) return exact;
+  if (action.startsWith("prov:")) return onWizardProv;
+  if (action.startsWith("m:")) return onWizardModel;
+  if (action.startsWith("eff:")) return onWizardEffort;
+  return null;
+}
+
+// Досмотр отправителя: доверенный — наружу именем, чужой тап уже проглочен
+// со своим вердиктом. Проверки дословно из диспетчера: порядок и вердикты те же.
+function wizardSender(cq: {
+  from?: { id?: string | number };
+}): { verdict: boolean } | { from: string } {
+  const senderId = cq.from?.id;
+  const from = senderId === undefined ? null : String(senderId);
+  if (from === null) return { verdict: false };
+  if (ALLOWED.size === 0 || !ALLOWED.has(from)) return { verdict: true }; // swallow untrusted taps
+  return { from };
+}
+
+// Протухший или потерянный визард: отвечаем «устарело» здесь, дальше не идём.
+// Живое состояние возвращается наружу — диспетчеру не нужен отдельный null-чек.
+async function answeredStaleWizard(
+  st: WizardState | null,
+  chatId: number | undefined,
+  messageId: number | undefined,
+): Promise<{ answered: boolean } | { live: WizardState }> {
+  if (st !== null && !isStaleWizard(st, messageId)) return { live: st };
+  const expired = await tg("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text: tr(
+      "This dialog has expired — send /model again.",
+      "Диалог устарел — отправь /model заново.",
+    ),
+  });
+  return { answered: messageCallSucceeded(expired) };
+}
+
+// Inline-button taps for /model and /think. Mirrors handleUpdateCallback: ack the
+// spinner first, swallow untrusted taps, then dispatch on the wizard state.
+async function handleWizardCallback(cq: {
+  id: string;
+  data: string;
+  from?: { id?: string | number };
+  message?: { chat?: { id?: number }; message_id?: number };
+}) {
+  const chatId = cq.message?.chat?.id;
+  const messageId = cq.message?.message_id;
+  await tg("answerCallbackQuery", { callback_query_id: cq.id }); // spinner only; never primary proof
+  const sender = wizardSender(cq);
+  if (!("from" in sender)) return sender.verdict;
+  const from = sender.from;
+  const action = cq.data.replace(/^iva_(model|think):/, "");
+  const st = getWizard(chatId, from);
+  // No state (bridge restarted / TTL) or a tap on an older wizard message → stale.
+  const target = await answeredStaleWizard(st, chatId, messageId);
+  if (!("live" in target)) return target.answered;
+  const live = target.live;
+  if (!wizardActionAllowed(live, action)) return false;
+  const handler = wizardHandlerFor(action);
+  if (!handler) return false;
+  return handler(live, action);
+
   return false;
 }
 
