@@ -74,7 +74,7 @@ void test("screen без msgId шлёт новое rich-сообщение и з
   // Старый ряд доезжает до текста rich-кнопкой; reply_markup в Bot API не уходит вовсе.
   assert.deepEqual(calls[0].params.rich_message, {
     markdown:
-      'привет\n\n<tg-button type="callback_data" data="x">A</tg-button>',
+      'привет\n\n<tg-button-row><tg-button type="callback_data" data="x">A</tg-button></tg-button-row>',
   });
   assert.equal(calls[0].params.reply_markup, undefined);
   assert.equal(st.msgId, 777);
@@ -160,7 +160,7 @@ void test("end снимает стейт и рисует финальный rich
   assert.equal(calls[0].method, "editMessageText");
   assert.deepEqual(calls[0].params.rich_message, {
     markdown:
-      'готово\n\n<tg-button type="callback_data" data="iva_menu:r:o">‹ Меню</tg-button>',
+      'готово\n\n<tg-button-row><tg-button type="callback_data" data="iva_menu:r:o">‹ Меню</tg-button></tg-button-row>',
   });
 });
 

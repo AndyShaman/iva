@@ -85,22 +85,27 @@ needs an `https://` URL the Telegram server can fetch; markdown is not parsed
 inside block HTML tags except `<details>`, `<tg-collage>`, `<tg-slideshow>`.
 Escape `*`, `_`, `#`, `|`, `<` in user data you quote (file names, keys, paths).
 
-## Buttons — inside the text, next to their explanation
+## Buttons — a full-width row, with the explanation right under it
 
-A button is an inline element of the text. Put it in the line with the words
-that say what it does; one button per paragraph unless the choices are
-equivalent one-worders (yes/no), which go in one `<tg-button-row>`.
+Put every button in its own `<tg-button-row>` block and write what it does on
+the next line. Do not place a button inside a sentence (`RichTextButton`): Android
+clients of summer 2026 draw the label outside the pill. Several equivalent
+one-word choices (yes/no) share one row.
 
 ````
 Напоминание на 14:30 поставил.
 
-<tg-button type="callback_data" data="Отложи на час">На час</tg-button> — напомню в 15:30.
+<tg-button-row><tg-button type="callback_data" data="Отложи на час">На час</tg-button></tg-button-row>
+Напомню в 15:30.
 
-<tg-button type="callback_data" style="danger" data="Отмени напоминание">Отменить</tg-button> — сниму его.
+<tg-button-row><tg-button type="callback_data" style="danger" data="Отмени напоминание">Отменить</tg-button></tg-button-row>
+Сниму его.
 
-<tg-button type="url" url="https://iva-agent.com/docs">Документация</tg-button> — как настроить дайджест.
+<tg-button-row><tg-button type="url" url="https://iva-agent.com/docs">Документация</tg-button></tg-button-row>
+Как настроить дайджест.
 
-<tg-button type="copy_text" text="ssh c1">Скопировать</tg-button> — команда для входа на сервер.
+<tg-button-row><tg-button type="copy_text" text="ssh c1">Скопировать</tg-button></tg-button-row>
+Команда для входа на сервер.
 
 <tg-button-row><tg-button type="callback_data" data="Да">Да</tg-button><tg-button type="callback_data" data="Нет">Нет</tg-button></tg-button-row>
 ````

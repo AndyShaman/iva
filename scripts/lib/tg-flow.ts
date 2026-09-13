@@ -8,7 +8,7 @@
 // Состояние живёт только в памяти этого процесса. Рестарт моста теряет его —
 // протухший тап по кнопке ловится диспатчером как «диалог устарел».
 
-import { legacyRows } from "./telegram-buttons.ts";
+import { blockButtons, legacyRows } from "./telegram-buttons.ts";
 
 const TTL_MS = 15 * 60 * 1000; // как WIZARD_TTL_MS — совпадает с временем жизни codex device-code
 
@@ -132,7 +132,9 @@ export function createFlows({ tg, log = () => {} }: CreateFlowsOptions) {
     rows?: TelegramKeyboard | null,
   ): Promise<boolean> {
     const rich_message = {
-      markdown: rows ? `${markdown}\n\n${legacyRows(rows)}` : markdown,
+      markdown: blockButtons(
+        rows ? `${markdown}\n\n${legacyRows(rows)}` : markdown,
+      ),
     };
     if (st.msgId) {
       const r = await tg("editMessageText", {

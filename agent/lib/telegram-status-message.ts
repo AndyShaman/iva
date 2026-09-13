@@ -65,8 +65,9 @@ function workingMarkdown({
     ? `<tg-emoji emoji-id="${WORK_LOADER.customEmojiId}">${WORK_LOADER.alt}</tg-emoji>`
     : WORK_LOADER.fallback;
   const line = `${loader} ${tr("Working", "Работаю")}`;
+  // Кнопка рядом-блоком, не в строке: inline-кнопки Android-клиент рисует криво (13.09.2026).
   return withStop
-    ? `${line} <tg-button type="callback_data" style="danger" data="${TELEGRAM_STOP_CALLBACK}">${tr("⏹ Stop", "⏹ Стоп")}</tg-button>`
+    ? `${line}\n<tg-button-row><tg-button type="callback_data" style="danger" data="${TELEGRAM_STOP_CALLBACK}">${tr("⏹ Stop", "⏹ Стоп")}</tg-button></tg-button-row>`
     : line;
 }
 
