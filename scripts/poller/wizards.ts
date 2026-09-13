@@ -1113,8 +1113,6 @@ async function handleWizardCallback(cq: {
   const handler = wizardHandlerFor(action);
   if (!handler) return false;
   return handler(live, action);
-
-  return false;
 }
 
 export function resetMessageCopy(
