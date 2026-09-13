@@ -78,48 +78,10 @@ afterwards is fine.
 
 ## Markdown syntax (rich_message.markdown)
 
-````
-**bold**  __bold__  *italic*  _italic_  ~~strike~~  `code`  ==marked==  ||spoiler||
-[link](https://t.me/)  [mail](mailto:a@b.c)  [user](tg://user?id=123)
-![custom emoji](tg://emoji?id=5368324170671202286)
-$x^2 + y^2$                      inline formula
-
-# Heading 1 … ###### Heading 6
-Paragraph text on its own lines.
-
-```python
-fenced code block with language
-```
-
-- unordered item        1. ordered item       - [ ] task   - [x] done
-> block quote
-> continues
-
-![](https://host/photo.jpg)               inline image
-![](https://host/photo.jpg "caption")     image with caption
-![](https://host/clip.mp4 "cap")          video / audio / gif likewise
-
-| Header 1 | Header 2 |               table (markdown)
-|:---------|--------:|
-| left | right |
-
-Text with a footnote[^1].
-[^1]: Footnote definition.
-
-$$E = mc^2$$                         block formula
-
-<details open><summary>Title **bold**</summary>
-collapsible content (markdown inside)
-</details>
-
-<tg-collage>                         grid of media
-![](url1) ![](url2)
-</tg-collage>
-<tg-slideshow> … </tg-slideshow>    swipeable media
-
-HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
-<aside>pull quote<cite>Author</cite></aside>
-````
+The same markup as a rich reply — see the `rich-replies` skill for the full
+reference (headings, tables, folds, footnotes, formulas, media, collages,
+slideshows, maps, buttons). A post supports all of it; `callback_data` buttons
+only make sense in a private chat with the bot.
 
 ## Limits
 

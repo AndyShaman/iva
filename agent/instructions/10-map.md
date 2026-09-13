@@ -68,7 +68,9 @@ Creating a fact card (contact/project/decision/idea/note) — write it with the
 - Heavy procedures are skills: load one by name and the body arrives
   (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`,
   `security-defense`, `telegram-userbot`, `rich-post`, `documents`,
-  `telegram-buttons`).
+  `rich-replies`). Load `rich-replies` before a structured answer (comparison,
+  report, steps) and whenever you offer the user a choice, a link or a value to
+  copy: buttons live inside the text there.
 
 ### Writing to CORE — the user steers you through conversation
 
