@@ -1,6 +1,6 @@
 # TLA+ models
 
-The repository keeps bounded models of the lock, the night writer, restart recovery, proactive notices, plugin proposals, idle compaction and the tap on a model's button. Run them from a temporary directory because TLC writes state files beside the model.
+The repository keeps bounded models of the lock, the night writer, restart recovery, proactive notices, plugin proposals, idle compaction, the tap on a model's button and the drain of the Bridge queue in batches. Run them from a temporary directory because TLC writes state files beside the model.
 
 ## FileLock
 
@@ -112,4 +112,25 @@ Witnesses must fail: `ButtonTap-keyonly.cfg` (a repeat is judged by the key alon
 
 ```sh
 specs/button-tap-check.sh
+```
+
+## QueueDrain
+
+`QueueDrain.tla` models the drain of the Bridge queue in batches (spec `.scratch/work/wave-1010/l5/spec-v1.md`, section 7) and was written before the code: it checks the design. One chat, two authors, messages that join a batch (`plain`) or go alone (`alone`: a command, a reply, a tap on a model's button, a message without `from`); the inbox of each author with routing and the removal from the inbox as separate steps; routing to the queue or a direct delivery; the drain (a batch pinned until its removal, else `queueBatchLength`), a delivery whose id is the last item of the batch, removal of the batch with one write; eve's ledger of delivery ids that began a turn (`handled` for a known id); a delivery accepted after the Bridge's deadline; a busy chat (a turn or a compaction); `queueInFlight`; the owner switching between queue and steer; a Bridge restart. `Loop = "seq"` follows the code's main loop (inbox promotion, then a drain pass); `Loop = "any"` lets routing land between any steps of the drain, wider than the code. The inbox collector, limits in parts and characters (`MaxItems` items instead), replies to bot messages that skip the queue, `/new` with `clearChatQueue`, `closed-session`, negative ids without a ledger and time are outside the model. Ids are compared only for equality, so numbering them in arrival order loses nothing.
+
+Checked invariants:
+
+1. `NoLoss`: every message that arrived is in an inbox, in the queue or was in at least one turn.
+2. `NoDupBeyondBreak`: a message is in two turns only when a restart cut its delivery (a batch in flight or pinned, a routing not yet removed from the inbox) or a direct delivery ended for the Bridge without an answer while eve began the turn.
+3. `QueueOrder`: first appearances of messages that came to a turn from the queue follow their first enqueue order.
+4. `WholeBatch`: a batch chosen without a pin is a prefix of the snapshot, allowed and maximal.
+5. `AloneStaysAlone`: a turn from the queue with an `alone` message holds only that message.
+6. `BatchAtHead` and `PinAtHead`: the batch in flight and the pin stand whole at the head of the queue, so `removeQueueItems` never meets a batch off the head and a partial pin never happens.
+
+The design of spec v1 passes every invariant under queue with routing between any steps of the drain, a late acceptance and a restart (`QueueDrain.cfg`). Finding F1 (`-switch`, `-switch-norestart`, in the code's order): after the owner switches queue to steer while messages wait, a direct delivery overtakes the queue and puts its id into the ledger; a later batch that ends with this id gets `handled`, and the message before it in the batch is lost. With a restart between routing and removal from the inbox the copy already in the queue is delivered directly; without a restart a late direct delivery is queued again behind an earlier message of the same author while `queueInFlight` holds the chat after another batch. The drain of one head at a time does not lose here. The proposed repair R1 (`QueueFirst`: while the chat's queue is not empty a message waits behind it under steer too) passes every invariant (`-r1`). A lost ledger id (a failed write after acceptance or eviction from the last 200) gives a second turn without a restart (`-ledgerloss`, review finding 1).
+
+Witnesses must fail: `-staleack` (the removal writes the snapshot of the pass without the batch, `NoLoss`), `-nopin` (no pin: a batch accepted after the deadline is counted again with a new last id, `NoDupBeyondBreak`), `-anysender` (batches of any authors, `NoLoss`), `-mergealone` (`alone` joins a batch, `AloneStaysAlone`).
+
+```sh
+specs/queue-drain-check.sh
 ```
