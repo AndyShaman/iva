@@ -16,6 +16,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 import { RUNTIME_SOURCE_TREES } from "./lib/custom-layer.ts";
 
@@ -214,6 +215,60 @@ test("the cross-tree scan reads the edges it judges", () => {
   // Both halves are pinned: a scan that stopped matching would pass the guard above
   // vacuously, and a new tree in the topology has to be seen by a human.
   assert.deepEqual(treesTheRuntimeImports(), ["agent", "packages"]);
+});
+
+// eve bundles every authored module as one chunk (`buildSingleRolldownChunk` in
+// node_modules/eve/dist/src/internal/authored-module-loader.js, code splitting off), and a
+// dynamic `import()` in the authored tree does not survive it: 49c69eb3 put one inside the
+// status module, and `eve build` failed with "Failed to evaluate authored module" on the
+// Telegram channel. scripts/ keeps its dynamic imports — eve does not bundle it. Read by
+// the TypeScript parser rather than a regex: a type-position `import("…")` (`typeof
+// import("node:sqlite")`, `import("node:sqlite").DatabaseSync`) is erased and stays allowed,
+// and an `import()` named in a comment or a string is not code.
+function dynamicImports(file: string, source: string): string[] {
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      const { line } = tree.getLineAndCharacterOfPosition(node.getStart(tree));
+      found.push(`${file}:${line + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return found;
+}
+
+test("the authored tree has no dynamic import()", () => {
+  assert.deepEqual(
+    productionTypeScriptFiles("agent").flatMap((file) =>
+      dynamicImports(file, readFileSync(join(ROOT, file), "utf8")),
+    ),
+    [],
+    "eve bundles every authored module as one chunk, so a dynamic import() in agent/ breaks `eve build` (Failed to evaluate authored module) — import the module statically; a process that must load without it gets its own module without that import",
+  );
+});
+
+test("the dynamic import() scan sees value imports and lets erased type imports pass", () => {
+  // Both halves are pinned: a scan that stopped seeing import() would pass the guard above
+  // vacuously. The first line is statusPhrase as 49c69eb3 wrote it.
+  assert.deepEqual(
+    dynamicImports(
+      "probe.ts",
+      [
+        'const { redactNotice } = await import("./outbox.ts");',
+        'const later = () => import("#lib/outbox.ts");',
+        'type Sqlite = typeof import("node:sqlite");',
+        'let db: import("node:sqlite").DatabaseSync;',
+        '// await import("./outbox.ts") named in a comment',
+        "const prose = \"await import('./outbox.ts')\";",
+      ].join("\n"),
+    ),
+    ["probe.ts:1", "probe.ts:2"],
+  );
 });
 
 // Only `from "..."` clauses: a dynamic import() is exactly the escape hatch a CLI module
