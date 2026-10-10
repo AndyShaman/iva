@@ -217,10 +217,8 @@ export async function promoteReadyInbox({
   loadImpl = async () =>
     (await loadQueueFile(TELEGRAM_INBOX_FILE, { strict: true })).document,
   routeImpl = routeMessageUpdate,
-  acknowledgeImpl = (key: string, updateIds: readonly number[]) =>
-    acknowledgeQueueItems(TELEGRAM_INBOX_FILE, key, updateIds, {
-      strict: true,
-    }),
+  acknowledgeImpl = (key: string, ids: readonly number[]) =>
+    acknowledgeQueueItems(TELEGRAM_INBOX_FILE, key, ids, { strict: true }),
   backoff = inboxPromotionBackoff,
 }: {
   now?: () => number;
@@ -229,10 +227,7 @@ export async function promoteReadyInbox({
     Awaited<ReturnType<typeof loadQueueFile>>["document"]
   >;
   routeImpl?: (update: TelegramQueueUpdate) => Promise<RouteMessageResult>;
-  acknowledgeImpl?: (
-    key: string,
-    updateIds: readonly number[],
-  ) => Promise<unknown>;
+  acknowledgeImpl?: (key: string, ids: readonly number[]) => Promise<unknown>;
   backoff?: Map<string, InboxPromotionBackoff>;
 } = {}): Promise<number> {
   const snapshot = await loadImpl();

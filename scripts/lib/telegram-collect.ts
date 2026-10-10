@@ -91,16 +91,15 @@ function messageChars(message: TelegramCollectMessage | undefined) {
 }
 
 function flatParts(message: TelegramCollectMessage): TelegramCollectMessage[] {
-  const nested = Array.isArray(message.iva_parts)
-    ? message.iva_parts
+  const { iva_parts: nested, ...self } = message;
+  const parts = Array.isArray(nested)
+    ? nested
         .filter((part) => typeof part === "object" && part !== null)
         .flatMap(flatParts)
     : [];
-  if (nested.length) return nested;
-  if (!Object.hasOwn(message, "iva_parts")) return [message];
-  const self = { ...message }; // пустые или битые части: часть — само сообщение
-  delete self.iva_parts;
-  return [self];
+  if (parts.length) return parts;
+  // Пустые или битые части: часть — само сообщение, без своего iva_parts.
+  return Object.hasOwn(message, "iva_parts") ? [self] : [message];
 }
 
 /** Части апдейта плоским списком: склейка входа несёт их в iva_parts, одиночное сообщение — само. */
@@ -124,14 +123,6 @@ export function deliveredAlone(update: TelegramCollectUpdate): boolean {
   );
 }
 
-function sizeOf(update: TelegramCollectUpdate): [number, number] {
-  const parts = updateParts(update);
-  return [
-    parts.length,
-    parts.reduce((sum, part) => sum + messageChars(part), 0),
-  ];
-}
-
 /** Сколько элементов с головы очереди уходят одной пачкой; 0 — для пустого списка. */
 export function queueBatchLength(
   updates: readonly TelegramCollectUpdate[],
@@ -140,24 +131,25 @@ export function queueBatchLength(
     maxChars = COLLECT_MAX_CHARS,
   }: { maxParts?: number; maxChars?: number } = {},
 ): number {
-  const [head, ...rest] = updates;
+  const [head] = updates;
   if (head === undefined) return 0;
   if (deliveredAlone(head)) return 1;
   const author = String(head.message?.from?.id);
-  let [parts, chars] = sizeOf(head);
-  // Пропусков нет: первый, кто одиночный, чужой или не влез, кончает пачку.
-  const stop = rest.findIndex((next) => {
-    const [nextParts, nextChars] = sizeOf(next);
-    parts += nextParts;
-    chars += nextChars;
+  let [parts, chars] = [0, 0];
+  // Голова идёт всегда; дальше пропусков нет: первый одиночный, чужой или не влезший кончает пачку.
+  const stop = updates.findIndex((next, index) => {
+    const nextParts = updateParts(next);
+    parts += nextParts.length;
+    chars += nextParts.reduce((sum, part) => sum + messageChars(part), 0);
     return (
-      deliveredAlone(next) ||
-      String(next.message?.from?.id) !== author ||
-      parts > maxParts ||
-      chars > maxChars
+      index > 0 &&
+      (deliveredAlone(next) ||
+        String(next.message?.from?.id) !== author ||
+        parts > maxParts ||
+        chars > maxChars)
     );
   });
-  return stop < 0 ? updates.length : stop + 1;
+  return stop < 0 ? updates.length : stop;
 }
 
 /** Склейка без пересортировки: части по порядку списка, носитель — первый, update_id — последний. */

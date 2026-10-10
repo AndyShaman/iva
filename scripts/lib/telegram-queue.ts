@@ -1012,12 +1012,9 @@ export async function acknowledgeQueueItems(
   options: QueueFileOptions = {},
 ): Promise<TelegramQueueDocument> {
   const loaded = await loadQueueFile(file, { ...options, strict: true });
-  const { document, removed } = removeQueueItems(
-    loaded.document,
-    chatKey,
-    updateIds,
-  );
-  if (removed === 0) return loaded.document; // acknowledged before a break: no write
+  const removal = removeQueueItems(loaded.document, chatKey, updateIds);
+  if (removal.removed === 0) return loaded.document; // acknowledged before a break: no write
+  const { document } = removal;
   const pendingFile = `${file}${TELEGRAM_QUEUE_ACK_PENDING_SUFFIX}`;
 
   // Publish the original queue durably before making batch removal visible.
