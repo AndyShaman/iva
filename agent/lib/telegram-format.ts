@@ -676,6 +676,30 @@ export function hasRichButtons(md: unknown): boolean {
   return /<tg-button[\s>]/i.test(String(md));
 }
 
+// Чужой текст одной строкой внутри rich-сообщения: цитата вопроса владельца в сообщении о
+// сбое, фраза модели в статусе хода. Пробелы и переводы строк схлопнуты, длина — не больше
+// maxChars знаков, на обрезе «…». Разметкой текст стать не может: `<` и `>` заменены
+// угловыми кавычками (тег не откроется), знаки разметки `*_#|` экранированы, как в
+// escapeRichText (scripts/lib/telegram-buttons.ts), а с ними `` ` ``, `[`, `]`, `(`, `)`,
+// `~`, `$` и обратная косая: иначе `\*` из текста стал бы экранированной косой и голой
+// звёздочкой. Обрезанный ключ гейт уже не узнаёт: текст, который гейт ещё не видел, идёт
+// через него до этой функции.
+export function richQuoteLine(text: string, maxChars: number): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  const chars = Array.from(line);
+  const cut =
+    chars.length <= maxChars
+      ? line
+      : `${chars
+          .slice(0, maxChars - 1)
+          .join("")
+          .trimEnd()}…`;
+  return cut
+    .replace(/</gu, "‹")
+    .replace(/>/gu, "›")
+    .replace(/([\\*_#|`[\]()~$])/gu, "\\$1");
+}
+
 export function needsRichMessage(md: unknown): boolean {
   const s = String(md);
   // GFM table delimiter row: a line of only pipes/dashes/colons/space with a dash run.

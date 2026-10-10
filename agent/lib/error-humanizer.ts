@@ -11,6 +11,7 @@
 // upstreamStatusCode, upstreamMessage, apiErrorMessage). Остальное в details — стек, тело
 // ответа, errorId — не читается: номер строки `:429:` в стеке не значит лимит (рецензия
 // 07.10.2026).
+import { richQuoteLine } from "./telegram-format.ts";
 
 export interface ProviderErrorText {
   readonly en: string;
@@ -212,27 +213,12 @@ function toolSchemaText({ evidence }: Situation): ProviderErrorText {
 const QUOTE_LIMIT = 120;
 
 /**
- * Вопрос владельца для цитаты в rich-сообщении: одна строка, до 120 знаков с «…». Это его же
- * текст, уже прошедший Gate на входе, и обратно он едет через outbound-Gate шва. Разметкой
- * он стать не может: `<` и `>` заменены угловыми кавычками (тег не откроется), знаки
- * разметки `*_#|` экранированы, как в escapeRichText (scripts/lib/telegram-buttons.ts), а
- * с ними `` ` ``, `[`, `]`, `(`, `)`, `~`, `$` и обратная косая: иначе `\*` владельца стал бы
- * экранированной косой и голой звёздочкой.
+ * Вопрос владельца для цитаты в rich-сообщении: одна строка, до 120 знаков с «…», разметкой
+ * стать не может (richQuoteLine). Это его же текст, уже прошедший Gate на входе, и обратно
+ * он едет через outbound-Gate шва.
  */
 function quoteOf(question: string): string {
-  const line = question.replace(/\s+/gu, " ").trim();
-  const chars = Array.from(line);
-  const cut =
-    chars.length <= QUOTE_LIMIT
-      ? line
-      : `${chars
-          .slice(0, QUOTE_LIMIT - 1)
-          .join("")
-          .trimEnd()}…`;
-  return cut
-    .replace(/</gu, "‹")
-    .replace(/>/gu, "›")
-    .replace(/([\\*_#|`[\]()~$])/gu, "\\$1");
+  return richQuoteLine(question, QUOTE_LIMIT);
 }
 
 // На что шёл ответ: цитата в личном чате; в группе её видят все, поэтому только «твоё

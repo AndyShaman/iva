@@ -44,6 +44,7 @@ import {
   enableWorkingStatusStop,
   finishTelegramStatus,
   sendWorkingStatus,
+  showTurnProgress,
   TELEGRAM_STOP_CALLBACK,
 } from "../lib/telegram-status-message.js";
 import { notifyTelegramFailure } from "../lib/telegram-failure-notice.js";
@@ -510,13 +511,24 @@ const telegram = telegramChannel({
       keepTurnAlive(channel, ctx);
     },
     // Ответ модели уходит через Outbox — он же переопределяет дефолтную plain-доставку
-    // eve. Промежуточный текст перед tool-calls не шлём (зеркалим дефолт). Повторного
-    // хода модели на сбой доставки нет — ход уже закрыт, реформат произойдёт на следующем
+    // eve. Текст шага перед вызовом инструментов — то, что модель говорит по ходу работы:
+    // отдельным сообщением он не уходит, а встаёт фразой в статус хода
+    // (agent/lib/telegram-status-message.ts). Повторного хода модели на сбой доставки нет —
+    // ход уже закрыт, реформат произойдёт на следующем
     // сообщении (ошибка видна в логе/vault). Латентность засчитываем, только если ни одно
     // сообщение не потерялось: пустой рендер шов отдаёт с ok=false, поэтому проверки
     // delivered у вызывающего больше нет.
     async "message.completed"(data, channel, ctx) {
-      if (data.finishReason === "tool-calls" || !data.message) return;
+      if (data.finishReason === "tool-calls") {
+        if (data.message)
+          await showTurnProgress(
+            channel.telegram,
+            ctx.session.id,
+            parseTelegramDelivery(data.message).text,
+          );
+        return;
+      }
+      if (!data.message) return;
       const { text: message, silent } = parseTelegramDelivery(data.message);
       const recordDelivery = (delivered: boolean) =>
         emitTelegramTurnLatency({
