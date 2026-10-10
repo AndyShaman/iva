@@ -43,6 +43,7 @@ type HarnessResult = {
   queueDirSyncAttempts: number;
   queueDirSyncSuccesses: number;
   statusBeforeRetry: { status: string; ingressId?: unknown };
+  queueBeforeIdle: TelegramQueueDocument | null;
   deletedMessages: Array<{ chat_id: string; message_id: number }>;
   failureNotices: Array<{ chat_id: string; text: string }>;
   finalStatus: { status: string; ingressId?: unknown };
@@ -223,6 +224,7 @@ test("direct routing runtime durably queues a busy private update", async () => 
     acknowledgeImpl: async (candidate, count) => {
       calls.push(["acknowledge", candidate, count]);
     },
+    traceQueuedImpl: () => {},
     deliverImpl: async () => {
       calls.push(["deliver"]);
       return true;
@@ -316,21 +318,28 @@ test("directory sync failure requires a durable duplicate retry before offset ad
   assert.deepEqual(result.inbox, { version: 1, queues: {} });
 });
 
-test("queued follow-ups auto-drain in FIFO order when the current turn becomes idle", (t: TestContext) => {
+test("queued follow-ups reach Iva as one delivery in FIFO order when the current turn becomes idle", (t: TestContext) => {
   const dataDir = makeDataDir(t, "auto-drain");
   const result = runHarness("auto-drain", dataDir);
 
   assert.deepEqual(
-    result.deliveries.map((update) => [update.update_id, update.message?.text]),
+    result.queueBeforeIdle?.queues["1:"]?.map((item) => item.updateId),
+    [101, 102, 103],
+    "the queue holds three items until the chat is free: the drain merges, not the input collector",
+  );
+  assert.equal(result.deliveries.length, 1);
+  const [delivery] = result.deliveries;
+  assert.equal(delivery?.update_id, 103, "the batch speaks with its last id");
+  assert.equal(delivery?.message?.message_id, 101);
+  assert.deepEqual(
+    delivery?.message?.iva_parts?.map((part) => [part.message_id, part.text]),
     [
       [101, "first"],
       [102, "second"],
+      [103, "third"],
     ],
   );
-  assert.deepEqual(result.deliveryRoutes, [
-    "/eve/v1/telegram/accepted",
-    "/eve/v1/telegram/accepted",
-  ]);
+  assert.deepEqual(result.deliveryRoutes, ["/eve/v1/telegram/accepted"]);
   assert.deepEqual(
     result.queue,
     { version: 1, queues: {} },
@@ -341,6 +350,7 @@ test("queued follow-ups auto-drain in FIFO order when the current turn becomes i
     [
       "Queued (1). I'll start it automatically when the current task finishes.",
       "Queued (2). I'll start it automatically when the current task finishes.",
+      "Queued (3). I'll start it automatically when the current task finishes.",
     ],
   );
 });
@@ -456,15 +466,13 @@ test("a restarted bridge recovers and drains the persisted FIFO without a third 
   );
 
   const afterRestart = runHarness("restart-drain", dataDir);
+  // Остаток inbox встаёт за сохранённой очередью, и оба уходят одной доставкой.
   assert.deepEqual(
     afterRestart.deliveries.map((update) => [
       update.update_id,
-      update.message?.text,
+      update.message?.iva_parts?.map((part) => part.text),
     ]),
-    [
-      [101, "first"],
-      [102, "second"],
-    ],
+    [[102, ["first", "second"]]],
   );
   assert.deepEqual(afterRestart.queue, { version: 1, queues: {} });
   assert.deepEqual(afterRestart.inbox, { version: 1, queues: {} });

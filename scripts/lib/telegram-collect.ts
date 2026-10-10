@@ -1,3 +1,4 @@
+import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 import type {
   TelegramQueueMessage,
   TelegramQueueUpdate,
@@ -89,6 +90,91 @@ function messageChars(message: TelegramCollectMessage | undefined) {
   );
 }
 
+function flatParts(message: TelegramCollectMessage): TelegramCollectMessage[] {
+  const nested = Array.isArray(message.iva_parts)
+    ? message.iva_parts
+        .filter((part) => typeof part === "object" && part !== null)
+        .flatMap(flatParts)
+    : [];
+  if (nested.length) return nested;
+  if (!Object.hasOwn(message, "iva_parts")) return [message];
+  const self = { ...message }; // пустые или битые части: часть — само сообщение
+  delete self.iva_parts;
+  return [self];
+}
+
+/** Части апдейта плоским списком: склейка входа несёт их в iva_parts, одиночное сообщение — само. */
+export function updateParts(
+  update: TelegramCollectUpdate,
+): TelegramCollectMessage[] {
+  return update.message ? flatParts(update.message) : [];
+}
+
+/** Отдельной доставкой идёт то, чей смысл держится на «первое и единственное» (ADR-0011). */
+export function deliveredAlone(update: TelegramCollectUpdate): boolean {
+  if (update.message?.from?.id === undefined || update.update_id < 0)
+    return true;
+  return updateParts(update).some(
+    (part) =>
+      [part.text, part.caption].some(
+        (value) => typeof value === "string" && value.trim().startsWith("/"),
+      ) ||
+      part.reply_to_message !== undefined ||
+      part[TELEGRAM_BUTTON_TAP_FIELD] === true,
+  );
+}
+
+function sizeOf(update: TelegramCollectUpdate): [number, number] {
+  const parts = updateParts(update);
+  return [
+    parts.length,
+    parts.reduce((sum, part) => sum + messageChars(part), 0),
+  ];
+}
+
+/** Сколько элементов с головы очереди уходят одной пачкой; 0 — для пустого списка. */
+export function queueBatchLength(
+  updates: readonly TelegramCollectUpdate[],
+  {
+    maxParts = COLLECT_MAX_PARTS,
+    maxChars = COLLECT_MAX_CHARS,
+  }: { maxParts?: number; maxChars?: number } = {},
+): number {
+  const [head, ...rest] = updates;
+  if (head === undefined) return 0;
+  if (deliveredAlone(head)) return 1;
+  const author = String(head.message?.from?.id);
+  let [parts, chars] = sizeOf(head);
+  // Пропусков нет: первый, кто одиночный, чужой или не влез, кончает пачку.
+  const stop = rest.findIndex((next) => {
+    const [nextParts, nextChars] = sizeOf(next);
+    parts += nextParts;
+    chars += nextChars;
+    return (
+      deliveredAlone(next) ||
+      String(next.message?.from?.id) !== author ||
+      parts > maxParts ||
+      chars > maxChars
+    );
+  });
+  return stop < 0 ? updates.length : stop + 1;
+}
+
+/** Склейка без пересортировки: части по порядку списка, носитель — первый, update_id — последний. */
+export function joinUpdates(
+  updates: readonly TelegramCollectUpdate[],
+): TelegramCollectUpdate {
+  const [first] = updates;
+  if (first === undefined)
+    throw new Error("joinUpdates needs at least one update");
+  if (updates.length === 1) return first;
+  return {
+    ...first,
+    update_id: updates[updates.length - 1].update_id,
+    message: { ...first.message, iva_parts: updates.flatMap(updateParts) },
+  };
+}
+
 function mergeParts(updates: TelegramCollectUpdate[]): TelegramCollectUpdate {
   if (updates.length === 1) return updates[0];
 
@@ -103,23 +189,13 @@ function mergeParts(updates: TelegramCollectUpdate[]): TelegramCollectUpdate {
       return a.index - b.index;
     })
     .map(({ update }) => update);
-  const first = ordered[0];
   const updateId = ordered.reduce(
     (max, update) =>
       isSafeInteger(update.update_id) ? Math.max(max, update.update_id) : max,
     Number.MIN_SAFE_INTEGER,
   );
 
-  return {
-    ...first,
-    update_id: updateId,
-    message: {
-      ...first.message,
-      iva_parts: ordered.map(
-        (update) => update.message as TelegramCollectMessage,
-      ),
-    },
-  };
+  return { ...joinUpdates(ordered), update_id: updateId };
 }
 
 function entryQuietMs(collector: TelegramCollector, entry: CollectorEntry) {

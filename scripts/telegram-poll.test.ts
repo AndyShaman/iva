@@ -41,6 +41,7 @@ type RouteOptions = {
   shouldQueueImpl: (update: Update) => boolean;
   enqueueImpl: (chatKey: string, update: Update) => Promise<{ count: number }>;
   acknowledgeImpl: (update: Update, count: number) => Promise<void>;
+  traceQueuedImpl: (update: Update, count: number) => void;
   deliverImpl: (
     update: Update,
     options: DeliverOptions,
@@ -218,6 +219,7 @@ function routeDeps(overrides: Partial<RouteOptions> = {}): RouteOptions {
     shouldQueueImpl: () => true,
     enqueueImpl: async () => ({ count: 1 }),
     acknowledgeImpl: async () => {},
+    traceQueuedImpl: () => {},
     deliverImpl: async () => true,
     statusImpl: () => null,
     setStatusIfImpl: () => null,

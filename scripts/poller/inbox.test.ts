@@ -7,7 +7,7 @@ import fc from "fast-check";
 import {
   createQueueItem,
   enqueueItem,
-  removeQueueHead,
+  removeQueueItems,
   type TelegramQueueDocument,
   type TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
@@ -239,15 +239,17 @@ void test("promotion publishes the delivery item before removing raw ownership",
       events.push(`route:${candidate.update_id}`);
       return Promise.resolve("queued");
     },
-    acknowledgeImpl: (key, updateId) => {
-      events.push(`ack:${updateId}`);
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: (key, updateIds) => {
+      events.push(`ack:${updateIds.join(",")}`);
+      document = removeQueueItems(document, key, updateIds).document;
       return Promise.resolve();
     },
   });
 
   assert.equal(remaining, 0);
-  assert.deepEqual(events, ["route:102", "ack:101", "ack:102"]);
+  // Пачка inbox снимается одной записью: обрыв между частями не оставит остаток
+  // с тем же update_id, который ушёл бы прямой доставкой мимо полной копии.
+  assert.deepEqual(events, ["route:102", "ack:101,102"]);
 });
 
 void test("failed promotion keeps every raw part for retry", async () => {
@@ -309,8 +311,8 @@ void test("successful inbox promotion clears prior backoff state", async () => {
       collectorOptions: { quietMs: 0 },
       loadImpl: () => Promise.resolve(document),
       routeImpl: () => Promise.resolve("delivered"),
-      acknowledgeImpl: (key, updateId) => {
-        document = removeQueueHead(document, key, updateId);
+      acknowledgeImpl: (key, updateIds) => {
+        document = removeQueueItems(document, key, updateIds).document;
         return Promise.resolve();
       },
     }),
@@ -352,8 +354,8 @@ void test("a terminally dropped update leaves the inbox instead of looping forev
       routed.push(candidate.update_id);
       return Promise.resolve("terminal-drop");
     },
-    acknowledgeImpl: (key, updateId) => {
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: (key, updateIds) => {
+      document = removeQueueItems(document, key, updateIds).document;
       return Promise.resolve();
     },
   });
@@ -408,8 +410,8 @@ void test("property: terminal results never loop while transient results never l
               if (verdict === "delivered") deliveries.push(candidate.update_id);
               return Promise.resolve(verdict);
             },
-            acknowledgeImpl: (key, updateId) => {
-              document = removeQueueHead(document, key, updateId);
+            acknowledgeImpl: (key, updateIds) => {
+              document = removeQueueItems(document, key, updateIds).document;
               return Promise.resolve();
             },
           });

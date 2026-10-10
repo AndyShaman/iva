@@ -14,6 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
 import { requestTelegramCancel } from "#lib/telegram-cancel-client.ts";
+import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 
 type Event = string | [string, string, number | undefined, string | undefined];
 type CaptureMessage = { message_id?: number };
@@ -1561,6 +1562,8 @@ test("тап по кнопке модели уходит дальше обычн
     chat,
     from: { id: 42, is_bot: false },
     text: "Отложи на час\n\n(кнопка под сообщением Ивы: «Напомнить?»)",
+    // Пометка тапа: слив очереди отдаёт его отдельным ходом, не склеивая с соседями.
+    [TELEGRAM_BUTTON_TAP_FIELD]: true,
   });
 });
 

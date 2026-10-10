@@ -471,23 +471,33 @@ export function enqueueItem(
   };
 }
 
-export function removeQueueHead(
+// Снятие доставленной пачки: элементы после снимка остаются, id, убранные сбросом,
+// пропускаются; присутствующие id не с головы — очередь не та, снимать нечего.
+export function removeQueueItems(
   document: TelegramQueueDocument,
   chatKey: string,
-  updateId: number,
-): TelegramQueueDocument {
+  updateIds: readonly number[],
+): { document: TelegramQueueDocument; removed: number } {
+  if (updateIds.length === 0) throw new Error("Telegram queue batch is empty");
   const current = Object.hasOwn(document.queues, chatKey)
     ? document.queues[chatKey]
     : [];
-  if (!current.length || current[0].updateId !== updateId) {
+  const batch = new Set(updateIds);
+  const present = current.filter((item) => batch.has(item.updateId));
+  if (present.length === 0) return { document, removed: 0 };
+  if (present.some((item, index) => current[index] !== item)) {
     throw new Error(
-      `Telegram queue head changed for ${chatKey}; expected update ${updateId}`,
+      `Telegram queue batch changed for ${chatKey}; expected updates ${updateIds.join(",")}`,
     );
   }
   const queues = cloneQueueMap(document.queues);
-  if (current.length === 1) delete queues[chatKey];
-  else defineQueue(queues, chatKey, current.slice(1));
-  return { version: TELEGRAM_QUEUE_VERSION, queues };
+  const rest = current.slice(present.length);
+  if (rest.length === 0) delete queues[chatKey];
+  else defineQueue(queues, chatKey, rest);
+  return {
+    document: { version: TELEGRAM_QUEUE_VERSION, queues },
+    removed: present.length,
+  };
 }
 
 export function clearQueueKey(
@@ -995,17 +1005,22 @@ export async function enqueueQueueFile(
   };
 }
 
-export async function acknowledgeQueueHead(
+export async function acknowledgeQueueItems(
   file: string,
   chatKey: string,
-  updateId: number,
+  updateIds: readonly number[],
   options: QueueFileOptions = {},
 ): Promise<TelegramQueueDocument> {
   const loaded = await loadQueueFile(file, { ...options, strict: true });
-  const document = removeQueueHead(loaded.document, chatKey, updateId);
+  const { document, removed } = removeQueueItems(
+    loaded.document,
+    chatKey,
+    updateIds,
+  );
+  if (removed === 0) return loaded.document; // acknowledged before a break: no write
   const pendingFile = `${file}${TELEGRAM_QUEUE_ACK_PENDING_SUFFIX}`;
 
-  // Publish the original queue durably before making head removal visible.
+  // Publish the original queue durably before making batch removal visible.
   // If SIGKILL lands anywhere after this point, loadQueueFile restores it and
   // intentionally permits one at-least-once duplicate.
   await writeQueueFileAtomic(pendingFile, loaded.document, options);
@@ -1026,7 +1041,7 @@ export async function acknowledgeQueueHead(
       throw fatal;
     }
     const rolledBack = new Error(
-      `Telegram queue acknowledgement was not durable; original head ${updateId} was restored`,
+      `Telegram queue acknowledgement was not durable; original batch ${updateIds.join(",")} was restored`,
       { cause: error },
     ) as Error & { code: string };
     rolledBack.code = TELEGRAM_QUEUE_ACK_ROLLED_BACK;

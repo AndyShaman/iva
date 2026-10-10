@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import {
-  acknowledgeQueueHead,
+  acknowledgeQueueItems,
   clearQueueFileKey,
   enqueueQueueFile,
   loadQueueFile,
@@ -95,13 +95,15 @@ const withResetFailures = (error: unknown, resetFailures: number) => {
 
 // ── Durable busy-time FIFO ──────────────────────────────────────────────────
 // Each accepted Telegram update is written as a versioned item (including update_id and
-// the untouched raw update) before its Telegram offset advances. The bridge then replays
-// one head per idle chat/topic. It removes that head only after Eve accepts the webhook:
-// a crash can duplicate the head, but cannot lose it or reorder later items around it.
+// the untouched raw update) before its Telegram offset advances. The Bridge then replays
+// one batch (consecutive messages of one author) per idle chat/topic. It removes that batch
+// only after Eve accepts it: a crash can duplicate the batch, never lose or reorder it.
 const QUEUE_FILE = join(DATA_DIR, "telegram-queue.json");
 const RESET_INTENT_DIR = join(DATA_DIR, "telegram-reset-intents");
 const queueSettleUntil = new Map<string, number>();
 const queueInFlight = new Map<string, QueuePhase>();
+// Ids of a delivered batch until its removal is durable: every redelivery carries exactly them.
+const queueBatchPins = new Map<string, readonly number[]>();
 const queueDrainRotation: { afterKey: string | null } = { afterKey: null };
 const undrainableLegacyLogged = new Set<string>();
 // Remove this backoff when vercel/eve#2876 is fixed in the installed eve.
@@ -280,12 +282,12 @@ export const enqueueTelegramQueueUpdate = (
     enqueueImpl(QUEUE_FILE, chatKey, update, { strict: true }),
   );
 
-export const acknowledgeTelegramQueueHead = (
+export const acknowledgeTelegramQueueItems = (
   chatKey: string,
-  updateId: number,
+  updateIds: readonly number[],
 ) =>
   serializeQueueMutation(() =>
-    acknowledgeQueueHead(QUEUE_FILE, chatKey, updateId),
+    acknowledgeQueueItems(QUEUE_FILE, chatKey, updateIds),
   );
 
 export async function completeScopedResetState(
@@ -1125,6 +1127,7 @@ export {
   QUEUE_FILE,
   queueSettleUntil,
   queueInFlight,
+  queueBatchPins,
   queueDrainRotation,
   undrainableLegacyLogged,
   statusGeneration,

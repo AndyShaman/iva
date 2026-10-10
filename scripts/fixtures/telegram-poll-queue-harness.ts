@@ -351,6 +351,8 @@ const deletedMessages: JsonRecord[] = [];
 const requestedOffsets: number[] = [];
 let getUpdatesCalls = 0;
 let directAcceptanceAttempts = 0;
+// Файл очереди в момент, когда ход кончается: склейку делает слив, а не коллектор входа.
+let queueBeforeIdle: unknown = null;
 let statusBeforeRetry: ChatStatus | null = null;
 
 // Ответ eve на reply в закрытую сессию: тот же заголовок приёмки, но терминальный класс.
@@ -403,6 +405,7 @@ function finish() {
       queueDirSyncAttempts,
       queueDirSyncSuccesses,
       statusBeforeRetry,
+      queueBeforeIdle,
       finalStatus: status.getChatStatus(privateKey),
       offset: readJson(offsetFile, null),
       queue: readJson(queueFile, { version: 1, queues: {} }),
@@ -581,27 +584,32 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
       finish();
     }
     if (mode === "auto-drain") {
-      if (getUpdatesCalls === 1) {
+      // Три сообщения приходят тремя вызовами getUpdates, пока чат занят ходом.
+      const texts = ["first", "second", "third"];
+      if (getUpdatesCalls <= texts.length) {
         return jsonResponse({
           ok: true,
-          result: [privateUpdate(101, "first"), privateUpdate(102, "second")],
+          result: [
+            privateUpdate(100 + getUpdatesCalls, texts[getUpdatesCalls - 1]),
+          ],
         });
       }
-      if (getUpdatesCalls === 2) {
+      if (getUpdatesCalls === texts.length + 1) {
+        queueBeforeIdle = readJson(queueFile, null);
         status.setChatStatus(privateKey, {
           status: "idle",
           sessionId: null,
           turnId: null,
         });
       }
-      if (getUpdatesCalls > 2 && status.isRunning(privateKey)) {
+      if (getUpdatesCalls > texts.length + 1 && status.isRunning(privateKey)) {
         status.setChatStatus(privateKey, {
           status: "idle",
           sessionId: null,
           turnId: null,
         });
       }
-      if (getUpdatesCalls >= 6) finish();
+      if (getUpdatesCalls >= 8) finish();
       return jsonResponse({ ok: true, result: [] });
     }
     if (mode === "collect-burst") {

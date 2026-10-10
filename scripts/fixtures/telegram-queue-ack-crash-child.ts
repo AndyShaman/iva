@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 
-import { acknowledgeQueueHead } from "../lib/telegram-queue.ts";
+import { acknowledgeQueueItems } from "../lib/telegram-queue.ts";
 
 const [queueFileArg, markerFileArg] = process.argv.slice(2);
 if (!queueFileArg || !markerFileArg) {
@@ -12,7 +12,8 @@ if (!queueFileArg || !markerFileArg) {
 const queueFile = queueFileArg;
 const markerFile = markerFileArg;
 
-await acknowledgeQueueHead(queueFile, "1:", 101, {
+// Пачка из трёх id снимается одной записью; SIGKILL приходит сразу после публикации.
+await acknowledgeQueueItems(queueFile, "1:", [101, 102, 103], {
   renameImpl: async (from, to) => {
     await rename(from, to);
     if (String(to) !== queueFile) return;

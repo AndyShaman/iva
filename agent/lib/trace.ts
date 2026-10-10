@@ -440,7 +440,11 @@ function traceUpdateKey(chatId: unknown, messageId: unknown): string {
 
 type TelegramUpdateLike = {
   update_id?: unknown;
-  message?: { message_id?: unknown; chat?: { id?: unknown } } | null;
+  message?: {
+    message_id?: unknown;
+    chat?: { id?: unknown };
+    iva_parts?: unknown;
+  } | null;
   callback_query?: {
     id?: unknown;
     message?: { chat?: { id?: unknown } } | null;
@@ -861,6 +865,11 @@ export function traceBridgeAdmission(
   });
 }
 
+function updatePartCount(update: TelegramUpdateLike): number {
+  const parts = update.message?.iva_parts;
+  return Array.isArray(parts) && parts.length > 0 ? parts.length : 1;
+}
+
 /** Шов Bridge: апдейт отдан агенту (или не принят им). */
 export function traceBridgeDelivery(
   update: TelegramUpdateLike,
@@ -872,5 +881,14 @@ export function traceBridgeDelivery(
   emitBridge(update, accepted && !terminal ? "delivered" : "rejected", {
     accepted: accepted === "handled" || terminal ? accepted : Boolean(accepted),
     ms,
+    parts: updatePartCount(update),
   });
+}
+
+/** Шов Bridge: сообщение встало в очередь чата; count — сколько теперь ждёт. */
+export function traceBridgeQueued(
+  update: TelegramUpdateLike,
+  count: number,
+): void {
+  emitBridge(update, "queued", { count, parts: updatePartCount(update) });
 }

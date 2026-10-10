@@ -135,6 +135,7 @@ void test(
       },
       settleUntil: new Map(),
       inFlight: new Map(),
+      pins: new Map(),
     });
     assert.equal(remaining, 0);
     const replyFile = join(app, "data/restart-hang-replies.jsonl");

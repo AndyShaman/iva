@@ -947,6 +947,126 @@ await test("в группе нечитаемое сообщение остаёт
   assert.equal(calls.accepted, 0);
 });
 
+// --- Нечитаемая часть пачки ---
+//
+// Слив очереди Bridge склеивает подряд идущие сообщения одного автора, а содержимое
+// судит только Inbound pipeline (ADR-0011). Пачка обязана дать человеку то же, что те же
+// сообщения по одному: строку о нечитаемом на каждую такую часть и ход по остальному.
+
+function packPart(extra: Record<string, unknown>, index: number, type: string) {
+  return {
+    message_id: 31 + index,
+    chat: { id: type === "private" ? 77 : -100, type },
+    from: { id: 42, is_bot: false },
+    date: 1,
+    ...extra,
+  };
+}
+
+function pack(parts: Record<string, unknown>[], type = "private") {
+  const raw = parts.map((part, index) => packPart(part, index, type));
+  return message(
+    { ...raw[0], iva_parts: raw },
+    type === "private" ? {} : { chat: { id: "-100", type } },
+  );
+}
+
+async function oneByOne(parts: Record<string, unknown>[]): Promise<string[]> {
+  const sent: string[] = [];
+  for (const [index, part] of parts.entries()) {
+    const { calls, effects } = harness();
+    await inbound.runTelegramInbound(
+      message(packPart(part, index, "private")),
+      effects,
+    );
+    sent.push(...calls.sent);
+  }
+  return sent;
+}
+
+const contactPart = { contact: { first_name: "Ada", phone_number: "+99800" } };
+const pollPart = { poll: { id: "1", question: "обед или ужин", options: [] } };
+const futurePart = { some_future_field: { blocks: [] } };
+
+await test("нечитаемая часть пачки получает ту же строку, что и одиночное сообщение, а текст доходит до хода", async () => {
+  for (const [name, unreadablePart] of [
+    ["contact", contactPart],
+    ["poll", pollPart],
+    ["some_future_field", futurePart],
+  ] as const) {
+    const parts = [unreadablePart, { text: `потом текст про ${name}` }];
+    const expected = await oneByOne(parts);
+    assert.equal(expected.length, 1, name);
+    assert.match(expected[0], new RegExp(`fields: ${name}`, "u"));
+
+    const { calls, effects } = harness();
+    const result = await inbound.runTelegramInbound(pack(parts), effects);
+
+    assert.deepEqual(calls.sent, expected, name);
+    assert.equal(calls.accepted, 1, name);
+    assert.ok(
+      result?.context?.some((entry) =>
+        entry.includes(`потом текст про ${name}`),
+      ),
+      name,
+    );
+  }
+});
+
+await test("в пачке «текст, контакт, текст» одна строка о контакте, оба текста идут в ход", async () => {
+  const { calls, effects } = harness();
+  const result = await inbound.runTelegramInbound(
+    pack([{ text: "первый" }, contactPart, { text: "второй" }]),
+    effects,
+  );
+
+  assert.equal(calls.sent.length, 1);
+  assert.match(calls.sent[0], /fields: contact/u);
+  assert.equal(calls.accepted, 1);
+  for (const text of ["первый", "второй"]) {
+    assert.ok(
+      result?.context?.some((entry) => entry.includes(text)),
+      `${text} reaches the turn`,
+    );
+  }
+  assert.equal(
+    result?.context?.some((entry) => entry.includes("Ada")),
+    false,
+    "the unreadable part is answered, not passed on",
+  );
+});
+
+await test("в группе нечитаемая часть пачки молчит, а ход идёт", async () => {
+  const { calls, effects } = harness();
+  const result = await inbound.runTelegramInbound(
+    pack([contactPart, { text: "@iva_bot что скажешь" }], "supergroup"),
+    effects,
+  );
+
+  assert.deepEqual(calls.sent, []);
+  assert.equal(calls.accepted, 1);
+  assert.ok(result);
+});
+
+await test("сбой отправки строки о нечитаемой части не останавливает ход", async (t) => {
+  const errors = muteErrors(t);
+  const { calls, effects } = harness({
+    sendMessage: noticeSender(() =>
+      Promise.reject(new Error("telegram is down")),
+    ),
+  });
+  const result = await inbound.runTelegramInbound(
+    pack([contactPart, { text: "всё равно ответь" }]),
+    effects,
+  );
+
+  assert.equal(calls.accepted, 1);
+  assert.ok(
+    result?.context?.some((entry) => entry.includes("всё равно ответь")),
+  );
+  assert.ok(errors.some((line) => line.includes("не могу прочитать")));
+});
+
 // --- Пересылка ---
 //
 // Bot API ≥7.0 присылает только forward_origin: legacy-поля forward_from,

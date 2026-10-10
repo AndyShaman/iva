@@ -790,7 +790,10 @@ export async function runTelegramInbound(
     }
 
     const userText = reading.text.trim();
-    if (!userText) continue;
+    if (!userText) {
+      await unreadableNote(message, effects, [partRaw], [reading]); // как у одиночного
+      continue;
+    }
     const carrier = carrierTextEntries(userText, label);
     const carrierText = carrierReading.text.trim();
     // Пересланная часть не «чистый носитель»: eve донесёт её текст без метки,

@@ -338,11 +338,69 @@ void test("мост пишет свои события тем же ключом 
     kind: "message",
     accepted: true,
     ms: 42,
+    parts: 1,
   });
   assert.equal(callback?.turn, "tg:77:cb:cb1");
   assert.deepEqual(
     (callback?.data as Record<string, unknown>).decision,
     "terminal-drop",
+  );
+});
+
+void test("мост пишет постановку в очередь и число частей пачки без содержимого", () => {
+  const queued = {
+    update_id: 910,
+    message: { message_id: 11, chat: { id: 77 }, text: "слова-постановки-910" },
+  };
+  trace.traceBridgeQueued(queued, 2);
+  const batch = {
+    update_id: 913,
+    message: {
+      message_id: 11,
+      chat: { id: 77 },
+      text: "слова-первое",
+      iva_parts: [
+        { text: "слова-первое" },
+        { text: "слова-второе" },
+        { text: "слова-третье" },
+      ],
+    },
+  };
+  trace.traceBridgeDelivery(batch, true, 7);
+  trace.traceBridgeDelivery({ ...batch, update_id: 914 }, false, 5_000);
+
+  const events = lines(DATA, trace.traceDay());
+  const enqueued = last(
+    events,
+    (event) => event.kind === "bridge" && event.name === "queued",
+  );
+  assert.equal(enqueued?.turn, "tg:77:11");
+  assert.deepEqual(enqueued?.data, {
+    updateId: 910,
+    chatId: 77,
+    messageId: "11",
+    kind: "message",
+    count: 2,
+    parts: 1,
+  });
+  const delivered = last(
+    events,
+    (event) => event.name === "delivered" && event.turn === "tg:77:11",
+  );
+  assert.deepEqual(delivered?.data, {
+    updateId: 913,
+    chatId: 77,
+    messageId: "11",
+    kind: "message",
+    accepted: true,
+    ms: 7,
+    parts: 3,
+  });
+  const rejected = last(events, (event) => event.name === "rejected");
+  assert.equal((rejected?.data as Record<string, unknown>).parts, 3);
+  assert.equal(
+    JSON.stringify([enqueued, delivered, rejected]).includes("слова-"),
+    false,
   );
 });
 

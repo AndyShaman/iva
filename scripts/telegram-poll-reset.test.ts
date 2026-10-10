@@ -81,6 +81,7 @@ type DrainOptions = {
   deliverImpl: (update: QueueUpdate) => Promise<boolean>;
   settleUntil: Map<string, number>;
   inFlight: Map<string, unknown>;
+  pins: Map<string, readonly number[]>;
 };
 type WriteQueueOptions = {
   nonce?: string;
@@ -346,6 +347,7 @@ test("startup reconciliation prevents a remotely reset private queue from draini
       },
       settleUntil: new Map(),
       inFlight: new Map(),
+      pins: new Map(),
     }),
     0,
   );
@@ -390,6 +392,7 @@ test("a pending reset intent fences its queue head while other chats drain", asy
     },
     settleUntil: new Map(),
     inFlight: new Map(),
+    pins: new Map(),
   });
 
   assert.deepEqual(delivered, [911]);
@@ -688,6 +691,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
 
   const delivered: number[] = [];
   const inFlight = new Map<string, unknown>();
+  const pins = new Map<string, readonly number[]>();
   assert.equal(
     await drainReadyQueueHeads({
       deliverImpl: (candidate) => {
@@ -696,6 +700,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
       },
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     0,
   );
@@ -707,6 +712,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
       },
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     0,
   );

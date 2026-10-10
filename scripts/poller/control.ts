@@ -38,6 +38,7 @@ import {
 } from "../lib/telegram-queue.ts";
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { getChatStatus, RUN_STALE_MS } from "#lib/run-status.ts";
+import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 import { isBreakNotice, isRetryTap } from "#lib/error-humanizer.ts";
 import { turnQuestion } from "#lib/turn-question.ts";
 import { readEnvFresh } from "../lib/env-file.ts";
@@ -317,6 +318,7 @@ export function applyTelegramButtonTap(
       ...(message.message_thread_id === undefined
         ? {}
         : { message_thread_id: message.message_thread_id }),
+      [TELEGRAM_BUTTON_TAP_FIELD]: true,
     },
   };
   if (!isTelegramQueueUpdate(tap)) return false;

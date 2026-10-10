@@ -163,6 +163,7 @@ void test(
       },
       settleUntil: new Map(),
       inFlight: new Map(),
+      pins: new Map(),
     });
     assert.equal(remaining, 0);
     await replies(2, "the queued message did not complete after restart");
