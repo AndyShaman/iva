@@ -34,7 +34,7 @@ import {
   type TelegramInboundMessage,
 } from "../lib/telegram-inbound.js";
 import { mediaFromRaw } from "../lib/telegram-parts.js";
-import { traceOutbox } from "../lib/trace.js";
+import { traceOutbox, traceWithScope } from "../lib/trace.js";
 import { chatModelSeesImages, describeImage } from "../vision.js";
 import { transcribe } from "../transcribe.js";
 // Статус-сообщение хода («Работаю…», кнопка Стоп, уборка в терминале) и служебное
@@ -513,18 +513,28 @@ const telegram = telegramChannel({
     // Ответ модели уходит через Outbox — он же переопределяет дефолтную plain-доставку
     // eve. Текст шага перед вызовом инструментов — то, что модель говорит по ходу работы:
     // отдельным сообщением он не уходит, а встаёт фразой в статус хода
-    // (agent/lib/telegram-status-message.ts). Повторного хода модели на сбой доставки нет —
+    // (agent/lib/telegram-status-message.ts); вердикт гейта по фразе уезжает в Trace с ключом
+    // хода, как у ответа (ADR-0010). Повторного хода модели на сбой доставки нет —
     // ход уже закрыт, реформат произойдёт на следующем
     // сообщении (ошибка видна в логе/vault). Латентность засчитываем, только если ни одно
     // сообщение не потерялось: пустой рендер шов отдаёт с ok=false, поэтому проверки
     // delivered у вызывающего больше нет.
     async "message.completed"(data, channel, ctx) {
       if (data.finishReason === "tool-calls") {
-        if (data.message)
-          await showTurnProgress(
-            channel.telegram,
-            ctx.session.id,
-            parseTelegramDelivery(data.message).text,
+        const step = data.message;
+        if (step)
+          await traceWithScope(
+            {
+              turn: data.turnId,
+              session: ctx.session.id,
+              source: "telegram",
+            },
+            () =>
+              showTurnProgress(
+                channel.telegram,
+                ctx.session.id,
+                parseTelegramDelivery(step).text,
+              ),
           );
         return;
       }

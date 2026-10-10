@@ -6,7 +6,7 @@
 import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
@@ -75,6 +75,18 @@ const [
   import("../node_modules/eve/dist/src/context/keys.js"),
 ]);
 const adapter = (channel as unknown as { adapter: Adapter }).adapter;
+const trace = await import("#lib/trace.ts");
+
+function traceEvents(): Record<string, unknown>[] {
+  try {
+    return readFileSync(trace.traceFilePath(trace.traceDay(), dataDir), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  } catch {
+    return []; // журнала ещё нет — событий тоже
+  }
+}
 
 after(() => rmSync(dataDir, { recursive: true, force: true }));
 
@@ -184,6 +196,29 @@ test("секрет в тексте шага вырезан до провода",
   const wire = JSON.stringify(apiCalls.slice(before));
   assert.equal(wire.includes(key.slice(0, 16)), false, wire);
   assert.match(wire, /REDACTED/u);
+});
+
+// Вердикт outbound-Gate по фразе статуса ложится в Trace с ключом хода — так же, как у ответа
+// через Outbox (ADR-0010): без ключа хода событие не пишется вовсе.
+test("вердикт гейта по фразе статуса — в Trace с ключом хода", async () => {
+  const chat = { chatId: "817", sessionId: "s-817" };
+  startTurn(chat.chatId, chat.sessionId, 505);
+  const key = `sk-ant-api03-${"Qw7_".repeat(12)}`;
+  const before = traceEvents().length;
+
+  await emit("message.completed", step("tool-calls", `Беру ${key}`), chat);
+
+  const gates = traceEvents()
+    .slice(before)
+    .filter((event) => event.kind === "gate" && event.name === "outbound");
+  assert.equal(gates.length, 1, JSON.stringify(gates));
+  assert.equal(gates[0].turn, "turn_1");
+  assert.equal(gates[0].session, "s-817");
+  assert.equal(gates[0].source, "telegram");
+  const data = gates[0].data as { clean: boolean; findings: string[] };
+  assert.equal(data.clean, false);
+  assert.ok(data.findings.length > 0);
+  assert.equal(JSON.stringify(gates[0]).includes(key.slice(0, 16)), false);
 });
 
 test("ход без промежуточного текста: вызовы Bot API прежние байт в байт", async () => {
