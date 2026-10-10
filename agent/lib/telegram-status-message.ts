@@ -27,8 +27,9 @@ import {
 import { isPrivateTelegramChatHandle } from "./telegram-private-chat.ts";
 import { stoppedText, TELEGRAM_STOP_CALLBACK } from "./telegram-status-stop.ts";
 
-// Канал берёт кнопку отсюда, вместе с остальным статусом.
-export { TELEGRAM_STOP_CALLBACK };
+// Канал берёт кнопку отсюда, вместе с остальным статусом. stoppedText остаётся здесь же для
+// тех, кто импортировал его отсюда до выноса (Custom layer).
+export { stoppedText, TELEGRAM_STOP_CALLBACK };
 
 export type TelegramStatusHandle = {
   readonly chatId: string;
