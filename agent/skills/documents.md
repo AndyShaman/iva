@@ -1,6 +1,6 @@
 ---
 name: documents
-description: "Local PDF, DOCX, XLSX file/attachment: read, summarize, extract, import; not Google Docs; before generic file tools."
+description: "Local PDF, DOCX, XLSX file/attachment: read, summarize, extract, import; edit or fill a DOCX, a document from a sample; not Google Docs; before generic file tools."
 ---
 
 # Documents
@@ -138,6 +138,152 @@ NODE
 
 1. Проверь размеры файлов и выборочно сравни части с извлечённым текстом. После импорта ищи
    по ним через `memory_search` со `scope: ["library"]`.
+
+## 4. Правка DOCX
+
+Оригинал не трогай: правь копию и отдай новый файл через `send_file`. Файл по образцу
+(договор, акт, письмо) делается так же: копия образца, замена полей, проверка.
+
+1. Извлеки текст (раздел 2) и составь замены «было → стало» дословно по этому тексту.
+   Значения ищи сама, в порядке правила «Find it yourself before you ask»; чего не нашла, не
+   выдумывай: оставь поле как есть и назови его владельцу.
+2. Запиши замены JSON-объектом `{"было": "стало"}` через `write_file` в
+   `$tmp_dir/<имя>-pairs.json` (ниже это `$pairs`) и запусти замену. Word режет фразу на
+   куски с разным оформлением; скрипт ищет фразу во всём абзаце, ставит новый текст в
+   оформление первого куска и обходит основной текст, таблицы и колонтитулы. Он печатает,
+   сколько раз сработала каждая замена.
+
+```bash
+pairs="$tmp_dir/$(basename "$input" .docx)-pairs.json"
+out="$tmp_dir/$(basename "$input" .docx)-edited.docx"
+uv run --with 'python-docx==1.1.2' python - "$input" "$out" "$pairs" <<'PY'
+import json
+import sys
+from docx import Document
+
+source, target, pairs_path = sys.argv[1:4]
+with open(pairs_path, encoding="utf-8") as file:
+    pairs = {str(old): str(new) for old, new in json.load(file).items()}
+if "" in pairs:
+    sys.exit("пустое «было» в заменах")
+doc = Document(source)
+
+
+def paragraphs(container):
+    yield from container.paragraphs
+    for table in container.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                yield from paragraphs(cell)
+
+
+def parts():
+    yield doc
+    for section in doc.sections:
+        for part in (section.header, section.footer, section.first_page_header,
+                     section.first_page_footer, section.even_page_header,
+                     section.even_page_footer):
+            if not part.is_linked_to_previous:
+                yield part
+
+
+def replace(paragraph, old, new):
+    done, start = 0, 0
+    while True:
+        runs = paragraph.runs
+        text = "".join(run.text for run in runs)
+        start = text.find(old, start)
+        if start < 0:
+            return done
+        end, at, first = start + len(old), 0, True
+        for run in runs:
+            left, right = at, at + len(run.text)
+            at = right
+            if right <= start or left >= end:
+                continue
+            a, b = max(start, left) - left, min(end, right) - left
+            run.text = run.text[:a] + (new if first else "") + run.text[b:]
+            first = False
+        done, start = done + 1, start + len(new)
+
+
+counts = dict.fromkeys(pairs, 0)
+for part in parts():
+    for paragraph in paragraphs(part):
+        for old, new in pairs.items():
+            counts[old] += replace(paragraph, old, new)
+doc.save(target)
+for old, count in counts.items():
+    print(f"{count}\t{old}")
+PY
+```
+
+3. Проверь результат. Замена с нулём срабатываний значит, что фраза написана в файле иначе
+   или стоит там, куда python-docx не заходит: ссылка, сноска, надпись, поле формы.
+   Сверь текст до и после: в разнице должны быть только твои замены. `diff` с кодом 1 значит
+   «файлы различаются», это не сбой.
+
+```bash
+pandoc "$input" -t plain -o "$tmp_dir/before.txt"
+pandoc "$out" -t plain -o "$tmp_dir/after.txt"
+diff "$tmp_dir/before.txt" "$tmp_dir/after.txt"
+```
+
+4. Туда, куда python-docx не заходит, иди через XML. DOCX — zip-архив: распакуй во
+   временную папку результат шага 2 (если его не было — оригинал) и посмотри, как фраза
+   разбита на `<w:t>`.
+
+```bash
+out="$tmp_dir/$(basename "$input" .docx)-edited.docx"
+src="$out"; [ -f "$src" ] || src="$input"
+work="$(mktemp -d "$tmp_dir/docx-XXXXXX")"
+python3 -m zipfile -e "$src" "$work"
+grep -o '<w:t[^>]*>[^<]*</w:t>' "$work/word/document.xml" | head -50
+```
+
+Правь `word/*.xml` через `lxml`, он приходит вместе с python-docx. `sed` не годится: одна
+фраза часто лежит в нескольких `<w:t>`. `xml.etree` тоже: он теряет объявления
+пространств имён, и Word может не открыть файл.
+
+```bash
+uv run --with 'python-docx==1.1.2' python - "$work/word/document.xml" <<'PY'
+import sys
+from lxml import etree
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+tree = etree.parse(sys.argv[1])
+for text in tree.iter(W + "t"):
+    pass  # здесь правка text.text
+tree.write(sys.argv[1], xml_declaration=True, encoding="UTF-8", standalone=True)
+PY
+```
+
+Потом собери архив, `[Content_Types].xml` первым, и проверь, как в шаге 3.
+
+```bash
+rm -f "$out"
+python3 - "$work" "$out" <<'PY'
+import os
+import sys
+import zipfile
+
+work, out = sys.argv[1:3]
+names = sorted(
+    os.path.relpath(os.path.join(folder, name), work)
+    for folder, _, files in os.walk(work)
+    for name in files
+)
+names.sort(key=lambda name: name != "[Content_Types].xml")
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+    for name in names:
+        archive.write(os.path.join(work, name), name)
+PY
+```
+
+5. Новый файл без образца: напиши markdown и собери `pandoc "$draft" -o "$out"`;
+   `--reference-doc="$sample"` берёт стили из образца.
+6. Отправь `$out` через `send_file` и одной-двумя фразами скажи, что изменилось. Временные
+   файлы удали.
 
 ## Безопасность
 

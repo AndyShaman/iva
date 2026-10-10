@@ -36,9 +36,11 @@ export default {
         option("queue", "Queue", "Очередь"),
         option("steer", "Interrupt", "Перебивать"),
       ]),
+      // steer в eve обрывает идущий ход и начинает новый с нового сообщения; законченные шаги,
+      // файлы и отправленное остаются (execution-model-and-durability.mdx, «turnPolicy»).
       T(
-        "Queue waits for the current reply.\nInterrupt sends the message into the active reply.",
-        "Очередь ждёт текущий ответ.\nПеребивать направляет сообщение в активный ответ.",
+        "Queue waits for the current reply.\nInterrupt stops the current reply and starts from the new message; what is already done stays.",
+        "Очередь ждёт текущий ответ.\nПеребивать обрывает текущий ответ и начинает с нового сообщения, сделанное остаётся.",
       ),
       `${button(T("‹ Menu", "‹ Меню"), `iva_menu:${PARENT}:o`)} — ${T(
         "back to the settings.",

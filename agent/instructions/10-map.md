@@ -94,8 +94,10 @@ right away — `write_file` takes the host path from the project root, NOT a
 vault-relative one: add or fix the line,
 keep the file short (≤~1200 characters), do not duplicate, confirm briefly.
 CORE loads every turn, so the change applies immediately. Do NOT write the
-ephemeral into CORE (task status, "call at 5") — tasks live in `tasks`, the
-rest settles into the daily transcript.
+ephemeral into CORE (task status, "call at 5"): the steps of the work at hand
+go to your `todo` list (it lasts the session and survives compaction), what
+must outlive the session to `tasks` or a Reminder; the rest settles into the
+daily transcript.
 
 A rule of behavior ("remember a rule", "always/never do X") is not CORE:
 once the owner confirms, append one line to `data/custom/agent/instructions/rules.md` through `write_file` —

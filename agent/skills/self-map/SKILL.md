@@ -1,6 +1,6 @@
 ---
 name: self-map
-description: "How to read your own evidence: open one turn of the Trace, follow its events to the cause, tell whose the cause is (owner side, the Version, outside); spend, schedule facts, open failures, the service journal, your docs. Load in an Insight turn that lists failures, and when the owner asks what you did, why something failed, or what was slow or expensive."
+description: "Your own evidence and how you work: one turn of the Trace followed to its cause and whose it is (owner side, the Version, outside); spend, schedule facts, open failures, the service journal, your docs; what Stop, Interrupt, a broken model call or a restart leave of your work and what is caught up after a miss; where to look before asking the owner. Load in an Insight turn that lists failures; when the owner asks what you did, why something failed, what was slow or expensive, or how you work; when a task stalls before you would ask the owner."
 ---
 
 # Self-map
@@ -153,6 +153,33 @@ Good:
 
     <tg-button-row><tg-button type="callback_data" data="Проверь сервер сейчас">Да</tg-button><tg-button type="callback_data" data="Не нужно">Нет</tg-button></tg-button-row>
 
+## Stop, Interrupt, a break, a miss
+
+What becomes of your work — for the owner's questions about you.
+
+- **Queue and Interrupt** (`/menu` → New messages; Queue by default). Queue:
+  a new message waits until the current reply ends. Interrupt: a new message
+  stops the current turn, and a new turn starts from it. Finished steps, files
+  you wrote and what you sent stay; a command still running is killed, the
+  unfinished answer is dropped. A correction does not reach the running turn;
+  it starts the next one.
+- **⏹ Stop** (or `/stop`) ends the turn the same way: what is done stays. The
+  next turn opens with a note that the previous one was stopped; do not redo
+  that work unless asked.
+- **A broken model call** (the network, the provider failing for a moment):
+  up to three requests inside the same turn; a tool from a cut-off answer does
+  not run, finished steps are not redone. When the third breaks off too, the
+  owner gets a message with a «Повторить» button that sends the question
+  again.
+- **Iva restarts while a turn is running** (a crash, a restart): the
+  conversation of every chat starts anew, memory (CORE, cards, days) stays.
+  The owner sees «Предыдущий ход оборвался - повтори запрос или /new»; the
+  turn does not start again by itself.
+- **After a miss** (the server was off or restarting): a Reminder that came
+  due fires on the first minute after; a Brief or an Insight runs if it is
+  less than 3 hours late, otherwise that time is skipped; a night less than 20
+  hours late runs at start, otherwise the next night takes the queued days.
+
 ## Not in the Trace — say so, do not guess
 
 - The system prompt, CORE, the rules: only file sizes (`context.parts`).
@@ -184,4 +211,39 @@ Good:
   `data/proactive.json`.
 - Night: `cat data/rollup-status.json`.
 - How a part of you works: `docs/llms.txt`, then `docs/trace.md`,
-  `schedules.md`, `plugins.md`, `troubleshooting.md`, `docs/adr/`.
+  `schedules.md`, `plugins.md`, `cli.md`, `troubleshooting.md`, `docs/adr/`.
+
+## Before you ask the owner
+
+The map gives the order; here is where each step reaches. Stop at the first
+step that answers.
+
+1. **What you know.** CORE is already in context. `memory_search` with every
+   spelling of the name; the exact words of a conversation — the `grep` tool
+   over `daily/`.
+2. **Your tools and skills.** A chat with a person — search all of it
+   (`search_messages` of `telegram-userbot`), not only the latest messages.
+   Mail, calendar and Drive — `google-workspace`. Other services —
+   `connection_search`. A skill from the list — `load_skill`. If the owner's
+   rules name a skill library, search its index too. A loaded skill that
+   covers only part of the task (it reads a file but does not edit it) is a
+   reason to look further, not to stop.
+3. **The web.** `web_search`/`web_fetch`, deeper — `web-research`: company
+   details, prices, addresses, how a program does something.
+4. **The browser.** `agent-browser` — a page behind a login or built by
+   scripts.
+5. **The server.** `bash`: files the owner mentioned, `vault/attachments/`,
+   the programs on the host; install what is missing.
+
+Found nothing — one question that says what you checked.
+
+Bad (10.10.2026, a contract): «Какая сумма в договоре?» — the sum was in the
+owner's chat with the client and came up later with one search.
+
+Good:
+
+    Посмотрела переписку с клиентом за сентябрь и почту — суммы договора
+    там нет. Какую ставим?
+
+A choice between options, consent to send, pay or delete, and the owner's own
+taste are theirs: ask those right away.
