@@ -261,7 +261,7 @@ test("the quote cannot open a tag or markup in the rich message", () => {
       assert.equal((text.match(/<\/tg-button>/gu) ?? []).length, 1);
       assert.equal((text.match(/</gu) ?? []).length, 4);
       const quote = /на «([\s\S]*)»\. Повторить/u.exec(text)?.[1] ?? "";
-      assert.doesNotMatch(quote.replace(/\\./gu, ""), /[\\*_#|`[\]()~$]/u);
+      assert.doesNotMatch(quote.replace(/\\./gu, ""), /[\\*_#|`[\]()~$&]/u);
       assert.doesNotMatch(quote, /\n/u);
     }),
   );
@@ -448,9 +448,9 @@ test("the quote escapes every rich markup character", () => {
   const text = humanizeProviderError({
     message: "terminated",
     details: { answerStarted: true },
-    question: "a`b[c](d)~e$f",
+    question: "a`b[c](d)~e$f&lt;g",
   }).ru;
-  assert.match(text, /«a\\`b\\\[c\\\]\\\(d\\\)\\~e\\\$f»/u);
+  assert.match(text, /«a\\`b\\\[c\\\]\\\(d\\\)\\~e\\\$f\\&lt;g»/u);
 });
 
 // Обрыв посреди ответа eve теперь повторяет сама; кнопка — исход после трёх попыток, и

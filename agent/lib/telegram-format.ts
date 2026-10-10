@@ -682,8 +682,10 @@ export function hasRichButtons(md: unknown): boolean {
 // угловыми кавычками (тег не откроется), знаки разметки `*_#|` экранированы, как в
 // escapeRichText (scripts/lib/telegram-buttons.ts), а с ними `` ` ``, `[`, `]`, `(`, `)`,
 // `~`, `$` и обратная косая: иначе `\*` из текста стал бы экранированной косой и голой
-// звёздочкой. Обрезанный ключ гейт уже не узнаёт: текст, который гейт ещё не видел, идёт
-// через него до этой функции.
+// звёздочкой. Экранирован и `&`: из `&lt;tg-button…&gt;` разборщик, который сначала
+// разворачивает сущности, собрал бы настоящую кнопку, а `\&lt;` при любом порядке разбора
+// остаётся текстом. Обрезанный ключ гейт уже не узнаёт: текст, который гейт ещё не видел,
+// идёт через него до этой функции.
 export function richQuoteLine(text: string, maxChars: number): string {
   const line = text.replace(/\s+/gu, " ").trim();
   const chars = Array.from(line);
@@ -697,7 +699,7 @@ export function richQuoteLine(text: string, maxChars: number): string {
   return cut
     .replace(/</gu, "‹")
     .replace(/>/gu, "›")
-    .replace(/([\\*_#|`[\]()~$])/gu, "\\$1");
+    .replace(/([\\*_#|`[\]()~$&])/gu, "\\$1");
 }
 
 export function needsRichMessage(md: unknown): boolean {

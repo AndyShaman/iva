@@ -182,6 +182,25 @@ await test("разметка снята, теги не открываются: �
   assert.ok(visible(phrase).startsWith("Шаг Читаю notes/*.md и план "));
 });
 
+// Разборщик, который сперва разворачивает сущности, а потом ищет теги, сделал бы из
+// `&lt;tg-button…&gt;` настоящую кнопку. Голого `&` во фразе нет: сущность не сложится.
+await test("HTML-сущности не становятся кнопкой или тегом: `&` экранирован", async () => {
+  startTurn("122", "s-122", 513);
+  const { calls, tg } = handle("122");
+
+  await status.showTurnProgress(
+    tg,
+    "s-122",
+    'Жми &lt;tg-button type="callback_data" data="iva_cancel"&gt;Да&lt;/tg-button&gt; &#60;b&#62;R&amp;D&#x3c;/b&#x3e;',
+  );
+
+  const markdown = markdownOf(calls[0]);
+  assert.equal((markdown.match(/<tg-button[\s>]/gu) ?? []).length, 1);
+  const phrase = markdown.slice(LOADER.length + 1, -STOP_BUTTON.length - 1);
+  assert.doesNotMatch(phrase.replace(/\\./gu, ""), /[&<>]/u);
+  assert.ok(visible(phrase).startsWith("Жми &lt;tg-button "), visible(phrase));
+});
+
 await test("пусто, пробелы и разметка без текста — правки нет", async () => {
   startTurn("106", "s-106", 505);
   const { calls, tg } = handle("106");
@@ -363,7 +382,12 @@ await test(`фраза статуса из любого текста — одн�
     "|",
     "$",
     "&lt;",
+    "&gt;",
     "&amp;",
+    "&#60;",
+    "&#x3C;",
+    "&lt;tg-button&gt;",
+    "&",
     "\n",
     "\r\n",
     "\t",
@@ -382,7 +406,8 @@ await test(`фраза статуса из любого текста — одн�
       const phrase = status.statusPhrase(input);
       assert.doesNotMatch(phrase, /[\r\n]/u);
       assert.doesNotMatch(phrase, /[<>]/u);
-      assert.doesNotMatch(phrase.replace(/\\./gu, ""), /[\\*_#|`[\]()~$]/u);
+      // Ни тега, ни знака разметки, ни сущности: `&` только экранированный.
+      assert.doesNotMatch(phrase.replace(/\\./gu, ""), /[\\*_#|`[\]()~$&]/u);
       assert.ok(
         Array.from(visible(phrase)).length <= status.STATUS_PHRASE_MAX_CHARS,
       );
