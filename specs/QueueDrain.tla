@@ -419,6 +419,8 @@ BatchAtHead ==
   phase # "idle" => (Len(q) >= Len(batch) /\ SubSeq(q, 1, Len(batch)) = batch)
 
 \* (7) Закреп стоит с головы очереди целиком: ветка «закреп частичный или пустой» недостижима.
+\* Только в модели: сброс /new (вне модели) режет закреп по update_id; остаток код отдаёт под
+\* id закрепа, чтобы ledger ответил handled (routing.ts queueBatch, тесты queue-drain.property).
 PinAtHead ==
   pin # {} =>
     (Len(q) >= Cardinality(pin) /\ {q[i] : i \in 1..Cardinality(pin)} = pin)

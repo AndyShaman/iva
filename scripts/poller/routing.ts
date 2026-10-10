@@ -355,6 +355,8 @@ export async function routeMessageUpdate(
 }
 
 // Пачка с головы очереди: закреп (queueBatchPins), пока его id с головы, иначе queueBatchLength.
+// Закреп — одна доставка: остаток, который сброс /new оставил от неё (id не обязаны
+// расти), идёт под её же update_id, и ledger eve ответит handled, а не вторым ходом.
 function queueBatch(
   snapshot: TelegramQueueDocument,
   key: string,
@@ -364,21 +366,27 @@ function queueBatch(
   const items = snapshot.queues[key];
   const end = items.findIndex((item, index) => index > 0 && !item.update);
   const replayable = end < 0 ? items : items.slice(0, end);
-  const pinned = new Set(pins.get(key));
-  let count = replayable.findIndex((item) => !pinned.has(item.updateId));
+  let pin = pins.get(key) ?? [];
+  let count = replayable.findIndex((item) => !pin.includes(item.updateId));
   if (count < 0) count = replayable.length;
   if (count === 0) {
-    pins.delete(key);
     const rest = replayable.slice(1).flatMap((item) => item.update ?? []);
     count = queueBatchLength([head, ...rest]);
+    pin = replayable.slice(0, count).map((item) => item.updateId);
+    pins.set(key, pin);
   }
   const batch = replayable.slice(0, count);
   const copies = batch
     .slice(1)
     .flatMap((item) => materializeQueueItem(key, item) ?? []);
+  const update = joinUpdates([head, ...copies]);
+  const updateId = pin[pin.length - 1];
   return {
     updateIds: batch.map((item) => item.updateId),
-    update: joinUpdates([head, ...copies]),
+    update:
+      update.update_id === updateId
+        ? update
+        : { ...update, update_id: updateId },
   };
 }
 
@@ -484,7 +492,6 @@ export async function drainReadyQueueHeads({
       continue;
     }
     const { updateIds, update } = queueBatch(snapshot, key, head, pins);
-    pins.set(key, updateIds);
     const timeoutMs = Math.max(
       1,
       Math.min(deliveryTimeoutMs, deadline - now()),

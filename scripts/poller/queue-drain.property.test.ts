@@ -2,13 +2,14 @@
 // строит последовательность шагов одного группового чата с двумя авторами: приход,
 // маршрут через настоящий routeMessageUpdate в текущем режиме, снятие головы inbox
 // автора, проход настоящего drainReadyQueueHeads, ход занимает и освобождает чат,
-// переключение «Очередь» / «Перебивать», отказ снятия один раз, «ledger забыл id» и
-// перезапуск Bridge (новые pins, inFlight и settleUntil; inbox, очередь и ledger eve
-// остаются). Подделка eve ведёт ledger по update_id доставки, как
+// переключение «Очередь» / «Перебивать», отказ снятия один раз, «ledger забыл id»,
+// сброс /new (clearChatQueue убирает из очереди id не больше своего, а id не обязаны
+// расти) и перезапуск Bridge (новые pins, inFlight и settleUntil; inbox, очередь и
+// ledger eve остаются). Подделка eve ведёт ledger по update_id доставки, как
 // agent/lib/telegram-acceptance.ts, и читает части тем же messageParts, что и ход.
 //
 // После каждого шага: (1) нет потери — каждое пришедшее сообщение лежит в inbox, в
-// очереди или было в каком-то ходе; (2) дубль — только у сообщения, чью доставку оборвал
+// очереди, было в каком-то ходе или его намеренно убрал сброс; (2) дубль — только у сообщения, чью доставку оборвал
 // перезапуск (пачка в закрепе, маршрут без снятия с inbox), чья прямая доставка принята
 // после срока Bridge, или чей id доставки забыл ledger; (3) первые появления сообщений
 // из очереди идут в порядке постановки; (4) команда, ответ, тап никогда не делят ход.
@@ -67,6 +68,7 @@ type Step =
   | { t: "switch" }
   | { t: "ackFail" }
   | { t: "forget"; pick: number }
+  | { t: "reset"; pick: number }
   | { t: "restart" };
 
 const AUTHOR_IDS = [42, 43] as const;
@@ -127,6 +129,7 @@ class Machine {
   seqOfUpdate = new Map<number, number>();
   seen = new Set<number>();
   exposed = new Set<number>();
+  discarded = new Set<number>();
   enqueuedAt = new Map<number, number>();
   enqueues = 0;
   failAck = false;
@@ -159,6 +162,7 @@ class Machine {
         if (this.seen.has(later) || laterAt === undefined) continue;
         for (const [earlier, earlierAt] of this.enqueuedAt) {
           if (earlierAt >= laterAt || this.seen.has(earlier)) continue;
+          if (this.discarded.has(earlier)) continue;
           const position = seqs.indexOf(earlier);
           if (position < 0 || position > index)
             this.violations.push(`message ${later} overtook queued ${earlier}`);
@@ -321,6 +325,21 @@ class Machine {
           this.exposed.add(seq);
         return;
       }
+      // Сброс /new между проходами: фильтр clearChatQueue (queue.ts) по update_id;
+      // порог — один из id, чтобы он чаще резал очередь посередине.
+      case "reset": {
+        const through = this.updateIds[step.pick % MAX_MESSAGES];
+        const items = this.document.queues[KEY] ?? [];
+        const kept = items.filter((item) => item.updateId > through);
+        for (const item of items)
+          if (!kept.includes(item))
+            this.discarded.add(this.seqOfUpdate.get(item.updateId)!);
+        const queues = { ...this.document.queues };
+        if (kept.length) queues[KEY] = kept;
+        else delete queues[KEY];
+        this.document = { version: 1, queues };
+        return;
+      }
       case "restart":
         for (const pinned of this.pins.values())
           for (const updateId of pinned)
@@ -347,7 +366,7 @@ class Machine {
     for (const items of Object.values(this.document.queues))
       for (const item of items) held.add(this.seqOfUpdate.get(item.updateId)!);
     for (let seq = 1; seq <= this.arrived; seq++) {
-      if (!held.has(seq) && !this.seen.has(seq))
+      if (!held.has(seq) && !this.seen.has(seq) && !this.discarded.has(seq))
         this.violations.push(
           `message ${seq} lost after ${JSON.stringify(step)}`,
         );
@@ -435,6 +454,13 @@ const step: fc.Arbitrary<Step> = fc.oneof(
       pick: fc.nat({ max: 10 }),
     }),
   },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      t: fc.constant("reset" as const),
+      pick: fc.nat({ max: MAX_MESSAGES - 1 }),
+    }),
+  },
   { weight: 1, arbitrary: fc.constant({ t: "restart" as const }) },
 );
 
@@ -464,9 +490,9 @@ await test("property: the queue drain never loses a message, duplicates only aft
         const machine = await runSteps(policy, ids, [...steps, ...SETTLE]);
         assert.deepEqual(machine.violations, []);
         assert.equal(
-          machine.seen.size,
+          new Set([...machine.seen, ...machine.discarded]).size,
           machine.arrived,
-          "everything reached a turn",
+          "everything reached a turn or was discarded by a reset",
         );
       },
     ),
@@ -521,4 +547,61 @@ await test("switching to steer while messages wait keeps the new message behind 
   );
   assert.deepEqual(machine.violations, []);
   assert.deepEqual(machine.recordedBy.get(3), [1, 2], "one turn for both");
+});
+
+// Сброс /new режет закреплённую пачку: id не обязаны расти, и фильтр clearChatQueue
+// уносит из пачки 1000+5 только 5. Остаток 1000 уже был в ходе с id 5 и обязан уйти
+// под тем же id: ledger отвечает handled, второго хода с 1000 нет.
+await test("a reset that cuts a pinned batch does not start a second turn with its rest", async () => {
+  const machine = await runSteps(
+    "queue",
+    [1000, 5, 7, 8, 9, 10, 11],
+    [
+      { t: "busy" },
+      { t: "arrive", author: 0, kind: "plain" },
+      { t: "promote", author: 0, outcome: "accept" },
+      { t: "arrive", author: 0, kind: "plain" },
+      { t: "promote", author: 0, outcome: "accept" },
+      { t: "free" },
+      { t: "ackFail" },
+      { t: "drain", outcome: "accept" },
+      { t: "reset", pick: 1 },
+      { t: "free" },
+      { t: "drain", outcome: "accept" },
+    ],
+  );
+  assert.deepEqual(machine.violations, []);
+  assert.deepEqual(machine.recordedBy.get(5), [1, 2], "one turn for both");
+  assert.equal(machine.recordedBy.size, 1);
+  assert.deepEqual(machine.document, { version: 1, queues: {} });
+});
+
+// Сброс унёс последний id закрепа, а маршрут из inbox после перезапуска вернул его в
+// хвост за чужим сообщением. Снятие берёт только голову, иначе пачка «не с головы» и
+// чат встаёт; сам возвращённый id получает handled — он уже был в ходе.
+await test("a reset id that comes back behind another author's message does not block the chat", async () => {
+  const machine = await runSteps(
+    "queue",
+    [453256, 2, 3, 4, 5, 6, 7],
+    [
+      { t: "busy" },
+      { t: "arrive", author: 0, kind: "plain" },
+      { t: "promote", author: 0, outcome: "accept" },
+      { t: "arrive", author: 0, kind: "plain" },
+      { t: "route", author: 0, outcome: "accept" },
+      { t: "restart" },
+      { t: "free" },
+      { t: "ackFail" },
+      { t: "drain", outcome: "accept" },
+      { t: "reset", pick: 1 },
+      { t: "arrive", author: 1, kind: "plain" },
+      { t: "promote", author: 1, outcome: "accept" },
+      { t: "promote", author: 0, outcome: "accept" },
+      ...SETTLE,
+    ],
+  );
+  assert.deepEqual(machine.violations, []);
+  assert.deepEqual([...machine.seen].sort(), [1, 2, 3]);
+  assert.equal(machine.recordedBy.get(453256), undefined, "no turn under 1");
+  assert.deepEqual(machine.document, { version: 1, queues: {} });
 });

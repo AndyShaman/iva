@@ -425,6 +425,73 @@ await test("a reset that cleared part of the batch before the acknowledgement le
   );
 });
 
+// update_id Telegram не обязан расти (§5 п. 1), а сброс /new убирает id не больше своего:
+// из закреплённой пачки 1000+5 он уносит 5 и оставляет 1000. Остаток уже был в ходе с id 5.
+await test("a reset that cut a pinned batch replays the rest under the batch's update_id, so the ledger answers handled", async () => {
+  await queueRuntime.writeQueueAtomic(
+    queueOf(text(1000, "first"), text(5, "last")),
+  );
+  const ledger = new Set<number>();
+  const turns: unknown[][] = [];
+  const delivered: number[] = [];
+  let generation = 0;
+  let failAck = true;
+  const options: DrainOptions = {
+    loadImpl: () => queueRuntime.loadQueue({ strict: true }),
+    runningImpl: () => false,
+    statusImpl: () => ({ status: "idle", generation }),
+    deliverImpl: (update) => {
+      delivered.push(update.update_id);
+      if (ledger.has(update.update_id)) return Promise.resolve("handled");
+      ledger.add(update.update_id);
+      turns.push(partTexts(update));
+      generation += 2;
+      return Promise.resolve(true);
+    },
+    acknowledgeImpl: (key, updateIds) => {
+      if (!failAck)
+        return queueRuntime.acknowledgeTelegramQueueItems(key, updateIds);
+      failAck = false;
+      return Promise.reject(
+        Object.assign(new Error("injected ack rollback"), {
+          code: TELEGRAM_QUEUE_ACK_ROLLED_BACK,
+        }),
+      );
+    },
+    settleUntil: new Map(),
+    inFlight: new Map(),
+    pins: new Map(),
+    rotationState: { afterKey: null },
+    now: () => 1_000,
+    resetPendingImpl: () => false,
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await routing.drainReadyQueueHeads(options);
+    assert.deepEqual(turns, [["first", "last"]]);
+    assert.deepEqual(options.pins!.get(KEY), [1000, 5]);
+
+    await queueRuntime.clearChatQueue(KEY, 6); // /new с update_id 6
+    assert.deepEqual(
+      ids(await queueRuntime.loadQueue({ strict: true })),
+      [1000],
+    );
+
+    await routing.drainReadyQueueHeads(options);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(turns, [["first", "last"]], "first reached one turn only");
+  assert.deepEqual(delivered, [5, 5]);
+  assert.equal(options.pins!.has(KEY), false);
+  assert.deepEqual(await queueRuntime.loadQueue({ strict: true }), {
+    version: 1,
+    queues: {},
+  });
+});
+
 await test("a fatal acknowledgement drops the pin with the in-flight gate and stops the pass", async () => {
   const run = bench(queueOf(text(101, "first"), text(102, "second")));
   const fatal = Object.assign(new Error("ack durability is unknown"), {
