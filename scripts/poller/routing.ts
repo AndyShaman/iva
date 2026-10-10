@@ -214,10 +214,13 @@ export type RouteMessageResult =
 
 // Дубль после обрыва уже в очереди: время постановки не переписываем, сбой Trace молчит.
 function traceQueued(
-  traceImpl: (update: TelegramQueueUpdate, count: number) => void,
   update: TelegramQueueUpdate,
   queued: { count: number; added?: boolean },
   logImpl: (...parts: unknown[]) => void,
+  traceImpl: (
+    update: TelegramQueueUpdate,
+    count: number,
+  ) => void = traceBridgeQueued,
 ) {
   if (queued.added === false) return;
   try {
@@ -240,7 +243,7 @@ export async function routeMessageUpdate(
     shouldQueueImpl = shouldQueueBusyUpdate,
     enqueueImpl = enqueueTelegramQueueUpdate,
     acknowledgeImpl = acknowledgeQueued,
-    traceQueuedImpl = traceBridgeQueued,
+    traceQueuedImpl,
     deliverImpl = pacedDelivery,
     statusImpl = getChatStatus,
     setStatusIfImpl = setChatStatusIf,
@@ -332,7 +335,7 @@ export async function routeMessageUpdate(
         );
         return "enqueue-failed";
       }
-      traceQueued(traceQueuedImpl, update, queued, logImpl);
+      traceQueued(update, queued, logImpl, traceQueuedImpl);
       await acknowledgeImpl(update, queued.count);
       return "queued";
     }
