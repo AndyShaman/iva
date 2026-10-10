@@ -3,10 +3,13 @@
 // пределах 5 000 знаков. Правила, которые владелец назвал приоритетом 10.10.2026 («сначала
 // ищи сама, потом спрашивай», длинный вывод в файл), держатся якорями: сокращение карты под
 // предел не выбрасывает их молча. Лежит в scripts/, а не в agent/instructions/: там eve
-// принял бы файл за инструкцию.
+// принял бы файл за инструкцию. Здесь же сторожа self-map: описание скилла уходит в каждый
+// шаг модели, а рассказ Ивы о себе сверяется с кодом.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import fc from "fast-check";
+import { humanizeProviderError } from "../agent/lib/error-humanizer.ts";
 
 const read = (path: string) =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -74,5 +77,57 @@ test("the ephemeral goes to todo, tasks or a Reminder, not CORE", () => {
   assert.match(
     memoryMap,
     /Do NOT write the ephemeral into CORE[^.]*`todo`[^.]*`tasks` or a Reminder/u,
+  );
+});
+
+/** Описание self-map до волны 10.10.2026: 356 знаков. Список скиллов уходит в каждый шаг модели. */
+const SELF_MAP_DESCRIPTION_LIMIT = 356;
+const SELF_MAP = read("agent/skills/self-map/SKILL.md");
+
+test("the self-map description does not grow past its size before 10.10.2026", () => {
+  const description = /^description: "(.*)"$/mu.exec(SELF_MAP)?.[1];
+  assert.ok(description, "у self-map нет описания");
+  const length = Array.from(description).length;
+  assert.ok(
+    length <= SELF_MAP_DESCRIPTION_LIMIT,
+    `описание self-map: ${length} знаков, предел ${SELF_MAP_DESCRIPTION_LIMIT}`,
+  );
+});
+
+// QA 10.10.2026: self-map обещала кнопку «Повторить» после любого обрыва, а код ставит её
+// только на обрыве посреди ответа и без вложения (agent/lib/error-humanizer.ts, midAnswerAsk).
+test("self-map promises the «Повторить» button only where the code gives it", () => {
+  const flat = SELF_MAP.replace(/\s+/gu, " ");
+  assert.match(
+    flat,
+    /In the middle of the answer: a «Повторить» button [^.]*only for a message without an attachment/u,
+  );
+  assert.match(flat, /Before the answer began: [^.]*no button\./u);
+  fc.assert(
+    fc.property(
+      fc.constantFrom(
+        "terminated",
+        "TypeError: fetch failed (ECONNRESET)",
+        "AI_APICallError: 502 Bad Gateway",
+        "Upstream request failed",
+      ),
+      fc.boolean(),
+      fc.boolean(),
+      fc.boolean(),
+      fc.string({ maxLength: 200 }),
+      (message, answerStarted, media, group, question) => {
+        const { en, ru } = humanizeProviderError({
+          message,
+          details: { attempts: 3, answerStarted },
+          question,
+          media,
+          group,
+        });
+        // `<` из вопроса владельца цитата меняет на «‹»: кнопку может поставить только код.
+        const button = answerStarted && !media;
+        assert.equal(ru.includes("<tg-button"), button, ru);
+        assert.equal(en.includes("<tg-button"), button, en);
+      },
+    ),
   );
 });

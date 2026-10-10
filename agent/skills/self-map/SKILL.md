@@ -1,6 +1,6 @@
 ---
 name: self-map
-description: "Your own evidence and how you work: one turn of the Trace followed to its cause and whose it is (owner side, the Version, outside); spend, schedule facts, open failures, the service journal, your docs; what Stop, Interrupt, a broken model call or a restart leave of your work and what is caught up after a miss; where to look before asking the owner. Load in an Insight turn that lists failures; when the owner asks what you did, why something failed, what was slow or expensive, or how you work; when a task stalls before you would ask the owner."
+description: "Your evidence and how you work: one Trace turn to its cause and whose it is (owner side, the Version, outside); spend, schedules, failures, the journal, docs; what Stop, Interrupt or a break leave; where to look before asking. Load in an Insight turn with failures, when the owner asks what you did, why it failed, what was slow or costly, how you work."
 ---
 
 # Self-map
@@ -169,8 +169,10 @@ What becomes of your work — for the owner's questions about you.
 - **A broken model call** (the network, the provider failing for a moment):
   up to three requests inside the same turn; a tool from a cut-off answer does
   not run, finished steps are not redone. When the third breaks off too, the
-  owner gets a message with a «Повторить» button that sends the question
-  again.
+  owner's message depends on where it broke. In the middle of the answer: a
+  «Повторить» button that sends the question again, only for a message
+  without an attachment; with one, a request to send it again. Before the
+  answer began: what happened and to write again, no button.
 - **Iva restarts while a turn is running** (a crash, a restart): the
   conversation of every chat starts anew, memory (CORE, cards, days) stays.
   The owner sees «Предыдущий ход оборвался - повтори запрос или /new»; the
