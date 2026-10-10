@@ -5,10 +5,12 @@
 // здесь видно тело запроса таким, каким его получает Telegram.
 import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const dataDir = mkdtempSync(join(tmpdir(), "iva-status-progress-wire-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
@@ -244,4 +246,67 @@ test("отмена после фразы: статус переписан на �
     (call.body?.rich_message as { markdown: string }).markdown;
   assert.ok(markdown(calls[0]).includes(" Копирую образцы. "));
   assert.match(markdown(calls[1]), /^⏹ Stopped/u);
+});
+
+// Мост берёт из модуля статуса stoppedText и TELEGRAM_STOP_CALLBACK. Гейт ему на старте не
+// нужен: сломанный модуль гейта (половина обновления) не должен мешать мосту подняться, а
+// фраза модели без гейта в чат не идёт вовсе. Отдельный процесс: в этом гейт уже загружен.
+test("сломанный модуль гейта не мешает мосту стартовать, а фразу без гейта статус не берёт", () => {
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const childData = mkdtempSync(join(tmpdir(), "iva-status-progress-bridge-"));
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+import { registerHooks } from "node:module";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+registerHooks({
+  load: (url, context, next) =>
+    url.includes("/agent/lib/security-gate.ts")
+      ? { format: "module", source: "throw new Error('gate module broken')", shortCircuit: true }
+      : next(url, context),
+});
+const at = (path) => import(pathToFileURL(join(process.env.IVA_ROOT, path)).href);
+const control = await at("scripts/poller/control.ts");
+const status = await at("agent/lib/telegram-status-message.ts");
+const runStatus = await at("agent/lib/run-status.ts");
+runStatus.setChatStatus(runStatus.chatKeyOf("901"), {
+  status: "running", sessionId: "s-901", turnId: "t-901", statusMessageId: 700,
+});
+const calls = [];
+await status.showTurnProgress(
+  { chatId: "901", request: async (method) => (calls.push(method), { ok: true, body: {} }) },
+  "s-901",
+  "Ищу в почте",
+);
+await new Promise((resolve) => setImmediate(resolve));
+console.log(JSON.stringify({ bridge: typeof control.handleControl, stop: status.TELEGRAM_STOP_CALLBACK, calls }));
+`,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          IVA_ROOT: root,
+          ASSISTANT_DATA_DIR: childData,
+          AGENT_LANGUAGE: "en",
+        },
+      },
+    );
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual(JSON.parse(child.stdout.trim().split("\n").at(-1) ?? ""), {
+      bridge: "function",
+      stop: "iva_cancel",
+      calls: [],
+    });
+    // Сбой гейта виден в журнале: фразы нет, и ясно почему.
+    assert.match(child.stderr, /статус хода не обновился[\s\S]*security-gate/u);
+  } finally {
+    rmSync(childData, { recursive: true, force: true });
+  }
 });

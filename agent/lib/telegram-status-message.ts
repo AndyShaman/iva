@@ -7,6 +7,9 @@
 // Что модель говорит по ходу работы (текст шага перед вызовом инструментов), встаёт в
 // статус между лоадером и кнопкой: статус правится на месте, отдельного сообщения нет
 // (решение владельца 10.10.2026). Это уже текст модели, поэтому он проходит outbound-Gate.
+// Гейт грузится при первой фразе, а не вместе с модулем: мост (scripts/poller/control.ts)
+// берёт отсюда stoppedText и TELEGRAM_STOP_CALLBACK, и сломанный модуль гейта не должен
+// мешать ему стартовать — как в scripts/lib/notice.ts.
 //
 // turn.started шлёт статус и пишет running+sessionId+turnId в run-status.
 // Нажатие кнопки (и /stop) ловит Bridge: он берёт sessionId и зовёт cancel-роут
@@ -15,7 +18,6 @@
 //
 // Про eve модуль не знает: канал передаёт хендл Bot API структурно.
 import { tr } from "./i18n.ts";
-import { redactNotice } from "./outbox.ts";
 import { chatKeyOf, getChatStatus, setChatStatusIf } from "./run-status.ts";
 import {
   htmlToPlain,
@@ -229,8 +231,10 @@ export const STATUS_EDIT_INTERVAL_MS = 3_000;
  * Текст шага модели как фраза статуса: сначала outbound-Gate по всему тексту (обрезанный
  * ключ гейт уже не узнаёт), потом разметка снимается тем же конвертером, что у Outbox, и
  * остаётся одна экранированная строка не длиннее STATUS_PHRASE_MAX_CHARS. Пусто — "".
+ * Гейт не загрузился — исключение, и фразы нет: текст модели мимо гейта в чат не идёт.
  */
-export function statusPhrase(text: string): string {
+export async function statusPhrase(text: string): Promise<string> {
+  const { redactNotice } = await import("./outbox.ts");
   return richQuoteLine(
     htmlToPlain(mdToTelegramHtml(redactNotice(text))),
     STATUS_PHRASE_MAX_CHARS,
@@ -350,7 +354,7 @@ export async function showTurnProgress(
 ): Promise<void> {
   try {
     if (!richStatusSupported) return;
-    const phrase = statusPhrase(text);
+    const phrase = await statusPhrase(text);
     if (phrase === "") return;
     const key = chatKeyOf(tg.chatId, tg.messageThreadId);
     const messageId = turnStatusMessageId(key, sessionId);
