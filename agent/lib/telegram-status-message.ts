@@ -7,9 +7,9 @@
 // Что модель говорит по ходу работы (текст шага перед вызовом инструментов), встаёт в
 // статус между лоадером и кнопкой: статус правится на месте, отдельного сообщения нет
 // (решение владельца 10.10.2026). Это уже текст модели, поэтому он проходит outbound-Gate.
-// Гейт грузится при первой фразе, а не вместе с модулем: мост (scripts/poller/control.ts)
-// берёт отсюда stoppedText и TELEGRAM_STOP_CALLBACK, и сломанный модуль гейта не должен
-// мешать ему стартовать — как в scripts/lib/notice.ts.
+// Мост (scripts/poller/control.ts) берёт stoppedText и TELEGRAM_STOP_CALLBACK из
+// telegram-status-stop.ts, а не отсюда: этот модуль грузит гейт вместе с собой, и сломанный
+// модуль гейта не должен мешать мосту стартовать.
 //
 // turn.started шлёт статус и пишет running+sessionId+turnId в run-status.
 // Нажатие кнопки (и /stop) ловит Bridge: он берёт sessionId и зовёт cancel-роут
@@ -17,7 +17,7 @@
 // сообщение, отмена переписывает его на «Остановлено».
 //
 // Про eve модуль не знает: канал передаёт хендл Bot API структурно.
-import { tr } from "./i18n.ts";
+import { redactNotice } from "./outbox.ts";
 import { chatKeyOf, getChatStatus, setChatStatusIf } from "./run-status.ts";
 import {
   htmlToPlain,
@@ -25,10 +25,10 @@ import {
   richQuoteLine,
 } from "./telegram-format.ts";
 import { isPrivateTelegramChatHandle } from "./telegram-private-chat.ts";
+import { stoppedText, TELEGRAM_STOP_CALLBACK } from "./telegram-status-stop.ts";
 
-// В callback_data кладём только константу: лимит 64 байта не вмещает sessionId,
-// он и так лежит в run-status.
-export const TELEGRAM_STOP_CALLBACK = "iva_cancel";
+// Канал берёт кнопку отсюда, вместе с остальным статусом.
+export { TELEGRAM_STOP_CALLBACK };
 
 export type TelegramStatusHandle = {
   readonly chatId: string;
@@ -39,17 +39,6 @@ export type TelegramStatusHandle = {
     body?: Record<string, unknown>,
   ): Promise<{ ok: boolean; body: unknown }>;
 };
-
-// Функция, а не const: перевод выбирается в момент вызова (правило репо — module-level
-// const не должна захватывать tr(), иначе язык замерзает до рестарта).
-// Экспорт нужен мосту: сообщение «ход не остановился» переписывается тем же текстом, когда
-// подтверждение всё-таки приходит.
-export function stoppedText(): string {
-  return tr(
-    "⏹ Stopped. I'll hold new messages and handle them together with the next one.",
-    "⏹ Остановлено. Новые сообщения накоплю и обработаю вместе со следующим.",
-  );
-}
 
 // Анимированный лоадер статуса — тот же набор, что у /update
 // (t.me/addemoji/iconemoji1), печатающие точки, чтобы «Работаю…» визуально
@@ -245,10 +234,8 @@ export const STATUS_EDIT_TIMEOUT_MS = 5_000;
  * Текст шага модели как фраза статуса: сначала outbound-Gate по всему тексту (обрезанный
  * ключ гейт уже не узнаёт), потом разметка снимается тем же конвертером, что у Outbox, и
  * остаётся одна экранированная строка не длиннее STATUS_PHRASE_MAX_CHARS. Пусто — "".
- * Гейт не загрузился — исключение, и фразы нет: текст модели мимо гейта в чат не идёт.
  */
-export async function statusPhrase(text: string): Promise<string> {
-  const { redactNotice } = await import("./outbox.ts");
+export function statusPhrase(text: string): string {
   return richQuoteLine(
     htmlToPlain(mdToTelegramHtml(redactNotice(text))),
     STATUS_PHRASE_MAX_CHARS,
@@ -407,6 +394,7 @@ function editTurnStatus(
  * правок нет. Ответа Telegram на правку шаг не ждёт; сбой правки остаётся в журнале и ход
  * не трогает.
  */
+// eslint-disable-next-line @typescript-eslint/require-await -- канал и тесты ждут обещание, как с первой фразы статуса.
 export async function showTurnProgress(
   tg: TelegramStatusHandle,
   sessionId: string,
@@ -414,7 +402,7 @@ export async function showTurnProgress(
 ): Promise<void> {
   try {
     if (!richStatusSupported) return;
-    const phrase = await statusPhrase(text);
+    const phrase = statusPhrase(text);
     if (phrase === "") return;
     const key = chatKeyOf(tg.chatId, tg.messageThreadId);
     const messageId = turnStatusMessageId(key, sessionId);

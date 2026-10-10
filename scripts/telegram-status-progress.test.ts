@@ -347,10 +347,11 @@ test("отмена после фразы: статус переписан на �
   assert.match(markdown(calls[1]), /^⏹ Stopped/u);
 });
 
-// Мост берёт из модуля статуса stoppedText и TELEGRAM_STOP_CALLBACK. Гейт ему на старте не
-// нужен: сломанный модуль гейта (половина обновления) не должен мешать мосту подняться, а
-// фраза модели без гейта в чат не идёт вовсе. Отдельный процесс: в этом гейт уже загружен.
-test("сломанный модуль гейта не мешает мосту стартовать, а фразу без гейта статус не берёт", () => {
+// Мост берёт из статуса только stoppedText и TELEGRAM_STOP_CALLBACK, и берёт их из модуля без
+// гейта: сломанный модуль гейта (половина обновления) не должен мешать мосту подняться. Модуль
+// статуса грузит гейт вместе с собой, поэтому без гейта он не грузится вовсе, и фраза модели
+// мимо гейта в чат не идёт. Отдельный процесс: в этом гейт уже загружен.
+test("сломанный модуль гейта не мешает мосту стартовать, а статус без гейта не грузится", () => {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const childData = mkdtempSync(join(tmpdir(), "iva-status-progress-bridge-"));
   try {
@@ -371,19 +372,12 @@ registerHooks({
 });
 const at = (path) => import(pathToFileURL(join(process.env.IVA_ROOT, path)).href);
 const control = await at("scripts/poller/control.ts");
-const status = await at("agent/lib/telegram-status-message.ts");
-const runStatus = await at("agent/lib/run-status.ts");
-runStatus.setChatStatus(runStatus.chatKeyOf("901"), {
-  status: "running", sessionId: "s-901", turnId: "t-901", statusMessageId: 700,
-});
-const calls = [];
-await status.showTurnProgress(
-  { chatId: "901", request: async (method) => (calls.push(method), { ok: true, body: {} }) },
-  "s-901",
-  "Ищу в почте",
+const stop = await at("agent/lib/telegram-status-stop.ts");
+const status = await at("agent/lib/telegram-status-message.ts").then(
+  () => ({ loaded: true }),
+  (error) => ({ loaded: false, reason: String(error?.message ?? error) }),
 );
-await new Promise((resolve) => setImmediate(resolve));
-console.log(JSON.stringify({ bridge: typeof control.handleControl, stop: status.TELEGRAM_STOP_CALLBACK, calls }));
+console.log(JSON.stringify({ bridge: typeof control.handleControl, stop: stop.TELEGRAM_STOP_CALLBACK, status }));
 `,
       ],
       {
@@ -398,13 +392,16 @@ console.log(JSON.stringify({ bridge: typeof control.handleControl, stop: status.
       },
     );
     assert.equal(child.status, 0, child.stderr);
-    assert.deepEqual(JSON.parse(child.stdout.trim().split("\n").at(-1) ?? ""), {
-      bridge: "function",
-      stop: "iva_cancel",
-      calls: [],
-    });
-    // Сбой гейта виден в журнале: фразы нет, и ясно почему.
-    assert.match(child.stderr, /статус хода не обновился[\s\S]*security-gate/u);
+    const seen = JSON.parse(child.stdout.trim().split("\n").at(-1) ?? "") as {
+      bridge: string;
+      stop: string;
+      status: { loaded: boolean; reason?: string };
+    };
+    assert.equal(seen.bridge, "function");
+    assert.equal(seen.stop, "iva_cancel");
+    assert.equal(seen.status.loaded, false);
+    // Статус не загрузился именно из-за гейта, а не по другой причине.
+    assert.match(seen.status.reason ?? "", /security-gate/u);
   } finally {
     rmSync(childData, { recursive: true, force: true });
   }

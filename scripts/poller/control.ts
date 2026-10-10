@@ -4,10 +4,12 @@ import {
   resetTargetForControl,
   type TelegramResetTarget,
 } from "../lib/telegram-reset.ts";
+// Из статуса мосту нужны только кнопка ⏹ и «Остановлено»: они в модуле без гейта, чтобы
+// сломанный модуль гейта не мешал мосту стартовать.
 import {
   stoppedText,
   TELEGRAM_STOP_CALLBACK,
-} from "#lib/telegram-status-message.ts";
+} from "#lib/telegram-status-stop.ts";
 import {
   cancellableSessionId,
   isPendingStopOutcome,

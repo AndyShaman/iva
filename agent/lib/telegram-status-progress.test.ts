@@ -460,7 +460,7 @@ await test("сбой правки не роняет ход: отказ Telegram 
   );
 });
 
-await test(`фраза статуса из любого текста — одна строка, без разметки, не длиннее STATUS_PHRASE_MAX_CHARS (seed ${SEED})`, async () => {
+await test(`фраза статуса из любого текста — одна строка, без разметки, не длиннее STATUS_PHRASE_MAX_CHARS (seed ${SEED})`, () => {
   const markup = fc.constantFrom(
     "**",
     "__",
@@ -499,9 +499,9 @@ await test(`фраза статуса из любого текста — одн�
       .array(fc.oneof(markup, fc.string({ maxLength: 12 })), { maxLength: 80 })
       .map((parts) => parts.join("")),
   );
-  await fc.assert(
-    fc.asyncProperty(text, async (input) => {
-      const phrase = await status.statusPhrase(input);
+  fc.assert(
+    fc.property(text, (input) => {
+      const phrase = status.statusPhrase(input);
       assert.doesNotMatch(phrase, /[\r\n]/u);
       assert.doesNotMatch(phrase, /[<>]/u);
       // Ни тега, ни знака разметки, ни сущности: `&` только экранированный.
@@ -515,13 +515,13 @@ await test(`фраза статуса из любого текста — одн�
   );
 });
 
-await test(`ключ в любом месте текста до чата не доезжает и куском (seed ${SEED})`, async () => {
-  await fc.assert(
-    fc.asyncProperty(
+await test(`ключ в любом месте текста до чата не доезжает и куском (seed ${SEED})`, () => {
+  fc.assert(
+    fc.property(
       fc.string({ maxLength: 300 }),
       fc.string({ maxLength: 300 }),
-      async (before, after) => {
-        const phrase = await status.statusPhrase(`${before} ${KEY} ${after}`);
+      (before, after) => {
+        const phrase = status.statusPhrase(`${before} ${KEY} ${after}`);
         assert.equal(survivingChunk(phrase, KEY), null);
       },
     ),
