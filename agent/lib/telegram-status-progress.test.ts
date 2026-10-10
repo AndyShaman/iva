@@ -7,7 +7,7 @@
 // IVA_TEST_SEED=<seed>.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,9 @@ const dataDir = mkdtempSync(join(tmpdir(), "iva-status-progress-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
 writeFileSync(join(dataDir, "settings.json"), JSON.stringify({}));
 process.env.AGENT_LANGUAGE = "en";
+// Уборка на выходе процесса, а не через after(): файл регистрирует тесты через
+// `await test(...)`, и корневой хук срабатывает посреди файла (как в outbox.test.ts).
+process.on("exit", () => rmSync(dataDir, { recursive: true, force: true }));
 const load = <T>(name: string): Promise<T> =>
   import(
     pathToFileURL(fileURLToPath(new URL(name, import.meta.url))).href
