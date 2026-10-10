@@ -105,12 +105,14 @@ function productionTypeScriptFiles(tree: string): string[] {
     })) {
       const relativePath = posix.join(relativeDirectory, entry.name);
       if (entry.isDirectory()) visit(relativePath);
-      // Tests are not shipped in the bundle eve rebuilds, so they cannot drag `scripts/`
-      // into it; the guard judges the production surface only.
+      // Tests and their fixtures (`*.test-fixture.ts`, imported by tests only) are not shipped
+      // in the bundle eve rebuilds, so they cannot drag `scripts/` into it; the guard judges
+      // the production surface only.
       else if (
         entry.isFile() &&
         entry.name.endsWith(".ts") &&
-        !entry.name.endsWith(".test.ts")
+        !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".test-fixture.ts")
       )
         files.push(relativePath);
     }
