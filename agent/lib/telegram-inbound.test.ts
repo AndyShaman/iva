@@ -1036,6 +1036,55 @@ await test("в пачке «текст, контакт, текст» одна с
   );
 });
 
+await test("пачка из одних нечитаемых частей даёт строку на каждую часть и не начинает ход, как по одной", async () => {
+  for (const parts of [
+    [contactPart, contactPart],
+    [contactPart, pollPart],
+    [futurePart, contactPart],
+    [futurePart, futurePart],
+    [contactPart, pollPart, futurePart],
+  ]) {
+    const name = parts.map((part) => Object.keys(part)[0]).join("+");
+    const expected = await oneByOne(parts);
+    assert.equal(expected.length, parts.length, name);
+
+    const { calls, effects } = harness();
+    const result = await inbound.runTelegramInbound(pack(parts), effects);
+
+    assert.equal(result, null, `${name}: no empty turn`);
+    assert.deepEqual(calls.sent, expected, name);
+    assert.equal(calls.accepted, 0, `${name}: the chat is not claimed`);
+    assert.equal(calls.typing, 0, name);
+  }
+
+  const group = harness();
+  assert.equal(
+    await inbound.runTelegramInbound(
+      pack([contactPart, futurePart], "supergroup"),
+      group.effects,
+    ),
+    null,
+  );
+  assert.deepEqual(group.calls.sent, []);
+  assert.equal(group.calls.accepted, 0);
+});
+
+await test("в группе нечитаемый ответ боту не будит пачку, если остальное не к боту: по одной хода тоже нет", async () => {
+  const replyToBot = { message_id: 1, from: { id: 1, is_bot: true } };
+  const { calls, effects } = harness();
+  const result = await inbound.runTelegramInbound(
+    pack(
+      [{ ...contactPart, reply_to_message: replyToBot }, { text: "не боту" }],
+      "supergroup",
+    ),
+    effects,
+  );
+
+  assert.equal(result, null);
+  assert.equal(calls.accepted, 0);
+  assert.deepEqual(calls.sent, []);
+});
+
 await test("в группе нечитаемая часть пачки молчит, а ход идёт", async () => {
   const { calls, effects } = harness();
   const result = await inbound.runTelegramInbound(

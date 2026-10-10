@@ -432,6 +432,19 @@ async function unreadableNote(
   }
 }
 
+// Пачка — те же сообщения по одному: строка о нечитаемом на каждую такую часть.
+async function unreadableNotes(
+  message: TelegramInboundMessage,
+  effects: TelegramInboundEffects,
+  partsRaw: readonly TelegramRawMessage[],
+  readings: readonly TelegramMessageTextReading[],
+): Promise<void> {
+  if (partsRaw.length < 2)
+    return unreadableNote(message, effects, partsRaw, readings);
+  for (const [index, partRaw] of partsRaw.entries())
+    await unreadableNote(message, effects, [partRaw], [readings[index]]);
+}
+
 // Текстовая часть после гейта: помеченный вход едет с предупреждением, усечённый —
 // с пометкой и ссылкой на полную запись в Vault.
 function gatedTextEntries(
@@ -577,6 +590,8 @@ export async function runTelegramInbound(
               effects.botUsername,
             )
       : partsRaw.some((partRaw, partIndex) => {
+          // Нечитаемая часть и одна хода не начала бы: в пачке тоже не начинает.
+          if (nothingReadable([partRaw], [readings[partIndex]])) return false;
           const partMessage = messageViewForRaw(
             message,
             partRaw,
@@ -587,7 +602,7 @@ export async function runTelegramInbound(
             : shouldDispatch(partMessage, effects.botUsername);
         });
   if (!shouldDispatchAny) {
-    await unreadableNote(message, effects, partsRaw, readings);
+    await unreadableNotes(message, effects, partsRaw, readings);
     return null;
   }
   await effects.onAccepted();
