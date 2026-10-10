@@ -198,14 +198,23 @@ export async function finishTelegramStatus(
     if (typeof msgId === "number") {
       try {
         // Правка фразы не должна лечь поверх уборки: отложенная снимается, начатая
-        // дожидается, и удаление или «Остановлено» идут последними.
-        await stopTurnProgress(key, msgId);
+        // дожидается (не дольше срока), и удаление или «Остановлено» идут последними.
+        const { late } = await stopTurnProgress(key, msgId);
         if (mode === "cancelled") {
-          await tg.request("editMessageText", {
-            chat_id: tg.chatId,
-            message_id: msgId,
-            rich_message: { markdown: stoppedText() },
-          });
+          const stopped = () =>
+            tg.request("editMessageText", {
+              chat_id: tg.chatId,
+              message_id: msgId,
+              rich_message: { markdown: stoppedText() },
+            });
+          await stopped();
+          // Правка, не ответившая в срок, могла лечь после «Остановлено» — ставим его снова.
+          // Удалённое сообщение поздняя правка не вернёт: там повторять нечего.
+          void late
+            ?.then((landed) => (landed ? stopped() : undefined))
+            .catch(() => {
+              /* не критично, как и вся уборка */
+            });
         } else {
           await tg.request("deleteMessage", {
             chat_id: tg.chatId,
@@ -226,6 +235,9 @@ export const STATUS_PHRASE_MAX_CHARS = 120;
 // (в группе — 20 сообщений в минуту), а шаги модели бывают чаще. Фразы между правками не
 // копятся: через интервал в статус встаёт последняя.
 export const STATUS_EDIT_INTERVAL_MS = 3_000;
+// Столько ждём ответа Telegram на правку статуса. Не ответил — уборка хода идёт дальше, а
+// статус до конца хода больше не правится. Срок короче интервала: правки не встают в очередь.
+export const STATUS_EDIT_TIMEOUT_MS = 5_000;
 
 /**
  * Текст шага модели как фраза статуса: сначала outbound-Gate по всему тексту (обрезанный
@@ -250,7 +262,13 @@ type TurnProgress = {
   editedAt: number;
   pending: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
+  // Звено цепочки кончается не позже STATUS_EDIT_TIMEOUT_MS и не отклоняется никогда.
   editing: Promise<void>;
+  // Правка, не ответившая в срок: true, если Telegram её всё же принял. Она может лечь
+  // после уборки статуса.
+  late: Promise<boolean> | undefined;
+  // Статус второстепенен: раз Telegram не ответил в срок, до конца хода его не правим.
+  quiet: boolean;
 };
 
 const turnProgress = new Map<string, TurnProgress>();
@@ -282,6 +300,8 @@ function progressOf(
     pending: null,
     timer: undefined,
     editing: Promise.resolve(),
+    late: undefined,
+    quiet: false,
   };
   turnProgress.set(key, fresh);
   return fresh;
@@ -304,11 +324,46 @@ function stillShowing(key: string, progress: TurnProgress): boolean {
   return false;
 }
 
+// Одна правка статуса со сроком: Bot API своего срока не знает, и повисший запрос держал бы
+// уборку хода. Не ответил за STATUS_EDIT_TIMEOUT_MS — звено кончается, статус замолкает до
+// конца хода, а сам запрос остаётся в progress.late.
+async function sendEdit(
+  tg: TelegramStatusHandle,
+  body: Record<string, unknown>,
+  progress: TurnProgress,
+): Promise<void> {
+  const sent = (async () => {
+    try {
+      const res = await tg.request("editMessageText", body);
+      if (!res.ok) logProgressError(JSON.stringify(res.body).slice(0, 300));
+      return res.ok;
+    } catch (error) {
+      logProgressError(error);
+      return false;
+    }
+  })();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    deadline = setTimeout(
+      () => resolve("expired"),
+      STATUS_EDIT_TIMEOUT_MS,
+    ).unref();
+  });
+  const outcome = await Promise.race([sent, expired]);
+  clearTimeout(deadline);
+  if (outcome !== "expired") return;
+  progress.quiet = true;
+  progress.late = sent;
+  logProgressError(
+    `Telegram не ответил на правку за ${STATUS_EDIT_TIMEOUT_MS} мс`,
+  );
+}
+
 function editTurnStatus(
   tg: TelegramStatusHandle,
   key: string,
   progress: TurnProgress,
-): Promise<void> {
+): void {
   clearTimeout(progress.timer);
   progress.timer = undefined;
   const phrase = progress.pending;
@@ -316,9 +371,10 @@ function editTurnStatus(
   if (
     phrase === null ||
     phrase === progress.shown ||
+    progress.quiet ||
     !stillShowing(key, progress)
   )
-    return progress.editing;
+    return;
   progress.shown = phrase;
   progress.editedAt = Date.now();
   const body = {
@@ -331,21 +387,16 @@ function editTurnStatus(
       }),
     },
   };
-  // Цепочка не отклоняется никогда: её ждёт уборка статуса в конце хода.
-  progress.editing = progress.editing
-    .then(() => tg.request("editMessageText", body))
-    .then((res) => {
-      if (!res.ok) logProgressError(JSON.stringify(res.body).slice(0, 300));
-    })
-    .catch(logProgressError);
-  return progress.editing;
+  // Цепочку ждёт уборка статуса в конце хода, а шаг модели — нет.
+  progress.editing = progress.editing.then(() => sendEdit(tg, body, progress));
 }
 
 /**
  * Текст шага модели встаёт в статус хода: лоадер, фраза, ⏹. Первая фраза хода — сразу,
  * следующие — не чаще STATUS_EDIT_INTERVAL_MS, и из накопившихся за интервал берётся
  * последняя. Нет статус-сообщения у живого хода этой сессии или rich-статус не принят —
- * правок нет. Сбой правки остаётся в журнале и ход не трогает.
+ * правок нет. Ответа Telegram на правку шаг не ждёт; сбой правки остаётся в журнале и ход
+ * не трогает.
  */
 export async function showTurnProgress(
   tg: TelegramStatusHandle,
@@ -363,11 +414,11 @@ export async function showTurnProgress(
     progress.pending = phrase;
     const wait = progress.editedAt + STATUS_EDIT_INTERVAL_MS - Date.now();
     if (wait <= 0) {
-      await editTurnStatus(tg, key, progress);
+      editTurnStatus(tg, key, progress);
       return;
     }
     progress.timer ??= setTimeout(
-      () => void editTurnStatus(tg, key, progress),
+      () => editTurnStatus(tg, key, progress),
       wait,
     ).unref();
   } catch (error) {
@@ -375,12 +426,17 @@ export async function showTurnProgress(
   }
 }
 
-// Конец хода: отложенная фраза снимается, начатая правка дожидается — уборка статуса
-// после этого идёт последней.
-async function stopTurnProgress(key: string, messageId: number): Promise<void> {
+// Конец хода: отложенная фраза снимается, начатая правка дожидается, но не дольше
+// STATUS_EDIT_TIMEOUT_MS. В ответе — правка, не ответившая в срок: она может лечь после
+// уборки. Обёрнута в объект: обещание, отданное из async-функции, ждали бы целиком.
+async function stopTurnProgress(
+  key: string,
+  messageId: number,
+): Promise<{ late?: Promise<boolean> }> {
   const progress = turnProgress.get(key);
-  if (progress?.messageId !== messageId) return;
+  if (progress?.messageId !== messageId) return {};
   clearTimeout(progress.timer);
   turnProgress.delete(key);
   await progress.editing;
+  return { late: progress.late };
 }

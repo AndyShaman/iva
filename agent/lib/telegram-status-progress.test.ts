@@ -335,6 +335,62 @@ await test("правка в полёте, когда ход кончился: «
   assert.match(markdownOf(calls[1]), /^⏹ Stopped/u);
 });
 
+// Bot API без срока: повисший запрос держал шаг модели (канал ждал правку) и уборку хода.
+await test("повисшая правка не держит шаг хода: фраза отдана, ход идёт дальше", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 5_000_000 });
+  startTurn("123", "s-123", 514);
+  const { calls, tg } = handle("123", () => new Promise<Reply>(() => {}));
+  let returned = false;
+
+  void status.showTurnProgress(tg, "s-123", "Висну").then(() => {
+    returned = true;
+  });
+  await settle();
+
+  assert.equal(calls.length, 1);
+  assert.equal(returned, true, "шаг ждал ответа Telegram на правку");
+});
+
+await test("повисшая правка держит уборку не дольше STATUS_EDIT_TIMEOUT_MS, а легла позже — «Остановлено» ставится снова", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 6_000_000 });
+  startTurn("124", "s-124", 515);
+  let release!: () => void;
+  const held = new Promise<Reply>((resolve) => {
+    release = () => resolve({ ok: true, body: { result: true } });
+  });
+  const { calls, tg } = handle("124", (call) =>
+    markdownOf(call).includes(" Висну ")
+      ? held
+      : { ok: true, body: { result: true } },
+  );
+  const logged: unknown[] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
+
+  void status.showTurnProgress(tg, "s-124", "Висну");
+  await settle();
+  let finished = false;
+  void status
+    .finishTelegramStatus({ telegram: tg }, "s-124", "cancelled")
+    .then(() => {
+      finished = true;
+    });
+  await settle();
+  assert.equal(finished, false, "уборка не дала правке срока");
+
+  t.mock.timers.tick(status.STATUS_EDIT_TIMEOUT_MS);
+  await settle();
+  assert.equal(finished, true, "уборка ждала правку дольше срока");
+  assert.equal(calls.length, 2);
+  assert.match(markdownOf(calls[1]), /^⏹ Stopped/u);
+  assert.equal(logged.length, 1);
+
+  // Правка легла после «Остановлено» и затёрла его — уборка повторяется и снова последняя.
+  release();
+  await settle();
+  assert.equal(calls.length, 3);
+  assert.match(markdownOf(calls[2]), /^⏹ Stopped/u);
+});
+
 await test("сбой правки не роняет ход: отказ Telegram и исключение только в журнал", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 4_000_000 });
   startTurn("121", "s-121", 511);

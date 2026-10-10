@@ -130,6 +130,8 @@ async function emit(
     },
   });
   await contextStorage.run(ctx, () => adapter[event](data, context));
+  // Правку статуса шаг не ждёт: запрос уходит следом, и тест смотрит на провод после него.
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 const step = (finishReason: string, message: string | null) => ({
