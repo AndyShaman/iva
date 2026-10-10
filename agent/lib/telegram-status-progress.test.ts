@@ -232,6 +232,7 @@ await test("частые фразы: правка сразу, дальше не 
   const phrases = () => calls.map((call) => visible(markdownOf(call)));
 
   await status.showTurnProgress(tg, "s-108", "Первая");
+  await settle();
   for (const [at, text] of [
     [interval / 4, "Вторая"],
     [interval / 2, "Третья"],
@@ -263,6 +264,7 @@ await test("та же фраза второй раз статус не трог�
   const { calls, tg } = handle("109");
 
   await status.showTurnProgress(tg, "s-109", "Минуту.");
+  await settle();
   t.mock.timers.tick(status.STATUS_EDIT_INTERVAL_MS * 2);
   await status.showTurnProgress(tg, "s-109", "Минуту.");
   await status.showTurnProgress(tg, "s-109", "  Минуту.\n");
@@ -391,6 +393,42 @@ await test("повисшая правка держит уборку не дол�
   assert.match(markdownOf(calls[2]), /^⏹ Stopped/u);
 });
 
+// Статус второстепенен: на 429 правку не повторяем и retry_after не ждём, а до конца хода
+// статус больше не правим — лимит остаётся ответу.
+await test("429 на правку: не повторяем, retry_after не ждём, до конца хода статус молчит", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 7_000_000 });
+  startTurn("125", "s-125", 516);
+  const { calls, tg } = handle("125", () => ({
+    ok: false,
+    body: {
+      ok: false,
+      error_code: 429,
+      description: "Too Many Requests: retry after 30",
+      parameters: { retry_after: 30 },
+    },
+  }));
+  t.mock.method(console, "error", () => {});
+
+  await status.showTurnProgress(tg, "s-125", "Раз");
+  await settle();
+  for (const text of ["Два", "Три"]) {
+    t.mock.timers.tick(status.STATUS_EDIT_INTERVAL_MS + 30_000);
+    await status.showTurnProgress(tg, "s-125", text);
+    await settle();
+  }
+  assert.equal(calls.length, 1);
+
+  // Уборка в конце хода прежняя и ничего не ждёт.
+  assert.equal(
+    await status.finishTelegramStatus({ telegram: tg }, "s-125", "completed"),
+    true,
+  );
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["editMessageText", "deleteMessage"],
+  );
+});
+
 await test("сбой правки не роняет ход: отказ Telegram и исключение только в журнал", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 4_000_000 });
   startTurn("121", "s-121", 511);
@@ -405,6 +443,7 @@ await test("сбой правки не роняет ход: отказ Telegram 
   t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
 
   await status.showTurnProgress(tg, "s-121", "Раз");
+  await settle(); // ответ Telegram на правку приходит раньше, чем пройдёт интервал
   t.mock.timers.tick(status.STATUS_EDIT_INTERVAL_MS);
   await status.showTurnProgress(tg, "s-121", "Два");
   await settle();

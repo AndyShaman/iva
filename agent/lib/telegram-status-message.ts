@@ -231,10 +231,12 @@ export async function finishTelegramStatus(
 
 // Фраза модели в статусе — одна строка не длиннее стольких знаков (с «…» на обрезе).
 export const STATUS_PHRASE_MAX_CHARS = 120;
-// Статус правится не чаще раза в столько миллисекунд: Telegram ограничивает частоту правок
-// (в группе — 20 сообщений в минуту), а шаги модели бывают чаще. Фразы между правками не
+// Статус правится не чаще раза в столько миллисекунд. Лимиты Telegram: в личном чате около
+// сообщения в секунду, в группе — 20 сообщений в минуту, и правка, по худшему счёту, идёт в
+// тот же лимит, что и ответ. Раз в 15 секунд — не больше пяти правок за любую минуту, четверть
+// лимита группы; остальное остаётся статус-сообщению и ответу. Фразы между правками не
 // копятся: через интервал в статус встаёт последняя.
-export const STATUS_EDIT_INTERVAL_MS = 3_000;
+export const STATUS_EDIT_INTERVAL_MS = 15_000;
 // Столько ждём ответа Telegram на правку статуса. Не ответил — уборка хода идёт дальше, а
 // статус до конца хода больше не правится. Срок короче интервала: правки не встают в очередь.
 export const STATUS_EDIT_TIMEOUT_MS = 5_000;
@@ -267,7 +269,8 @@ type TurnProgress = {
   // Правка, не ответившая в срок: true, если Telegram её всё же принял. Она может лечь
   // после уборки статуса.
   late: Promise<boolean> | undefined;
-  // Статус второстепенен: раз Telegram не ответил в срок, до конца хода его не правим.
+  // Статус второстепенен: Telegram попросил подождать (429) или не ответил в срок — до конца
+  // хода его не правим. Ни повтора, ни ожидания retry_after: лимит и время остаются ответу.
   quiet: boolean;
 };
 
@@ -310,6 +313,10 @@ function progressOf(
 const logProgressError = (error: unknown) =>
   console.error("[telegram] статус хода не обновился:", error);
 
+// Telegram просит подождать (flood control): 429 и retry_after в теле ответа.
+const isFloodWait = (body: unknown): boolean =>
+  asRecord(body)?.error_code === 429;
+
 // Ход мог кончиться, пока фраза ждала интервала: тогда статус уже не наш.
 function stillShowing(key: string, progress: TurnProgress): boolean {
   if (turnProgress.get(key) !== progress) return false;
@@ -335,8 +342,10 @@ async function sendEdit(
   const sent = (async () => {
     try {
       const res = await tg.request("editMessageText", body);
-      if (!res.ok) logProgressError(JSON.stringify(res.body).slice(0, 300));
-      return res.ok;
+      if (res.ok) return true;
+      if (isFloodWait(res.body)) progress.quiet = true;
+      logProgressError(JSON.stringify(res.body).slice(0, 300));
+      return false;
     } catch (error) {
       logProgressError(error);
       return false;

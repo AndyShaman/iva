@@ -38,10 +38,12 @@ type Adapter = {
 };
 
 const apiCalls: ApiCall[] = [];
+// Ответ Telegram на вызов; null — обычный успех. Тест лимита ставит свой.
+let telegramReply: (call: ApiCall) => Response | null = () => null;
 globalThis.fetch = (url, init = {}) => {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the double reads whatever eve passes.
   const method = new URL(String(url)).pathname.split("/").at(-1) ?? "";
-  apiCalls.push({
+  const call = {
     method,
     body: init.body
       ? (JSON.parse(
@@ -49,12 +51,14 @@ globalThis.fetch = (url, init = {}) => {
           String(init.body),
         ) as Record<string, unknown>)
       : undefined,
-  });
+  };
+  apiCalls.push(call);
   return Promise.resolve(
-    Response.json({
-      ok: true,
-      result: { message_id: 1, chat: { id: 1, type: "private" } },
-    }),
+    telegramReply(call) ??
+      Response.json({
+        ok: true,
+        result: { message_id: 1, chat: { id: 1, type: "private" } },
+      }),
   );
 };
 
@@ -107,7 +111,11 @@ function startTurn(chatId: string, sessionId: string, messageId?: number) {
 async function emit(
   event: "message.completed" | "turn.cancelled",
   data: Record<string, unknown>,
-  { chatId, sessionId }: { chatId: string; sessionId: string },
+  {
+    chatId,
+    sessionId,
+    chatType = "private",
+  }: { chatId: string; sessionId: string; chatType?: string },
 ) {
   const ctx = new ContextContainer();
   ctx.set(SessionKey, {
@@ -125,7 +133,7 @@ async function emit(
     state: {
       ...adapter.state,
       chatId,
-      chatType: "private",
+      chatType,
       messageThreadId: null,
     },
   });
@@ -221,6 +229,60 @@ test("вердикт гейта по фразе статуса — в Trace с �
   assert.equal(data.clean, false);
   assert.ok(data.findings.length > 0);
   assert.equal(JSON.stringify(gates[0]).includes(key.slice(0, 16)), false);
+});
+
+// Лимиты Telegram: в личном чате около сообщения в секунду, в группе — 20 сообщений в минуту.
+// Правка статуса, по худшему счёту, идёт в тот же лимит, что и ответ, а Outbox на 429 не
+// ждёт retry_after: кусок ответа, упёршийся в лимит, теряется. Правки обязаны оставлять ответу
+// место в лимите группы.
+test("правки статуса не отнимают у ответа лимит группы: ответ доходит", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "Date"],
+    now: Date.UTC(2026, 9, 10, 9),
+  });
+  const chat = {
+    chatId: "-100818",
+    sessionId: "s-818",
+    chatType: "supergroup",
+  };
+  startTurn(chat.chatId, chat.sessionId, 506);
+  const sentAt = [Date.now()]; // статус хода уже в чате
+  const delivered: string[] = [];
+  telegramReply = ({ method, body }) => {
+    if (!["sendMessage", "sendRichMessage", "editMessageText"].includes(method))
+      return null;
+    const now = Date.now();
+    if (sentAt.filter((at) => now - at < 60_000).length >= 20)
+      return Response.json(
+        {
+          ok: false,
+          error_code: 429,
+          description: "Too Many Requests: retry after 9",
+          parameters: { retry_after: 9 },
+        },
+        { status: 429 },
+      );
+    sentAt.push(now);
+    if (method === "sendMessage") delivered.push(String(body?.text));
+    return null;
+  };
+  try {
+    // Две минуты модель пишет по ходу работы каждую секунду: чаще правок, так что их
+    // частоту задаёт только STATUS_EDIT_INTERVAL_MS.
+    for (let second = 0; second < 120; second++) {
+      await emit(
+        "message.completed",
+        step("tool-calls", `Читаю файл ${second}.`),
+        chat,
+      );
+      t.mock.timers.tick(1_000);
+    }
+    await emit("message.completed", step("stop", "Нашла два письма."), chat);
+  } finally {
+    telegramReply = () => null;
+  }
+
+  assert.deepEqual(delivered, ["Нашла два письма."]);
 });
 
 test("ход без промежуточного текста: вызовы Bot API прежние байт в байт", async () => {
