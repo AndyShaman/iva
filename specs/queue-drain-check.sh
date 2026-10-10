@@ -1,9 +1,10 @@
 #!/bin/sh
-# QueueDrain.tla под TLC с проверкой ожиданий. Спека v1 при «Очередь» (QueueDrain.cfg, маршрут
-# между любыми шагами слива) и починка R1 при «Перебивать» с переключениями (-r1) — без ошибок;
-# свидетели-мутанты и находки (F1 при переключении режима, потеря id ledger) нарушают свой
-# инвариант первым (поиск в ширину, свидетель в один поток — самый короткий контрпример). Любой
-# сбой tlc или несовпадение ожидания — ненулевой выход. Файлы состояний TLC пишет во временную папку.
+# QueueDrain.tla под TLC с проверкой ожиданий (спека .scratch/work/wave-1010/l5/spec-v2.md, раздел 7).
+# Конфигурации кода спеки v2 (R1 в маршруте) — без ошибок: старт в «Очередь» и в «Перебивать» с двумя
+# переключениями, потеря id ledger. Свидетели-мутанты (снятие по старому снимку, без закрепа, склейка
+# разных авторов, склейка alone) и F1 (код без R1) нарушают свой инвариант первым (поиск в ширину,
+# свидетель в один поток — самый короткий контрпример). Любой сбой tlc или несовпадение ожидания —
+# ненулевой выход. Файлы состояний TLC пишет во временную папку.
 set -u
 cd "$(dirname "$0")" || exit 2
 TLC=${TLC:-$(command -v tlc || echo "$HOME/.local/bin/tlc")}
@@ -35,10 +36,10 @@ check QueueDrain-staleack NoLoss
 check QueueDrain-nopin NoDupBeyondBreak
 check QueueDrain-anysender NoLoss
 check QueueDrain-mergealone AloneStaysAlone
-check QueueDrain-ledgerloss NoDupBeyondBreak
 check QueueDrain-switch NoLoss
 check QueueDrain-switch-norestart NoLoss
-check QueueDrain-r1 none
 check QueueDrain none
+check QueueDrain-steer none
+check QueueDrain-ledgerloss none
 echo "queue-drain-check: $ok ok, $failed failed"
 [ "$failed" -eq 0 ]

@@ -12,11 +12,13 @@
 \*   Send         a person writes; a reply to a bot message is its own kind (Bypass)
 \*   Route        scripts/poller/routing.ts:212 routeMessageUpdate: a reply to the bot skips
 \*                the busy check unless the chat is compacting (:292, isCompacting
-\*                agent/lib/run-status.ts:283); mustQueue (:295) when the policy is queue and
-\*                isRunning (run-status.ts:274, one RUN_STALE_MS for turn and compaction) or the
-\*                disk queue / a drain is busy -> enqueue + notice (scripts/poller/queue.ts:1092
-\*                queuedNoticeText); else a direct delivery
-\*   Drain        routing.ts:335 drainReadyQueueHeads: the queue head while not running
+\*                agent/lib/run-status.ts:283); mustQueue (:295, route R1 of
+\*                .scratch/work/wave-1010/l5/spec-v2.md §3.4) when the disk queue / a drain is
+\*                busy under either policy, or the policy is queue and isRunning (run-status.ts:274,
+\*                one RUN_STALE_MS for turn and compaction) -> enqueue + notice
+\*                (scripts/poller/queue.ts:1092 queuedNoticeText); else a direct delivery
+\*   Drain        routing.ts:335 drainReadyQueueHeads while not running: the queue holds a batch
+\*                of k >= 1 items from its head, delivered at once (spec-v2 §3.3)
 \*   Arrive       onAccepted (agent/channels/telegram.ts) -> publishTelegramEarlyStatus ->
 \*                claimChat (agent/lib/telegram-turn-start.ts): a fresh running record keeps
 \*                its owner and the message gets the queued sign at once (sendQueuedStatus:
@@ -246,7 +248,7 @@ Send ==
 
 RouteMsg(reply) ==
   LET busyCheck == ~reply \/ (QueueReplies /\ CompRecord /\ fresh)
-      mustQueue == busyCheck /\ Policy = "queue" /\ (Running \/ bq > 0 \/ dw > 0)
+      mustQueue == busyCheck /\ ((Policy = "queue" /\ Running) \/ bq > 0 \/ dw > 0)
   IN /\ IF mustQueue
           THEN bq' = bq + 1 /\ UNCHANGED wire
           ELSE wire' = wire + 1 /\ UNCHANGED bq
@@ -266,14 +268,14 @@ Route ==
 
 Drain ==
   /\ bq > 0 /\ dw = 0 /\ ~Running
-  /\ bq' = bq - 1 /\ dw' = 1
+  /\ \E k \in 1..bq : bq' = bq - k /\ dw' = k
   /\ UNCHANGED <<sent, pend, pendR, wire>>
   /\ UNCHANGED <<eveV, postV, recV, memV, lossV, ghostV>>
   /\ UNCHANGED signV
 
-Arrive ==
-  /\ \/ dw > 0 /\ dw' = 0 /\ UNCHANGED wire
-     \/ wire > 0 /\ wire' = wire - 1 /\ UNCHANGED dw
+\* n messages reach eve with one delivery: a drained batch (all of dw at once) or one direct
+\* message from the wire.
+Land(n) ==
   /\ IF Running
        THEN /\ UNCHANGED recV
             \* the message waits behind a live owner: the queued sign at once, one per chat
@@ -286,12 +288,12 @@ Arrive ==
             /\ UNCHANGED <<sign, signRef, signMine>>
   /\ UNCHANGED signLeft
   /\ IF hung
-       THEN buf' = buf + 1 /\ UNCHANGED <<started, ev>>
+       THEN buf' = buf + n /\ UNCHANGED <<started, ev>>
        ELSE IF Policy = "steer" /\ Compacting
-       THEN buf' = buf + 1 /\ ev' = "postAbort" /\ UNCHANGED started
+       THEN buf' = buf + n /\ ev' = "postAbort" /\ UNCHANGED started
        ELSE IF Policy = "steer" /\ ev = "turn"
-       THEN started' = started + 1 /\ UNCHANGED <<buf, ev>>
-       ELSE buf' = buf + 1 /\ UNCHANGED <<started, ev>>
+       THEN started' = started + n /\ UNCHANGED <<buf, ev>>
+       ELSE buf' = buf + n /\ UNCHANGED <<started, ev>>
   \* (1, strong form) under queue no message enters eve's input while the compacting record
   \* holds the chat
   /\ inboxLeak' = (inboxLeak \/ (Policy = "queue" /\ CompRecord /\ fresh /\ ~hung))
@@ -299,6 +301,10 @@ Arrive ==
   /\ UNCHANGED <<after, steps, ctx, ctrl, hung, stops>> /\ UNCHANGED <<postV, memV, lossV>>
   /\ UNCHANGED <<asksSince, badStack, badStackRec, badAskOff, idleDone, turnClean, badOff,
                  falseNotice, leak, hangSeen, hangTurn, badCancelMark, expired, leakWin, hangWin>>
+
+Arrive ==
+  \/ dw > 0 /\ dw' = 0 /\ UNCHANGED wire /\ Land(dw)
+  \/ wire > 0 /\ wire' = wire - 1 /\ UNCHANGED dw /\ Land(1)
 
 EveStartComp ==
   /\ ev = "parked" /\ ~hung /\ ctrl > 0
@@ -625,7 +631,7 @@ Spec == Init /\ [][Next]_vars
 
 TypeOK ==
   /\ sent \in 0..MaxMsgs /\ pend \in 0..MaxMsgs /\ pendR \in 0..MaxMsgs /\ bq \in 0..MaxMsgs
-  /\ wire \in 0..MaxMsgs /\ dw \in 0..1 /\ buf \in 0..MaxMsgs /\ started \in 0..MaxMsgs
+  /\ wire \in 0..MaxMsgs /\ dw \in 0..MaxMsgs /\ buf \in 0..MaxMsgs /\ started \in 0..MaxMsgs
   /\ ev \in {"parked", "turn", "compReq", "compact", "postTurn", "postComp", "postAbort", "waitClaim",
              "waitPost", "cancelH"}
   /\ after \in {"parked", "cancelH"}
