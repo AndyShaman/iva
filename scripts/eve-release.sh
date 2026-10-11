@@ -78,13 +78,7 @@ if [[ "$publish" == true ]]; then
     gh release upload "$tag" "$archive" --repo smixs/iva-agent
   fi
   curl --fail --location --silent --show-error "$url" --output "$stage/download.tgz"
-  node --input-type=module - "$stage/download.tgz" <<'JS'
-import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
-const expected = JSON.parse(readFileSync('package-lock.json')).packages['node_modules/eve'].integrity;
-assert.equal('sha512-' + createHash('sha512').update(readFileSync(process.argv[2])).digest('base64'), expected, 'Published archive integrity differs.');
-JS
+  cmp -s "$archive" "$stage/download.tgz" || { echo 'Published archive integrity differs.' >&2; exit 1; }
   mkdir "$stage/ci" "$stage/npm-cache"
   git archive "$commit" > "$stage/ci.tar"
   tar -xf "$stage/ci.tar" -C "$stage/ci"
