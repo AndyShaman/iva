@@ -87,8 +87,94 @@ test("installed eve is the package built from the current eve source tree", asyn
   assert.match(build.nodeVersion, /^v\d+\./u);
 });
 
-// Wave 2 activates package-lock.json version, resolved URL, and integrity assertions
-// when the eve dependency moves from npm plus patch-package to the immutable archive.
+test("eve archive dependency and installed lock metadata agree", async () => {
+  type Manifest = {
+    dependencies: Record<string, string>;
+    devDependencies: Record<string, string>;
+    scripts: Record<string, string>;
+  };
+  type Lock = {
+    packages: Record<
+      string,
+      {
+        version: string;
+        resolved: string;
+        integrity: string;
+        dependencies: Record<string, string>;
+      }
+    >;
+  };
+  const pkg = await readJson<Manifest>(path.join(ROOT, "package.json"));
+  const lock = await readJson<Lock>(path.join(ROOT, "package-lock.json"));
+  const installed = await readJson<Lock>(
+    path.join(ROOT, "node_modules/.package-lock.json"),
+  );
+  const build = await readJson<EveBuildMetadata>(
+    path.join(INSTALLED_ROOT, "BUILD.json"),
+  );
+  const entry = lock.packages["node_modules/eve"];
+  const have = installed.packages["node_modules/eve"];
+  const url = `https://github.com/smixs/iva-agent/releases/download/eve-${build.packageVersion}/eve-${build.packageVersion}.tgz`;
+  assert.ok(entry && have);
+  assert.equal(entry.version, build.packageVersion);
+  assert.equal(pkg.dependencies.eve, url);
+  assert.equal(lock.packages[""]?.dependencies.eve, url);
+  assert.equal(entry.resolved, url);
+  assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/u);
+  for (const field of ["version", "resolved", "integrity"] as const)
+    assert.equal(
+      have[field],
+      entry[field],
+      `installed eve ${field} differs from lockfile`,
+    );
+});
+
+test("eve installation uses the archive without a postinstall mutation", async () => {
+  const pkg = await readJson<{
+    scripts: Record<string, string>;
+    devDependencies: Record<string, string>;
+  }>(path.join(ROOT, "package.json"));
+  const lock = await readJson<{ packages: Record<string, unknown> }>(
+    path.join(ROOT, "package-lock.json"),
+  );
+  assert.equal(pkg.scripts.postinstall, undefined);
+  assert.equal(pkg.devDependencies["patch-package"], undefined);
+  assert.equal(lock.packages["node_modules/patch-package"], undefined);
+  await assert.rejects(
+    readFile(path.join(ROOT, "patches", "eve+0.51.1.patch")),
+    { code: "ENOENT" },
+  );
+});
+
+test("data migrations match release 0.4.16", async () => {
+  const baseline = execFileSync(
+    "git",
+    ["ls-tree", "-r", "v0.4.16", "--", "scripts/migrations"],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  const current = execFileSync(
+    "git",
+    ["ls-files", "--", "scripts/migrations"],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  const files = baseline
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split("\t")[1]);
+  assert.deepEqual(current, files);
+  for (const file of current)
+    assert.equal(
+      await readFile(path.join(ROOT, file), "utf8"),
+      execFileSync("git", ["show", `v0.4.16:${file}`], {
+        cwd: ROOT,
+        encoding: "utf8",
+      }),
+    );
+});
 
 function gitEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -157,6 +243,7 @@ for (const inheritedGitDirectory of [false, true]) {
         await mkdir(path.join(fixture, directory), { recursive: true });
       for (const file of [
         "scripts/build-eve.sh",
+        "scripts/eve-release.sh",
         "scripts/lib/eve-tree-hash.ts",
         "eve/scripts/install-git-hooks.mjs",
         "eve/scripts/copy-package-license.mjs",
@@ -198,6 +285,74 @@ for (const inheritedGitDirectory of [false, true]) {
       );
       assert.equal(hooksPath(fixture), "");
       assert.equal(hooksPath(ROOT), before);
+      if (!inheritedGitDirectory) {
+        await writeFile(
+          path.join(fixture, "package.json"),
+          JSON.stringify({ dependencies: { eve: "0.51.1" } }),
+        );
+        await writeFile(
+          path.join(fixture, "package-lock.json"),
+          JSON.stringify({
+            packages: {
+              "": { dependencies: { eve: "0.51.1" } },
+              "node_modules/eve": { version: "0.51.1" },
+            },
+          }),
+        );
+        await writeFile(
+          path.join(fixture, ".gitignore"),
+          "out/\npack-input/\nstages.txt\n",
+        );
+        const runRelease = () =>
+          spawnSync(
+            "bash",
+            [path.join(fixture, "scripts/eve-release.sh"), "out"],
+            { cwd: fixture, env, encoding: "utf8" },
+          );
+        assert.notEqual(runRelease().status, 0, "dirty tree must be refused");
+        const commit = () => {
+          execFileSync("git", ["add", "."], { cwd: fixture, env });
+          execFileSync(
+            "git",
+            [
+              "-c",
+              "user.name=iva",
+              "-c",
+              "user.email=iva@example.invalid",
+              "commit",
+              "--quiet",
+              "-m",
+              "sources",
+            ],
+            { cwd: fixture, env },
+          );
+        };
+        commit();
+        const archive = path.join(fixture, "out/eve-0.51.1-iva.1.tgz");
+        const bytes = await readFile(archive);
+        const first = runRelease();
+        assert.equal(first.status, 0, first.stdout + first.stderr);
+        const lock = await readFile(path.join(fixture, "package-lock.json"));
+        commit();
+        const second = runRelease();
+        assert.equal(second.status, 0, second.stdout + second.stderr);
+        assert.deepEqual(
+          await readFile(path.join(fixture, "package-lock.json")),
+          lock,
+        );
+        assert.deepEqual(await readFile(archive), bytes);
+        assert.equal(
+          await readFile(path.join(fixture, "stages.txt"), "utf8"),
+          "install\nbuild\npack\npack\n",
+          "release must reuse the archive",
+        );
+        await writeFile(path.join(fixture, "eve/NOTICE"), "changed source\n");
+        commit();
+        const stale = runRelease();
+        assert.notEqual(stale.status, 0);
+        assert.match(stale.stderr, /Existing archive is stale/u);
+        assert.deepEqual(await readFile(archive), bytes);
+      }
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }

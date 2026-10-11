@@ -157,7 +157,7 @@ What Iva knows about _you_ is memory, not code - that's `CORE.md` in the vault (
 ## Local development
 
 ```bash
-npm ci        # postinstall applies patches/eve+0.51.1.patch
+npm ci        # installs the pinned eve archive
 npm run dev   # eve dev TUI, server on http://127.0.0.1:2000
 npm run build:core  # maintainer build of the current source tree
 npm exec -- eve dev --no-ui --logs all   # headless
@@ -174,7 +174,7 @@ console.log((await res.result()).message);
 
 One gotcha — Iva runs eve **0.51.1**:
 
-- 🩹 **patch-package** — `patches/eve+0.51.1.patch` makes deterministic model-call errors (invalid prompt, unknown tool) fail fast instead of parking a poisoned session. It also preserves the structured HTTP status from `web_fetch`, keeps the dynamic "Available skills" announcement in the system prompt instead of a user message, and falls back to `/workspace/skills` when the sandbox reports `HOME=/` (upstream vercel/eve#2839, PR #2841; contract test `scripts/eve-skill-announcement.test.ts`). A second hunk makes the `AGENT_BUSY` message name the next step: end the turn, since the task result arrives after it, or stop the task with `task_cancel` (upstream issue: pending; hunk test `scripts/eve-agent-busy.test.ts`; drop it on the Eve bump whose busy message names a next step in any wording). If you bump Eve, regenerate the patch or drop each edit only after its targeted contract test passes against upstream.
+- 🛠 **eve sources** — our changes live in `eve/` and are held by boundary tests. See [building and publishing eve](eve.md).
 
 The patch also lets a manual session compaction (`compact()`) resolve a model that only a `step.started` resolver provides: upstream reads the model without dispatching that event and fails with "Dynamic model selection is required", so Iva's compaction between turns could never run (contract test `scripts/eve-manual-compaction.test.ts`; remove the hunk when eve dispatches the step resolver for `compactOnly` itself).
 

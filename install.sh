@@ -947,22 +947,8 @@ npm_deps_match_lock() {
 CURRENT_STEP="$(t "dependencies" "зависимости")"
 INSTALL_DEPS_REUSED=false
 if npm_deps_match_lock; then
-  # The lockfile says nothing about patches/, which npm's postinstall hook applies on top
-  # of the installed tree, so re-apply them: it is the one thing a skipped `npm ci` would
-  # leave stale, and it takes under a second. The binary is called the way the hook calls
-  # it — straight out of node_modules — so nothing here can reach for the registry.
-  # There are patches but nothing to apply them with (a pruned node_modules) means the
-  # installed tree cannot be trusted: fall through to a full install rather than call it
-  # reused with the patches missing.
-  if [ ! -d patches ]; then
-    INSTALL_DEPS_REUSED=true
-  elif [ -x node_modules/.bin/patch-package ] \
-    && node_modules/.bin/patch-package >>"$INSTALL_LOG" 2>&1; then
-    INSTALL_DEPS_REUSED=true
-  fi
-  if [ "$INSTALL_DEPS_REUSED" = true ]; then
-    ok "$(t "Dependencies already match package-lock.json" "Зависимости уже соответствуют package-lock.json")"
-  fi
+  INSTALL_DEPS_REUSED=true
+  ok "$(t "Dependencies already match package-lock.json" "Зависимости уже соответствуют package-lock.json")"
 fi
 if [ "$INSTALL_DEPS_REUSED" != true ]; then
   if [ -f package-lock.json ]; then

@@ -24,6 +24,12 @@ import { join } from "node:path";
 import test, { after, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  eveArchive,
+  NPM_CLI,
+  type ArchiveFault,
+} from "./fixtures/eve-archive.ts";
+
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /**
@@ -264,9 +270,12 @@ case "$1" in
     printf '%s\\n' "$IVA_TEST_NPM_PREFIX"
     ;;
   ci|install)
+    if [ -n "$IVA_TEST_REAL_NPM" ]; then
+      "$IVA_TEST_NODE" "$IVA_TEST_REAL_NPM" "$@"
+      exit $?
+    fi
     mkdir -p node_modules/.bin
     cp package-lock.json node_modules/.package-lock.json
-    ln -sf "$IVA_TEST_RECORDER" node_modules/.bin/patch-package
     ;;
   exec)
     case "$*" in
@@ -546,10 +555,6 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
   // The installation carries the installer, as the repository does: it is the one a re-run
   // over it executes.
   cpSync(join(ROOT, "install.sh"), join(install, "install.sh"));
-  // A patched dependency, like the real installation has: the hook that applies it is
-  // npm's, so skipping npm has to apply it instead.
-  mkdirSync(join(install, "patches"), { recursive: true });
-  writeFileSync(join(install, "patches/eve+0.30.8.patch"), "");
   // The shipped ignore rules, so what the installer leaves behind is judged by them.
   cpSync(join(ROOT, ".gitignore"), join(install, ".gitignore"));
 
@@ -1574,21 +1579,6 @@ void test("an installation without git rebuilds instead of trusting the stamp", 
   assert.match(world.calls(join(world.dir, "second.log")), /eve build/u);
 });
 
-void test("patches with nothing to apply them mean a full install, not a reuse", (t) => {
-  const world = createWorld(t);
-  assert.equal(world.run().status, 0);
-
-  // What `npm prune --production` leaves behind: the tree still matches the lockfile by
-  // npm's own record, but the tool that puts the patches on top is gone.
-  rmSync(join(world.install, "node_modules/.bin/patch-package"), {
-    force: true,
-  });
-
-  const second = world.run({ calls: join(world.dir, "second.log") });
-  assert.equal(second.status, 0, second.stdout + second.stderr);
-  assert.match(world.calls(join(world.dir, "second.log")), /^npm ci$/mu);
-});
-
 void test("a failure at the last stage restores the checkout and leaves nothing behind", (t) => {
   const world = createWorld(t);
   // What the user has: an edit of their own, a file of their own, and a build.
@@ -1680,9 +1670,7 @@ void test("a re-run over a finished install skips the stages that are already do
   assert.doesNotMatch(secondCalls, /^npm i -g /mu);
   assert.doesNotMatch(secondCalls, /eve build/u);
   assert.doesNotMatch(secondCalls, /agent-browser install/u);
-  // Skipped, not forgotten: the dependencies are still checked against the lockfile and
-  // the patches re-applied, and the units are still written and enabled.
-  assert.match(secondCalls, /^patch-package\s*$/mu);
+  // The lockfile is still checked, and the units are still written and enabled.
   assert.match(secondCalls, /^iva _install-units$/mu);
   assert.match(secondCalls, /^iva _activate-units$/mu);
 
@@ -1887,3 +1875,79 @@ void test("a re-run over a versioned installation starts the updater it already 
   // Клона в версионную раскладку не бывает: чекаута там нет и не появляется.
   assert.equal(existsSync(join(versioned, ".git")), false);
 });
+
+for (const fault of [
+  "ok",
+  "404",
+  "drop",
+  "integrity",
+  "truncated",
+] satisfies ArchiveFault[]) {
+  void test(`fresh installer fetches the locked eve archive: ${fault}`, async (t) => {
+    const world = createWorld(t, { env: false });
+    const archive = await eveArchive(t, world.dir);
+    archive.setFault(fault);
+    archive.writeManifest(world.install, "1.0.1");
+    world.git("add", "package.json", "package-lock.json", ".npmrc");
+    world.git("commit", "--quiet", "-m", "archive dependency");
+    world.git("tag", "v1.0.1");
+    world.git("push", "--quiet", "--tags", "origin", "main");
+    rmSync(world.install, { recursive: true, force: true });
+    const options = {
+      script: world.piped,
+      env: { IVA_TEST_REAL_NPM: NPM_CLI },
+    };
+    const result = await world.runAsync(options).done;
+    assert.match(world.calls(), /^npm ci$/mu);
+    assert.ok(archive.requests.includes("/asset.tgz"), result.output);
+    assert.equal(result.code, fault === "ok" ? 0 : 1, result.output);
+    if (fault === "ok") {
+      assert.equal(
+        (
+          JSON.parse(
+            readFileSync(
+              join(world.install, "node_modules/eve/package.json"),
+              "utf8",
+            ),
+          ) as { version: string }
+        ).version,
+        "0.51.1-iva.1",
+      );
+    } else {
+      assert.equal(existsSync(join(world.install, "current")), false);
+      assert.equal(
+        existsSync(join(world.install, ".output/server.mjs")),
+        false,
+      );
+      assert.match(
+        result.output,
+        fault === "404"
+          ? /E404/u
+          : fault === "integrity"
+            ? /EINTEGRITY/u
+            : /ECONNRESET|ETIMEDOUT|EIDLETIMEOUT|ERR_SOCKET_TIMEOUT/u,
+      );
+    }
+    if (fault === "truncated") {
+      archive.setFault("ok");
+      rmSync(world.install, { recursive: true, force: true });
+      const retry = await world.runAsync(options).done;
+      assert.equal(retry.code, 0, retry.output);
+      assert.equal(
+        (
+          JSON.parse(
+            readFileSync(
+              join(world.install, "node_modules/eve/package.json"),
+              "utf8",
+            ),
+          ) as { version: string }
+        ).version,
+        "0.51.1-iva.1",
+      );
+    }
+    assert.ok(
+      archive.requests.every((url) => ["/eve.tgz", "/asset.tgz"].includes(url)),
+      archive.requests.join("\n"),
+    );
+  });
+}

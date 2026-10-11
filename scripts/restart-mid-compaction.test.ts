@@ -96,7 +96,7 @@ void test(
     await replies(1, "the first turn did not complete");
 
     // Запрос пересказа дошёл до провайдера: eve приняла просьбу, пока обработчик её ждал, и
-    // ручной compact нашёл модель шага (хунк patches/eve).
+    // ручной compact нашёл модель шага (собственный eve).
     await provider.blocked;
     const asked = JSON.parse(
       (await readFile(join(app, "data/restart-hang-compact.jsonl"), "utf8"))

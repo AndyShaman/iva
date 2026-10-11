@@ -10,7 +10,6 @@ export default defineConfig([
     ".eve-out/",
     "eve/",
     "node_modules/",
-    "patches/",
     "assets/",
     "vault-template/",
     ".eve/",

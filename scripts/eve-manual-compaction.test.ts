@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations; model doubles implement the SDK Promise interface. */
 // Граница с eve: ручная свёртка сессии (compactOnly) при динамической модели.
 //
-// Поведение eve 0.51.1, из-за которого появился хунк patches/eve+0.51.1.patch: ручная свёртка
+// Контракт собственного eve 0.51.1: ручная свёртка
 // берёт модель без события step.started, а у агента, чей единственный резолвер модели —
 // step.started (Ива: объект модели не сериализуется в журнал сессии), активного выбора в этот
 // момент нет. Свёртка падала с «Dynamic model selection is required before model-dependent

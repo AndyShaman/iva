@@ -31,14 +31,14 @@ credentials or personal data.
 
 Eve 0.51.1 already produces `input.resolved` but does not expose it in the public
 channel-handler event list. Iva backports that exposure through the existing
-patch-package mechanism. An upstream implementation should add the same event to
+vendored eve sources. An upstream implementation should add the same event to
 Eve's public channel definition and Telegram event types rather than mutate a
 compiled adapter at runtime. Normal question resolution still belongs to Eve.
 
 Upstream already implemented public `input.resolved` exposure in
 [vercel/eve#4028](https://github.com/vercel/eve/pull/4028), commit
 [`9c36b7c`](https://github.com/vercel/eve/blob/9c36b7c280fda89ae678cabfd8d906f4bde2216f/packages/eve/src/public/definitions/channel.ts).
-Remove the three exposure hunks from `patches/eve+0.51.1.patch` when the pinned Eve
+Remove the three exposure edits from `eve/` when the pinned Eve
 version exposes the public generic and Telegram event types and the adapter boundary
 test passes without them. Keep Iva's question preview delivery: the upstream change
 exposes the event and does not implement that UI. The unpatched 0.51.1 boundary test

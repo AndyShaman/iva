@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import fc from "fast-check";
 
-// Тест хунка patches/eve+0.51.1.patch в formatAgentBusyMessage, не контракт апстрима
+// Контракт собственного eve в formatAgentBusyMessage, не контракт апстрима
 // (upstream issue: pending). Точка удаления: бамп eve, в котором busy-сообщение само
 // называет следующий шаг в любой формулировке.
 const eveRoot = dirname(

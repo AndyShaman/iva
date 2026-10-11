@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-// Контракт хунков patches/eve+0.51.1.patch, бэкпорт vercel/eve#2841 (issue #2839).
+// Контракт собственного eve, бэкпорт vercel/eve#2841 (issue #2839).
 // Точка удаления: бамп eve, где оба теста зелёные на чистом апстриме без патча.
 const eveRoot = dirname(
   createRequire(import.meta.url).resolve("eve/package.json"),
