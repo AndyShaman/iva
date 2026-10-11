@@ -833,7 +833,8 @@ async function computeStamp({ scriptFiles, modules, packageRoot, toolVersions })
   // produce identical stamps.
   for (const file of [...scriptFiles].sort()) {
     const content = await readFile(file, "utf8");
-    scriptHash.update(file);
+    // The stamp is build-only; moving identical sources keeps the same fingerprint.
+    scriptHash.update(relative(packageRoot, file).split("\\").join("/"));
     scriptHash.update("\0");
     scriptHash.update(content);
     scriptHash.update("\0");

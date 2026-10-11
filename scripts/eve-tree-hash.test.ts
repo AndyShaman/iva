@@ -106,3 +106,28 @@ test("clean clones and unpacked archives hash identically under umask 022, 002 a
   await chmod(path.join(copy, "plain.ts"), 0o755);
   assert.notEqual(await hashEveTree(copy, "packed"), hashes[0]?.[1]);
 });
+
+test("vendor build stamps are identical in different package directories", async (t) => {
+  const root = await fixture(t);
+  const stamps: string[] = [];
+  for (const name of ["one", "another/location"]) {
+    const pkg = path.join(root, name);
+    await mkdir(pkg, { recursive: true });
+    await writeFile(path.join(pkg, "input.mjs"), "same build input");
+    execFileSync(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `
+      import {runVendor} from ${JSON.stringify(new URL("../eve/packages/eve/scripts/vendor-compiled/_shared.mjs", import.meta.url).href)};
+      import {join} from 'node:path';
+      const packageRoot = process.argv[1];
+      await runVendor({packageRoot, compiledRoot: join(packageRoot, 'compiled'), modules: [], scriptFiles: [join(packageRoot, 'input.mjs')]});
+    `,
+      pkg,
+    ]);
+    stamps.push(
+      await readFile(path.join(pkg, "compiled/.vendor-stamp.json"), "utf8"),
+    );
+  }
+  assert.equal(stamps[1], stamps[0]);
+});
