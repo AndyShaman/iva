@@ -22,7 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, type TestContext } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   eveArchive,
@@ -570,7 +570,15 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
   git("commit", "--quiet", "-m", "fixture");
   // A release is a vX.Y.Z tag: a new installation checks out the newest one.
   git("tag", "v1.0.0");
-  execFileSync("git", ["clone", "--quiet", "--bare", install, remote]);
+  // Use Git transport rather than racing a filesystem copy of loose objects.
+  execFileSync("git", [
+    "clone",
+    "--quiet",
+    "--no-local",
+    "--bare",
+    install,
+    remote,
+  ]);
   git("remote", "add", "origin", remote);
 
   if (options.env !== false)
@@ -1888,6 +1896,28 @@ for (const fault of [
     const archive = await eveArchive(t, world.dir);
     archive.setFault(fault);
     archive.writeManifest(world.install, "1.0.1");
+    if (fault === "truncated") {
+      // The retry must enter the shipped updater through repair, with the failed
+      // checkout and npm cache still present.
+      const cli = readFileSync(join(ROOT, "bin/iva.mjs"), "utf8")
+        .replace(
+          '"../scripts/cli/main.ts"',
+          JSON.stringify(pathToFileURL(join(ROOT, "scripts/cli/main.ts")).href),
+        )
+        .replace(
+          '"../scripts/lib/version-layout.ts"',
+          JSON.stringify(
+            pathToFileURL(join(ROOT, "scripts/lib/version-layout.ts")).href,
+          ),
+        );
+      writeFileSync(join(world.install, "bin/iva.mjs"), cli);
+      writeFileSync(
+        join(world.install, "scripts/update-finish.ts"),
+        `import { main } from ${JSON.stringify(pathToFileURL(join(ROOT, "scripts/update-finish.ts")).href)}; process.exitCode = await main(process.argv.slice(2));\n`,
+      );
+      world.git("add", "bin/iva.mjs", "scripts/update-finish.ts");
+    }
+
     world.git("add", "package.json", "package-lock.json", ".npmrc");
     world.git("commit", "--quiet", "-m", "archive dependency");
     world.git("tag", "v1.0.1");
@@ -1930,20 +1960,23 @@ for (const fault of [
     }
     if (fault === "truncated") {
       archive.setFault("ok");
-      rmSync(world.install, { recursive: true, force: true });
-      const retry = await world.runAsync(options).done;
-      assert.equal(retry.code, 0, retry.output);
-      assert.equal(
-        (
-          JSON.parse(
-            readFileSync(
-              join(world.install, "node_modules/eve/package.json"),
-              "utf8",
-            ),
-          ) as { version: string }
-        ).version,
-        "0.51.1-iva.1",
+      const retryLog = join(world.dir, "retry-npm.log");
+      const retry = await world.runAsync({
+        ...options,
+        env: {
+          ...options.env,
+          REPO_URL: "https://github.com/smixs/iva-agent.git",
+          IVA_TEST_NPM_LOG: retryLog,
+        },
+      }).done;
+      assert.equal(retry.code, 1, retry.output);
+      assert.match(retry.output, /handing it to the updater/u);
+      assert.match(retry.output, /EVE_TEST_STOP_AFTER_CI/u);
+      assert.match(
+        readFileSync(retryLog, "utf8"),
+        /CI_OK .*\/versions\/1\.0\.1-[a-f0-9]{12}/u,
       );
+      assert.equal(existsSync(join(world.install, "current")), false);
     }
     assert.ok(
       archive.requests.every((url) => ["/eve.tgz", "/asset.tgz"].includes(url)),
