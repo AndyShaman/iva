@@ -1,0 +1,164 @@
+/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { REVIEW_CASES } from "./plain-shell-command.corpus.test-fixture.ts";
+import { schedulerBypassViolation as referenceScheduler } from "./scheduler-bypass-guard.test-fixture.ts";
+import { selfRestartViolation as referenceSelfRestart } from "./self-restart-guard.test-fixture.ts";
+
+type Subject = typeof import("./plain-shell-command.ts");
+
+const loadSubject = async (): Promise<Subject> =>
+  await import("./plain-shell-command.ts");
+
+const ACCEPTED_DATA = [
+  `grep -nE "foo|batch|bar" file | head -20 | cut -d: -f1`,
+  `egrep -rl --include=*.ts --exclude=old --exclude-dir=node_modules x .`,
+  `fgrep -A 3 -B2 -C1 -m5 -e pattern --color=never file`,
+  `echo -nE "a|batch"; echo -e 'a\\nb'`,
+  `head -qv -n 20 -c4 file`,
+  `cut -s -d: -f 1 -b2 -c 3 file`,
+  `wc -lcwmL file`,
+  `ls -laAhd1trRSF .`,
+  `getent hosts api.telegram.org`,
+  `grep -- -n file 2>/dev/null | head -n3 >/dev/null 2>&1`,
+  `# ввод из комментария\necho ok`,
+] as const;
+
+const ACCEPTED_HELP = [
+  `iva doctor --help`,
+  `iva restart '--help'`,
+  `iva restart --he"lp"`,
+  `iva plugin sync -h`,
+  `iva restart 2>&1 --help`,
+  `iva plugin sync --help 2>&1 | head -20; echo ok`,
+] as const;
+
+const REJECTED = [
+  `printf -v 'x[$(touch /tmp/marker)]' x`,
+  `printf -v'x[$(touch /tmp/marker)]' x`,
+  `sort -o /tmp/x input`,
+  `uniq INPUT OUTPUT`,
+  `file -C -m magic`,
+  `rg --pre=x pattern input`,
+  `tail --follow input`,
+  `cat input`,
+  `tee output`,
+  `grep --output=x pattern input`,
+  `grep --include pattern input`,
+  `grep --color=always pattern input`,
+  `head --lines=3 input`,
+  `cut -z input`,
+  `ls --all`,
+  `getent --help`,
+  `"grep" pattern input`,
+  `/usr/bin/grep pattern input`,
+  `X=1 grep pattern input`,
+  `> /dev/null grep pattern input`,
+  `grep pattern input >file`,
+  `grep pattern <<'EOF'\ninput\nEOF`,
+  `grep "a\\|b" input`,
+  `grep "$(iva restart)" input`,
+  `grep pattern ||| echo ok`,
+  `grep pattern &&& echo ok`,
+  `grep pattern ;; echo ok`,
+  `grep pattern |& head`,
+  `grep pattern & head`,
+  `grep pattern\rinput`,
+  `iva restart >&2 --help`,
+  `iva restart --help 2>/dev/null`,
+  `"iva" restart --help`,
+] as const;
+
+const SOFTENED = new Set([
+  "c1 grep pipeline",
+  "c1 echo batch",
+  "c1 echo at",
+  "c1 getent",
+  "c1 help sequence",
+  "review2 fd before help",
+  "deepseek help doctor",
+  "deepseek help quoted value",
+  "deepseek help concatenated",
+  "deepseek help plugin short",
+  "specv1 F3 exact",
+  "specv1 F4 exact",
+  "fact7 comment pipe batch",
+  "fact7 quoted greater",
+]);
+
+const pair = (
+  selfRestart: (input: string) => string | null,
+  scheduler: (input: string) => string | null,
+  input: string,
+): readonly [boolean, boolean] => [
+  selfRestart(input) !== null,
+  scheduler(input) !== null,
+];
+
+test("белый список принимает только заданные команды данных и опции", async () => {
+  const { plainDataCommand } = await loadSubject();
+  for (const input of ACCEPTED_DATA) {
+    assert.equal(plainDataCommand(input), true, input);
+  }
+  for (const input of REJECTED) {
+    assert.equal(plainDataCommand(input), false, input);
+  }
+});
+
+test("справка iva принимает точное слово help и только дублирование stderr", async () => {
+  const { plainDataCommand, plainHelpCommand } = await loadSubject();
+  for (const input of ACCEPTED_HELP) {
+    assert.equal(plainDataCommand(input), false, input);
+    assert.equal(plainHelpCommand(input), true, input);
+  }
+  for (const input of REJECTED) {
+    assert.equal(plainHelpCommand(input), false, input);
+  }
+});
+
+test("корпус четырёх рецензий сохраняет эталон кроме разрешённых v4.1 смягчений", async () => {
+  const [{ selfRestartViolation }, { schedulerBypassViolation }] =
+    await Promise.all([
+      import("./self-restart-guard.ts"),
+      import("./scheduler-bypass-guard.ts"),
+    ]);
+
+  for (const { name, input, expected } of REVIEW_CASES) {
+    const actual = pair(selfRestartViolation, schedulerBypassViolation, input);
+    assert.deepEqual(actual, expected, `${name}: ${JSON.stringify(input)}`);
+    const baseline = pair(referenceSelfRestart, referenceScheduler, input);
+    if (SOFTENED.has(name)) {
+      assert.notDeepEqual(baseline, expected, `${name}: ожидалось смягчение`);
+    } else {
+      assert.deepEqual(
+        baseline,
+        expected,
+        `${name}: эталонный вердикт изменён`,
+      );
+    }
+  }
+});
+
+test("эталонные гварды побайтно соответствуют снимку ef7966cd", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const expected = new Map([
+    [
+      "self-restart-guard.test-fixture.ts",
+      "fa0a276fce58668ed58ea9472a2d7078801ab3be923d13ec8885c8ec2dfefd3b",
+    ],
+    [
+      "scheduler-bypass-guard.test-fixture.ts",
+      "1d5db2b5d2374d2420d88201816a7a8e008d67212718c6b9d1ecd2c10110261e",
+    ],
+  ]);
+  for (const [name, digest] of expected) {
+    const actual = createHash("sha256")
+      .update(readFileSync(join(here, name)))
+      .digest("hex");
+    assert.equal(actual, digest, name);
+  }
+});

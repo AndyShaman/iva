@@ -21,6 +21,7 @@
 // iva doctor ЗАБЛОКИРОВАН: его ремонтные ветки (перегенерация bearer, exposed-listener)
 // сами рестартуют iva.service (bin/iva.mjs) — из чата доктора запускает кнопка в /menu,
 // она идёт через мост, не через агента.
+import { plainDataCommand, plainHelpCommand } from "./plain-shell-command.ts";
 
 // Кавычки и экранирование убираем ДО матчинга: для наших паттернов (имена команд и юнитов
 // без пробелов) снятие кавычек эквивалентно тому, что увидит execve после разбора shell.
@@ -122,6 +123,7 @@ const RULES: Array<{ re: RegExp; what: string }> = [
  * иначе null. Текст адресован модели: объясняет, почему нельзя, и что предложить.
  */
 export function selfRestartViolation(command: string): string | null {
+  if (plainDataCommand(command) || plainHelpCommand(command)) return null;
   for (const seg of commandPositions(command)) {
     for (const { re, what } of RULES) {
       if (re.test(seg)) {

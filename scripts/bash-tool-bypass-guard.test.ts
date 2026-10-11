@@ -3,7 +3,7 @@
 // schedulerBypassViolation» оставляла весь скоп зелёным - гвард проверялся только сам по
 // себе, а не то, что тул его спрашивает ДО exec.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,4 +42,31 @@ test("bash tool refuses an own timer before it is executed", async (t) => {
   assert.equal(result.stdout, "");
   assert.equal(result.timedOut, undefined);
   assert.equal(existsSync(marker), false, "команда не должна была исполниться");
+});
+
+test("bash tool executes a quoted grep pipeline with at and batch in data", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-bash-plain-data-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const input = join(dir, "input.txt");
+  writeFileSync(input, "zero\nx|batch\nzzz\n");
+  const result = await executeBash({
+    command: `grep -nE "a|batch" ${quote(input)} | head -20 | cut -d: -f2-`,
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.equal(result.stdout, "x|batch\n");
+  assert.equal(result.stderr, "");
+});
+
+test("bash tool still refuses iva restart before execution", async () => {
+  const result = await executeBash({
+    command: "iva restart",
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /^ЗАБЛОКИРОВАНО:/);
+  assert.match(result.stderr, /\/restart/);
+  assert.equal(result.stdout, "");
 });

@@ -7,6 +7,7 @@
 // обвязку сна (`wait`, `done`, `:`, второй sleep). Принятое ложное срабатывание:
 // `grep … > /tmp/out` (вывод в файл — отдельной командой). Deterrence, не граница.
 import { commandSegments, type CommandPosition } from "./self-restart-guard.ts";
+import { plainDataCommand, plainHelpCommand } from "./plain-shell-command.ts";
 
 const WHAT = {
   SYSTEMD_RUN: "systemd-run: свой таймер",
@@ -167,6 +168,7 @@ function positionViolation(
  * мимо штатных инструментов, иначе null.
  */
 export function schedulerBypassViolation(command: string): string | null {
+  if (plainDataCommand(command) || plainHelpCommand(command)) return null;
   const positions = commandSegments(command);
   for (let index = 0; index < positions.length; index += 1) {
     const at = positions[index];
