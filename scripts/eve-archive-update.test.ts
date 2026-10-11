@@ -42,6 +42,7 @@ function write(root: string, file: string, value: string) {
   mkdirSync(dirname(join(root, file)), { recursive: true });
   writeFileSync(join(root, file), value);
 }
+// These cases exercise the candidate CLI, with fixture version labels.
 // The shipped CLI shim and its real dispatcher run against fixture paths. Only import
 // locations change: source modules remain in this checkout, with its installed dependencies.
 const CLI = readFileSync(join(ROOT, "bin/iva.mjs"), "utf8")
@@ -66,7 +67,7 @@ for (const layout of ["current", "lost-current", "legacy"] as const) {
     "integrity",
     "truncated",
   ] satisfies ArchiveFault[]) {
-    test(`archive npm ci through ${layout === "legacy" ? "repair.sh" : "iva update"} (${layout}, ${fault}) preserves old code before activation`, async (t) => {
+    test(`candidate CLI: archive npm ci through ${layout === "legacy" ? "repair.sh" : "iva update"} (${layout}, ${fault}) preserves serving output, installed eve and data before activation`, async (t) => {
       const root = realpathSync(
         mkdtempSync(join(tmpdir(), "iva-eve-archive-update-")),
       );
@@ -219,6 +220,17 @@ for (const layout of ["current", "lost-current", "legacy"] as const) {
         );
       };
       checkOld();
+      assert.equal(
+        (
+          JSON.parse(readFileSync(join(oldRoot, "package.json"), "utf8")) as {
+            version: string;
+          }
+        ).version,
+        layout === "legacy" ? "0.4.17" : "0.4.16",
+        "repair.sh resets legacy source files to the candidate before npm ci",
+      );
+      if (layout === "legacy")
+        assert.notEqual(git(home, "rev-parse", "HEAD"), oldSha);
       if (fault === "truncated") {
         archive.setFault("ok");
         const retry = await run();
@@ -226,6 +238,140 @@ for (const layout of ["current", "lost-current", "legacy"] as const) {
         assert.match(retry.output, /EVE_TEST_STOP_AFTER_CI/u);
         checkOld();
       }
+      assert.ok(
+        archive.requests.every((url) =>
+          ["/eve.tgz", "/asset.tgz"].includes(url),
+        ),
+        archive.requests.join("\n"),
+      );
+    });
+  }
+}
+
+function unpackTree(ref: string, directory: string, root: string) {
+  mkdirSync(directory, { recursive: true });
+  const tar = join(root, "tree.tar");
+  execFileSync("git", ["archive", "--format=tar", "-o", tar, ref], {
+    cwd: ROOT,
+  });
+  execFileSync("tar", ["-xf", tar, "-C", directory]);
+  rmSync(tar);
+}
+
+const minimum = (
+  JSON.parse(readFileSync(join(ROOT, "update-compat.json"), "utf8")) as {
+    minUpdater: string;
+  }
+).minUpdater;
+for (const version of [minimum, "0.4.16"]) {
+  for (const fault of ["ok", "404", "integrity"] satisfies ArchiveFault[]) {
+    test(`historical v${version} CLI hands off to downloaded update-finish (${fault})`, async (t) => {
+      const root = realpathSync(
+        mkdtempSync(join(tmpdir(), "iva-historical-update-")),
+      );
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const source = join(root, "source"),
+        home = join(root, "iva"),
+        remote = join(root, "remote.git"),
+        log = join(root, "npm.log");
+      const archive = await eveArchive(t, root);
+      archive.setFault(fault);
+      unpackTree(`v${version}`, source, root);
+      git(source, "init", "--quiet", "--initial-branch=main");
+      git(source, "add", "-A");
+      git(source, "commit", "--quiet", "-m", "historical tree");
+      const oldSha = git(source, "rev-parse", "HEAD"),
+        oldName = `${version}-${oldSha.slice(0, 12)}`;
+      // Overlay the complete candidate tree. Its imports stay relative to the downloaded tree.
+      for (const file of readdirSync(source))
+        if (file !== ".git")
+          rmSync(join(source, file), { recursive: true, force: true });
+      unpackTree("HEAD", source, root);
+      archive.writeManifest(source);
+      git(source, "add", "-A");
+      git(source, "commit", "--quiet", "-m", "candidate tree");
+      git(source, "tag", "v0.4.17");
+      git(root, "clone", "--quiet", "--no-local", "--mirror", source, remote);
+      mkdirSync(home);
+      git(root, "clone", "--quiet", "--mirror", remote, join(home, "repo"));
+      const store = createVersionStore(home),
+        oldRoot = store.stage(oldName);
+      unpackTree(`v${version}`, oldRoot, root);
+      // Shared candidate dependencies satisfy the historical first half and the new
+      // updater's early imports; npm ci installs only into the staged candidate.
+      symlinkSync(join(ROOT, "node_modules"), join(home, "node_modules"));
+      store.linkState(oldRoot);
+      store.complete(oldName);
+      store.activate(oldName);
+      store.settle(oldName);
+      write(home, ".env", "MODEL_PROVIDER=ollama\nAGENT_LANGUAGE=en\n");
+      write(home, "data/sentinel", "user data\n");
+      write(oldRoot, ".output/marker", "old serving code\n");
+      const oldCli = readFileSync(join(oldRoot, "bin/iva.mjs"));
+      assert.deepEqual(
+        oldCli,
+        execFileSync("git", ["show", `v${version}:bin/iva.mjs`], { cwd: ROOT }),
+      );
+      const tools = join(root, "tools");
+      mkdirSync(tools);
+      write(tools, "systemctl", "#!/bin/sh\nexit 0\n");
+      chmodSync(join(tools, "systemctl"), 0o755);
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        ...IDENTITY,
+        HOME: root,
+        PATH: `${tools}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`,
+        IVA_TEST_NPM_LOG: log,
+        NO_COLOR: "1",
+        TERM: "dumb",
+      };
+      for (const key of Object.keys(env))
+        if (
+          /^(?:npm_config_|NPM_CONFIG_|ANTHROPIC_|CLAUDE_CODE_USE_)/u.test(key)
+        )
+          delete env[key];
+      const result = await runChild(
+        process.execPath,
+        [join(oldRoot, "bin/iva.mjs"), "update"],
+        env,
+        root,
+      );
+      assert.ok(archive.requests.includes("/asset.tgz"), result.output);
+      assert.equal(result.code, 1, result.output);
+      assert.equal(existsSync(log), fault === "ok", result.output);
+      assert.match(
+        result.output,
+        fault === "ok"
+          ? /EVE_TEST_STOP_AFTER_CI/u
+          : fault === "404"
+            ? /E404/u
+            : /EINTEGRITY/u,
+      );
+      assert.equal(store.currentName(), oldName);
+      assert.deepEqual(readFileSync(join(oldRoot, "bin/iva.mjs")), oldCli);
+      assert.equal(
+        readFileSync(join(oldRoot, ".output/marker"), "utf8"),
+        "old serving code\n",
+      );
+      assert.equal(
+        readFileSync(join(home, "data/sentinel"), "utf8"),
+        "user data\n",
+      );
+      assert.equal(
+        (
+          JSON.parse(readFileSync(join(oldRoot, "package.json"), "utf8")) as {
+            version: string;
+          }
+        ).version,
+        version,
+      );
+      const logs = readdirSync(join(root, "npm-cache/_logs"))
+        .map((file) =>
+          readFileSync(join(root, "npm-cache/_logs", file), "utf8"),
+        )
+        .join("\n");
+      assert.match(logs, /verbose argv "ci" "--no-audit" "--no-fund"/u);
+      assert.match(logs, /cwd .*\/versions\/0\.4\.17-[a-f0-9]{12}/u);
       assert.ok(
         archive.requests.every((url) =>
           ["/eve.tgz", "/asset.tgz"].includes(url),
