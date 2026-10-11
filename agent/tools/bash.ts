@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
@@ -20,6 +20,12 @@ const TERM_GRACE_MS = 400;
 const KILL_GRACE_MS = 400;
 const REAP_POLL_MS = 20;
 const PIPE_DRAIN_GRACE_MS = 100;
+export function selectCommandShell(
+  fileExists: (path: string) => boolean = existsSync,
+): string | true {
+  return ["/bin/bash", "/usr/bin/bash"].find(fileExists) ?? true;
+}
+const COMMAND_SHELL = selectCommandShell();
 // A per-call Worker must have enough time to start and observe the root process.
 // Shorter deadlines are rejected instead of pretending they can be enforced reliably.
 export const MIN_TIMEOUT_MS = 100;
@@ -622,7 +628,8 @@ function createCommandRun(input: {
 
 export default defineTool({
   description:
-    "Shell-команда на хосте (без sandbox): возвращает { stdout, stderr, exitCode }, " +
+    "Shell-команда на хосте (без sandbox), в bash (/bin/sh, если bash нет): " +
+    "возвращает { stdout, stderr, exitCode }, " +
     "вывод обрезается до последних ~30000 символов каждого потока. Блокируются команды, " +
     "останавливающие сервис Ивы: iva restart/stop/update, " +
     "systemctl … restart iva, pkill node.",
@@ -689,7 +696,7 @@ export default defineTool({
       try {
         child = spawn(command, {
           cwd: runCwd,
-          shell: true,
+          shell: COMMAND_SHELL,
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
         });

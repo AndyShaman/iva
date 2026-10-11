@@ -20,6 +20,7 @@ const {
   deadlineWorkerRuntime,
   MAX_TIMEOUT_MS,
   MIN_TIMEOUT_MS,
+  selectCommandShell,
 } = await import("../agent/tools/bash.ts");
 
 type BashInput = Parameters<typeof bash.execute>[0];
@@ -343,6 +344,66 @@ test("bash preserves stdout, stderr and the effective cwd", async () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("bash executes bash-specific syntax", async (t) => {
+  if (!existsSync("/bin/bash")) {
+    t.skip("/bin/bash is unavailable on this machine");
+    return;
+  }
+  const cases = [
+    ["[[ a == a ]] && echo ok", "ok\n"],
+    ["cat <(echo x)", "x\n"],
+    ['x=(a b); echo "${x[1]}"', "b\n"],
+    ['v=aXb; echo "${v//X/-}"', "a-b\n"],
+    ["cat <<< hi", "hi\n"],
+    ["echo ok &> /dev/null; echo done", "done\n"],
+  ] as const;
+  for (const [command, stdout] of cases) {
+    const result = await executeBash({ command, timeoutMs: 1_000 });
+    assert.equal(result.exitCode, 0, command);
+    assert.equal(result.stdout, stdout, command);
+  }
+});
+
+test("shell selection falls back to the platform shell", () => {
+  assert.equal(
+    selectCommandShell((path) => path === "/bin/bash"),
+    "/bin/bash",
+  );
+  assert.equal(
+    selectCommandShell((path) => path === "/usr/bin/bash"),
+    "/usr/bin/bash",
+  );
+  assert.equal(
+    selectCommandShell(() => false),
+    true,
+  );
+  const script = String.raw`
+    import fs from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    const realExists = fs.existsSync;
+    fs.existsSync = (path) =>
+      path === "/bin/bash" || path === "/usr/bin/bash"
+        ? false
+        : realExists(path);
+    syncBuiltinESMExports();
+    const { default: bash } = await import("./agent/tools/bash.ts?fallback-shell-test");
+    const result = await bash.execute({ command: "echo ok", timeoutMs: 1_000 });
+    process.stdout.write(JSON.stringify(result));
+  `;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout) as BashResult;
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "ok\n");
 });
 
 test("bash preserves an ordinary non-zero shell exit code", async () => {
