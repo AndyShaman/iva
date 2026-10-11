@@ -1,6 +1,9 @@
 import { EVE_PACKAGE_NAME } from "#internal/package-name.js";
 import { truncateHead } from "#execution/sandbox/truncate-output.js";
-import { convertHtmlToMarkdown, extractTextFromHtml } from "#execution/web-fetch/html.js";
+import {
+  convertHtmlToMarkdown,
+  extractTextFromHtml,
+} from "#execution/web-fetch/html.js";
 import { requestPublicUrl } from "#execution/web-fetch/request.js";
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -41,6 +44,8 @@ export interface WebFetchResult {
   readonly contentType: string;
   /** Fetched URL. */
   readonly url: string;
+  /** HTTP response status. */
+  readonly status: number;
   /** True when {@link content} was shortened to fit the output budget. */
   readonly truncated: boolean;
 }
@@ -83,7 +88,8 @@ export async function executeWebFetchTool(
   // because the TLS fingerprint does not match a real browser. Retry with
   // an honest UA to bypass the challenge.
   const response =
-    initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
+    initial.status === 403 &&
+    initial.headers.get("cf-mitigated") === "challenge"
       ? await requestPublicUrl(url, {
           headers: { ...headers, "User-Agent": EVE_PACKAGE_NAME },
           maxResponseSize: MAX_RESPONSE_SIZE,
@@ -107,9 +113,17 @@ export async function executeWebFetchTool(
     rawContent = body;
   }
 
+  const redirectLocation = response.headers.get("location");
+
   if (!response.ok) {
-    const failure = `Request failed with status code: ${response.status}`;
-    rawContent = rawContent.length === 0 ? failure : `${failure}\n\n${rawContent}`;
+    const failure =
+      response.status >= 300 &&
+      response.status < 400 &&
+      redirectLocation !== null
+        ? `Request redirected to ${new URL(redirectLocation, url).toString()}`
+        : `Request failed with status code: ${response.status}`;
+    rawContent =
+      rawContent.length === 0 ? failure : `${failure}\n\n${rawContent}`;
   }
 
   const { output: content, truncated } = truncateHead(rawContent);
@@ -117,6 +131,7 @@ export async function executeWebFetchTool(
   return {
     content,
     contentType,
+    status: response.status,
     truncated,
     url,
   };
@@ -129,7 +144,8 @@ function buildHeaders(format: Format): Record<string, string> {
     accept =
       "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1";
   } else if (format === "text") {
-    accept = "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1";
+    accept =
+      "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1";
   } else {
     accept =
       "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1";
