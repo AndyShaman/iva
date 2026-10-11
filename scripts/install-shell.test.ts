@@ -1984,3 +1984,18 @@ for (const fault of [
     );
   });
 }
+
+for (const field of ["resolved", "integrity"] as const) {
+  void test(`installer runs npm ci for the same eve version with a different ${field}`, (t) => {
+    const world = createWorld(t);
+    const first = world.run({ calls: join(world.dir, "first.log") });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    const file = join(world.install, "node_modules/.package-lock.json");
+    const lock = JSON.parse(readFileSync(file, "utf8")) as {packages: Record<string, Record<string,string>>};
+    lock.packages["node_modules/eve"][field] = field === "resolved" ? "https://example.invalid/other.tgz" : "sha512-other";
+    writeFileSync(file, JSON.stringify(lock));
+    const second = world.run({ calls: join(world.dir, "second.log") });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.match(world.calls(join(world.dir, "second.log")), /^npm ci$/mu);
+  });
+}

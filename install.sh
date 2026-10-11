@@ -935,13 +935,13 @@ cd "$PROJECT_DIR"
 # ─────────────────────────────────────────────────────────────────────────
 # npm records what it installed in node_modules/.package-lock.json, so the answer comes
 # from npm's own bookkeeping, not from a marker of ours: every entry it lists must be in
-# package-lock.json at the same version, and every entry the lockfile requires on this
+# package-lock.json with the same version, resolved URL and integrity, and every entry required on this
 # platform must be there. Optional and os/cpu-specific packages are absent by design.
 npm_deps_match_lock() {
   [ -d node_modules ] || return 1
   [ -f package-lock.json ] || return 1
   [ -f node_modules/.package-lock.json ] || return 1
-  node -e 'const fs=require("fs");const j=p=>JSON.parse(fs.readFileSync(p,"utf8"));const lock=j("package-lock.json"),have=j("node_modules/.package-lock.json");const a=lock.packages||{},b=have.packages||{};if(!Object.keys(b).length)process.exit(1);for(const k of Object.keys(b)){if(!k)continue;if(!a[k]||a[k].version!==b[k].version)process.exit(1)}for(const k of Object.keys(a)){if(!k)continue;const e=a[k];if(e.optional||e.devOptional||e.os||e.cpu)continue;if(!b[k])process.exit(1)}' \
+  node -e 'const fs=require("fs");const j=p=>JSON.parse(fs.readFileSync(p,"utf8"));const lock=j("package-lock.json"),have=j("node_modules/.package-lock.json");const a=lock.packages||{},b=have.packages||{};if(!Object.keys(b).length)process.exit(1);for(const k of Object.keys(b)){if(!k)continue;if(!a[k]||["version","resolved","integrity"].some(f=>a[k][f]!==b[k][f]))process.exit(1)}for(const k of Object.keys(a)){if(!k)continue;const e=a[k];if(e.optional||e.devOptional||e.os||e.cpu)continue;if(!b[k])process.exit(1)}' \
     >/dev/null 2>&1
 }
 CURRENT_STEP="$(t "dependencies" "зависимости")"
