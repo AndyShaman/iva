@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns test registration. */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -249,6 +249,18 @@ for (const layout of ["current", "lost-current", "legacy"] as const) {
 }
 
 function unpackTree(ref: string, directory: string, root: string) {
+  if (ref.startsWith("v")) {
+    const tag = spawnSync(
+      "git",
+      ["rev-parse", "--verify", `refs/tags/${ref}^{commit}`],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    assert.equal(
+      tag.status,
+      0,
+      `нужны метки выпусков: git fetch --tags (${ref})`,
+    );
+  }
   mkdirSync(directory, { recursive: true });
   const tar = join(root, "tree.tar");
   execFileSync("git", ["archive", "--format=tar", "-o", tar, ref], {
@@ -256,6 +268,29 @@ function unpackTree(ref: string, directory: string, root: string) {
   });
   execFileSync("tar", ["-xf", tar, "-C", directory]);
   rmSync(tar);
+}
+
+function assertHistoricalTree(directory: string, version: string) {
+  const manifest = JSON.parse(
+    readFileSync(join(directory, "package.json"), "utf8"),
+  ) as {
+    version: string;
+    scripts: Record<string, string>;
+  };
+  assert.equal(manifest.version, version, "historical manifest version");
+  assert.match(
+    manifest.scripts.postinstall,
+    /patch-package/u,
+    "historical postinstall",
+  );
+  assert.ok(
+    existsSync(join(directory, "patches")),
+    "historical patches directory",
+  );
+  assert.ok(
+    readdirSync(join(directory, "patches")).length > 0,
+    "historical patches",
+  );
 }
 
 const minimum = (
@@ -277,6 +312,7 @@ for (const version of [minimum, "0.4.16"]) {
       const archive = await eveArchive(t, root);
       archive.setFault(fault);
       unpackTree(`v${version}`, source, root);
+      assertHistoricalTree(source, version);
       git(source, "init", "--quiet", "--initial-branch=main");
       git(source, "add", "-A");
       git(source, "commit", "--quiet", "-m", "historical tree");
@@ -297,6 +333,7 @@ for (const version of [minimum, "0.4.16"]) {
       const store = createVersionStore(home),
         oldRoot = store.stage(oldName);
       unpackTree(`v${version}`, oldRoot, root);
+      assertHistoricalTree(oldRoot, version);
       // Shared candidate dependencies satisfy the historical first half and the new
       // updater's early imports; npm ci installs only into the staged candidate.
       symlinkSync(join(ROOT, "node_modules"), join(home, "node_modules"));
@@ -381,3 +418,35 @@ for (const version of [minimum, "0.4.16"]) {
     });
   }
 }
+
+test("historical tests explain missing release tags in a clone", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "iva-no-tags-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const clone = join(root, "clone");
+  git(root, "clone", "--quiet", "--no-tags", "--shared", ROOT, clone);
+  // Exercise the candidate test, including changes not committed yet.
+  write(
+    clone,
+    "scripts/eve-archive-update.test.ts",
+    readFileSync(join(ROOT, "scripts/eve-archive-update.test.ts"), "utf8"),
+  );
+  symlinkSync(join(ROOT, "node_modules"), join(clone, "node_modules"));
+  assert.equal(git(clone, "tag", "--list"), "");
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  for (const version of [minimum, "0.4.16"]) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--test",
+        `--test-name-pattern=^historical v${version} CLI.*\\(404\\)$`,
+        "scripts/eve-archive-update.test.ts",
+      ],
+      { cwd: clone, env, encoding: "utf8" },
+    );
+    const output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.match(output, /нужны метки выпусков: git fetch --tags/u);
+    assert.doesNotMatch(output, /fatal: not a valid object name/u);
+  }
+});
