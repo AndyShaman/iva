@@ -51,6 +51,8 @@ agent/skills/**/*.pem
 .memory.lock
 .netlify/
 attachments/
+# eve's attachment handlers are package source; user attachments stay ignored.
+!/eve/packages/eve/src/internal/attachments/
 scripts/xfeed/
 
 # Local working contract, not part of the public product

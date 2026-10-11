@@ -1,0 +1,13 @@
+{
+  "title": "Core Concepts",
+  "defaultOpen": false,
+  "pages": [
+    "execution-model-and-durability",
+    "sessions-runs-and-streaming",
+    "state",
+    "default-harness",
+    "built-in-tools",
+    "context-control",
+    "security-model"
+  ]
+}
