@@ -1,4 +1,5 @@
 .output/
+eve/
 node_modules/
 patches/
 assets/
