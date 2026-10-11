@@ -251,8 +251,11 @@ test("coordinated changes to dist and BUILD are rejected by the repository refer
 });
 
 test("source guard sees ignored directory names nested in authored source", async () => {
-  const directory = path.join(SOURCE_ROOT, "packages/eve/src/dist");
-  await mkdir(directory, { recursive: true });
+  const fixture = await mkdtemp(
+    path.join(SOURCE_ROOT, "packages/eve/src/r1-guard-"),
+  );
+  const directory = path.join(fixture, "dist");
+  await mkdir(directory);
   const file = path.join(directory, "r1-untracked.ts");
   try {
     await writeFile(file, "authored source");
@@ -267,8 +270,7 @@ test("source guard sees ignored directory names nested in authored source", asyn
     );
     assert.notEqual(result.status, 0, result.stdout + result.stderr);
   } finally {
-    await rm(file);
-    await rm(directory, { recursive: true });
+    await rm(fixture, { recursive: true });
   }
 });
 
