@@ -63,7 +63,7 @@ export default defineTool({
     if (typeof raw.status !== "number") {
       const gatedError = gateWebError(
         `web_fetch ${requested}`,
-        "framework result has no numeric status (eve patch missing?)",
+        "framework result has no numeric status (check the installed eve archive)",
       );
       return { ...gatedError, error: `web_fetch: ${gatedError.error}` };
     }

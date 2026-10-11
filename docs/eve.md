@@ -21,22 +21,25 @@ bash scripts/eve-release.sh
 
 The script calls `scripts/build-eve.sh`, keeps the archive in the ignored
 `.eve-out/release/` directory, calculates its SHA-512 SRI and writes its URL,
-version and integrity into `package.json` and `package-lock.json`. A second run
+version and integrity into `package.json` and `package-lock.json`, and the version
+and source/package hashes into the tracked `eve.lock.json` outside `eve/`. A second run
 reuses the existing archive after checking its source and package hashes. An
 existing archive with different source files requires a fresh version number.
 For build comparison alone, use `bash scripts/build-eve.sh <empty-output-directory>`.
 
-Publication order:
+Commit the three dependency files locally, then publish with:
 
-1. Commit the dependency files locally after building from committed sources.
-2. Create `eve-0.51.1-iva.N` on that commit and push that tag.
-3. Create the GitHub release in `smixs/iva-agent` and upload the matching archive.
-4. Download the archive from the final dependency URL. Compute its SHA-512 SRI
-   with `node -e 'const fs=require("fs"),c=require("crypto");console.log("sha512-"+c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' archive.tgz`
-   and compare it with `package-lock.json`.
-5. Run `npm ci` in a clean tree using that final URL, then run
-   `node --test scripts/eve-copy.test.ts` and the boundary tests.
-6. Push the dependency commit to `beta` after all checks pass.
+```sh
+bash scripts/eve-release.sh --publish
+```
+
+The command verifies the clean committed tree and prepared archive, creates and
+pushes only the `eve-0.51.1-iva.N` tag, creates its GitHub release and uploads the
+archive, downloads the final URL and compares its SHA-512 SRI, then runs `npm ci`
+in a temporary clean tree with an empty cache. It stops at the first failure.
+Its final message allows the maintainer to push `beta`; that push remains a
+separate action after the required acceptance checks. A different archive
+location can be passed as the last argument in both modes.
 
 Published `eve-*` tags and their archive assets are permanent and immutable:
 keep their names and bytes. A correction gets a new N. Old Iva versions depend
@@ -44,8 +47,11 @@ on the old URLs. Archives stay outside git.
 
 `node_modules/eve/BUILD.json` carries upstream commit, package/tool versions,
 `sourceTreeHash` and `packedTreeHash`. `scripts/eve-copy.test.ts` checks the
-source, installed contents and dependency lock. The path-dependent upstream
-`.vendor-stamp.json` is excluded from the packed hash.
+source and installed contents against `eve.lock.json`, and checks the package's
+BUILD metadata and dependency lock. Hashes include only the executable flag,
+so file access permissions and umask do not change them. The build-only
+`.vendor-stamp.json` is excluded from the packed hash; its script fingerprint
+uses relative paths, so archive bytes are identical across build directories.
 
 The sources retain the [Apache-2.0 license](../eve/LICENSE) and
 [NOTICE](../eve/NOTICE), including the Iva modifications. Both files are also

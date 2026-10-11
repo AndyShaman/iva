@@ -41,7 +41,7 @@ Upstream already implemented public `input.resolved` exposure in
 Remove the three exposure edits from `eve/` when the pinned Eve
 version exposes the public generic and Telegram event types and the adapter boundary
 test passes without them. Keep Iva's question preview delivery: the upstream change
-exposes the event and does not implement that UI. The unpatched 0.51.1 boundary test
+exposes the event and does not implement that UI. The upstream 0.51.1 boundary test
 fails because Eve silently drops this handler. This is one channel mechanism for
 all providers, as required by ADR-0019.
 

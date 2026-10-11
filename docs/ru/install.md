@@ -64,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | b
 | Шаг              | Пропускается, когда                                                                          |
 | ---------------- | -------------------------------------------------------------------------------------------- |
 | Системные пакеты | команда уже есть (`git`, `gh`, `python3`, `ffmpeg`, `pandoc`, `pdftotext`)                   |
-| `npm ci`         | `node_modules` совпадает с `package-lock.json` по учёту самого npm; патчи применяются заново |
+| `npm ci`         | `node_modules` совпадает с `package-lock.json` по версии, URL и integrity, включая архив eve |
 | agent-browser    | бинарь установлен и реально открывает страницу                                               |
 | `gws`            | бинарь установлен (актуальность держит `iva update`)                                         |
 | Сборка           | в `.output` лежит отметка установщика для текущего коммита, локальных правок и `.env`        |

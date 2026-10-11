@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 // Контракт собственного eve, бэкпорт vercel/eve#2841 (issue #2839).
-// Точка удаления: бамп eve, где оба теста зелёные на чистом апстриме без патча.
+// Точка удаления: бамп eve, где оба теста зелёные на неизменённом upstream.
 const eveRoot = dirname(
   createRequire(import.meta.url).resolve("eve/package.json"),
 );
@@ -65,7 +65,7 @@ test("the tool loop announces skills as a system message, not a user message", (
   const site = /get\(PendingSkillAnnouncementKey\);[^;]*;/.exec(source);
   assert.ok(
     site,
-    "tool-loop no longer reads PendingSkillAnnouncementKey: re-check the patch",
+    "tool-loop no longer reads PendingSkillAnnouncementKey: re-check our eve source changes",
   );
   assert.match(
     site[0],
