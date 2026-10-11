@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  access,
+  readdir,
   chmod,
   copyFile,
   mkdir,
@@ -140,10 +142,7 @@ test("eve installation uses the archive without a postinstall mutation", async (
   assert.equal(pkg.scripts.postinstall, undefined);
   assert.equal(pkg.devDependencies["patch-package"], undefined);
   assert.equal(lock.packages["node_modules/patch-package"], undefined);
-  await assert.rejects(
-    readFile(path.join(ROOT, "patches", "eve+0.51.1.patch")),
-    { code: "ENOENT" },
-  );
+  await assert.rejects(access(path.join(ROOT, "patches")), { code: "ENOENT" });
 });
 
 test("data migrations match release 0.4.16", async () => {
@@ -152,14 +151,9 @@ test("data migrations match release 0.4.16", async () => {
     ["ls-tree", "-r", "v0.4.16", "--", "scripts/migrations"],
     { cwd: ROOT, encoding: "utf8" },
   );
-  const current = execFileSync(
-    "git",
-    ["ls-files", "--", "scripts/migrations"],
-    { cwd: ROOT, encoding: "utf8" },
-  )
-    .trim()
-    .split("\n")
-    .filter(Boolean);
+  const current = (await readdir(path.join(ROOT, "scripts/migrations")))
+    .sort()
+    .map((file) => `scripts/migrations/${file}`);
   const files = baseline
     .trim()
     .split("\n")
