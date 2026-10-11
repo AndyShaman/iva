@@ -1,11 +1,17 @@
-import type { ChannelAdapter, ChannelInstrumentationMetadata } from "#channel/adapter.js";
+import type {
+  ChannelAdapter,
+  ChannelInstrumentationMetadata,
+} from "#channel/adapter.js";
 import { defaultDeliverResult } from "#channel/adapter.js";
 import {
   CHANNEL_SENTINEL,
   type ChannelReference,
   type CompiledChannel,
 } from "#channel/compiled-channel.js";
-import { normalizeChannelCors, type ChannelCorsOptions } from "#channel/cors.js";
+import {
+  normalizeChannelCors,
+  type ChannelCorsOptions,
+} from "#channel/cors.js";
 import { HTTP_ADAPTER_KIND } from "#channel/http.js";
 import type {
   ChannelFrom,
@@ -21,7 +27,10 @@ import type { DeliverPayload, TurnPolicy } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
-import type { GenericChannelDefinition, GenericReceiveInput } from "#shared/channel-definition.js";
+import type {
+  GenericChannelDefinition,
+  GenericReceiveInput,
+} from "#shared/channel-definition.js";
 
 declare const CHANNEL_METADATA_TYPE: unique symbol;
 
@@ -35,8 +44,14 @@ export type {
   TurnPolicy,
 } from "#channel/types.js";
 export type { Session, SessionHandle } from "#channel/session.js";
-export type { ChannelAudience, ChannelAudienceMetadata } from "#shared/channel-audience.js";
-export type { SessionRespondOptions, SessionSendOptions } from "#channel/session.js";
+export type {
+  ChannelAudience,
+  ChannelAudienceMetadata,
+} from "#shared/channel-audience.js";
+export type {
+  SessionRespondOptions,
+  SessionSendOptions,
+} from "#channel/session.js";
 export type {
   ChannelFrom,
   ChannelReceiveContext,
@@ -46,7 +61,16 @@ export type {
   ChannelSource,
 };
 export type { ChannelCors, ChannelCorsOptions } from "#channel/cors.js";
-export { DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT, WS } from "#channel/routes.js";
+export {
+  DELETE,
+  GET,
+  HEAD,
+  OPTIONS,
+  PATCH,
+  POST,
+  PUT,
+  WS,
+} from "#channel/routes.js";
 export type {
   AttachSessionFn,
   HttpRouteDefinition,
@@ -66,7 +90,8 @@ export type {
  * is a webhook. Override only when authoring a non-webhook route such as a
  * long-poll endpoint or an event-stream reader.
  */
-export type ChannelMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+export type ChannelMethod =
+  "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
 
 /**
  * Method-like discriminator used by compiled channel route entries.
@@ -140,7 +165,9 @@ export function disableRoute(): DisabledRouteSentinel {
  * Type guard: returns whether `value` is a {@link DisabledRouteSentinel}
  * produced by {@link disableRoute}.
  */
-export function isDisabledRouteSentinel(value: unknown): value is DisabledRouteSentinel {
+export function isDisabledRouteSentinel(
+  value: unknown,
+): value is DisabledRouteSentinel {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -149,7 +176,9 @@ export function isDisabledRouteSentinel(value: unknown): value is DisabledRouteS
 }
 
 type EventData<T extends UnstampedMessageStreamEvent["type"]> =
-  Extract<UnstampedMessageStreamEvent, { type: T }> extends { data: infer D } ? D : undefined;
+  Extract<UnstampedMessageStreamEvent, { type: T }> extends { data: infer D }
+    ? D
+    : undefined;
 
 /** Continuation routing on the `channel` argument of every channel event handler. */
 export interface ChannelContinuationOps {
@@ -165,7 +194,10 @@ export interface ChannelContinuationOps {
  */
 export type ChannelContext<TCtx> = TCtx & ChannelContinuationOps;
 
-type ChannelEventHandler<T extends UnstampedMessageStreamEvent["type"], TCtx> = (
+type ChannelEventHandler<
+  T extends UnstampedMessageStreamEvent["type"],
+  TCtx,
+> = (
   data: EventData<T>,
   channel: ChannelContext<TCtx>,
   ctx: SessionContext,
@@ -183,28 +215,50 @@ type ChannelSessionFailedHandler<TCtx> = (
  * and the channel context, with no `ctx`; its data includes `sessionId`.
  */
 export interface ChannelEvents<TCtx = void> {
-  readonly "approval.candidate"?: ChannelEventHandler<"approval.candidate", TCtx>;
+  readonly "approval.candidate"?: ChannelEventHandler<
+    "approval.candidate",
+    TCtx
+  >;
   readonly "approval.settled"?: ChannelEventHandler<"approval.settled", TCtx>;
   readonly "context.cleared"?: ChannelEventHandler<"context.cleared", TCtx>;
-  readonly "compaction.requested"?: ChannelEventHandler<"compaction.requested", TCtx>;
-  readonly "compaction.completed"?: ChannelEventHandler<"compaction.completed", TCtx>;
+  readonly "compaction.requested"?: ChannelEventHandler<
+    "compaction.requested",
+    TCtx
+  >;
+  readonly "compaction.completed"?: ChannelEventHandler<
+    "compaction.completed",
+    TCtx
+  >;
   readonly "turn.started"?: ChannelEventHandler<"turn.started", TCtx>;
   readonly "actions.requested"?: ChannelEventHandler<"actions.requested", TCtx>;
   readonly "action.partial"?: ChannelEventHandler<"action.partial", TCtx>;
   readonly "action.result"?: ChannelEventHandler<"action.result", TCtx>;
   readonly "message.completed"?: ChannelEventHandler<"message.completed", TCtx>;
   readonly "message.appended"?: ChannelEventHandler<"message.appended", TCtx>;
-  readonly "reasoning.appended"?: ChannelEventHandler<"reasoning.appended", TCtx>;
-  readonly "reasoning.completed"?: ChannelEventHandler<"reasoning.completed", TCtx>;
+  readonly "reasoning.appended"?: ChannelEventHandler<
+    "reasoning.appended",
+    TCtx
+  >;
+  readonly "reasoning.completed"?: ChannelEventHandler<
+    "reasoning.completed",
+    TCtx
+  >;
   readonly "input.requested"?: ChannelEventHandler<"input.requested", TCtx>;
+  readonly "input.resolved"?: ChannelEventHandler<"input.resolved", TCtx>;
   readonly "turn.failed"?: ChannelEventHandler<"turn.failed", TCtx>;
   readonly "turn.completed"?: ChannelEventHandler<"turn.completed", TCtx>;
   readonly "turn.cancelled"?: ChannelEventHandler<"turn.cancelled", TCtx>;
   readonly "session.failed"?: ChannelSessionFailedHandler<TCtx>;
   readonly "session.completed"?: ChannelEventHandler<"session.completed", TCtx>;
   readonly "session.waiting"?: ChannelEventHandler<"session.waiting", TCtx>;
-  readonly "authorization.required"?: ChannelEventHandler<"authorization.required", TCtx>;
-  readonly "authorization.completed"?: ChannelEventHandler<"authorization.completed", TCtx>;
+  readonly "authorization.required"?: ChannelEventHandler<
+    "authorization.required",
+    TCtx
+  >;
+  readonly "authorization.completed"?: ChannelEventHandler<
+    "authorization.completed",
+    TCtx
+  >;
 }
 
 /**
@@ -230,7 +284,13 @@ export type ChannelDefinition<
   TCtx = void,
   TReceiveTarget = Record<string, unknown>,
   TMetadata extends Record<string, unknown> = Record<string, unknown>,
-> = GenericChannelDefinition<ChannelEvents<TCtx>, TState, TCtx, TReceiveTarget, TMetadata>;
+> = GenericChannelDefinition<
+  ChannelEvents<TCtx>,
+  TState,
+  TCtx,
+  TReceiveTarget,
+  TMetadata
+>;
 
 /**
  * Opaque channel value produced by {@link defineChannel} and exported from
@@ -259,7 +319,9 @@ export interface Channel<
  * Resolves to `Record<string, unknown>` when the value is not a Channel.
  */
 export type InferChannelMetadata<TChannel> =
-  TChannel extends Channel<any, any, infer TMetadata> ? TMetadata : Record<string, unknown>;
+  TChannel extends Channel<any, any, infer TMetadata>
+    ? TMetadata
+    : Record<string, unknown>;
 
 /**
  * Builds a {@link Channel} from a {@link ChannelDefinition}. Returns a value
@@ -307,6 +369,7 @@ const channelEventTypes: Record<keyof ChannelEvents, null> = {
   "reasoning.appended": null,
   "reasoning.completed": null,
   "input.requested": null,
+  "input.resolved": null,
   "turn.failed": null,
   "turn.completed": null,
   "turn.cancelled": null,
@@ -317,9 +380,16 @@ const channelEventTypes: Record<keyof ChannelEvents, null> = {
   "authorization.completed": null,
 };
 
-const eventTypes = Object.keys(channelEventTypes) as readonly (keyof ChannelEvents)[];
+const eventTypes = Object.keys(
+  channelEventTypes,
+) as readonly (keyof ChannelEvents)[];
 
-function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<string, unknown>>(
+function buildAdapter<
+  TState,
+  TCtx,
+  TReceiveTarget,
+  TMetadata extends Record<string, unknown>,
+>(
   definition: ChannelDefinition<TState, TCtx, TReceiveTarget, TMetadata>,
 ): ChannelAdapter<any> {
   const hasState = definition.state != null;
@@ -350,21 +420,26 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
                 },
         };
         if (eventType === "session.failed") {
-          return (userHandler as (data: unknown, channel: any) => void | Promise<void>)(
-            data,
-            channel,
-          );
+          return (
+            userHandler as (data: unknown, channel: any) => void | Promise<void>
+          )(data, channel);
         }
         const ctx = buildCallbackContext();
         return (
-          userHandler as (data: unknown, channel: any, ctx: SessionContext) => void | Promise<void>
+          userHandler as (
+            data: unknown,
+            channel: any,
+            ctx: SessionContext,
+          ) => void | Promise<void>
         )(data, channel, ctx);
       };
     }
   }
 
   if (!hasBehavior && !hasEventHandlers && !hasFetchFile) {
-    return { kind: definition.kindHint ?? HTTP_ADAPTER_KIND } as ChannelAdapter<any>;
+    return {
+      kind: definition.kindHint ?? HTTP_ADAPTER_KIND,
+    } as ChannelAdapter<any>;
   }
 
   const adapter: ChannelAdapter<any> = {
@@ -384,7 +459,10 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
       const state = base.state;
       const session = base.session;
       const channelCtx = hasContext
-        ? (definition.context as (s: any, session: SessionHandle) => any)(state, session)
+        ? (definition.context as (s: any, session: SessionHandle) => any)(
+            state,
+            session,
+          )
         : {};
 
       return {
@@ -396,7 +474,8 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
     },
 
     deliver(payload: DeliverPayload, adapterCtx) {
-      if (definition.deliver === undefined) return defaultDeliverResult(payload);
+      if (definition.deliver === undefined)
+        return defaultDeliverResult(payload);
       return definition.deliver(payload, adapterCtx as TCtx);
     },
 
