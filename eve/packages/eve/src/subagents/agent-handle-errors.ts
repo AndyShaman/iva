@@ -23,9 +23,9 @@ export function formatAgentBusyMessage(input: {
 }): string {
   const agent = `Agent "${input.agentName}" with id "${input.agentId}" is still working on`;
   if (input.ownerId?.startsWith("task_")) {
-    return `${agent} task "${input.ownerId}".`;
+    return `${agent} task "${input.ownerId}". Do not call it again; its result arrives after you end this turn. End the turn with a one-line status, or stop it with task_cancel ${JSON.stringify({ taskIds: [input.ownerId] })}.`;
   }
-  return `${agent} ${input.ownerId === undefined ? "another task" : "another invocation"}.`;
+  return `${agent} ${input.ownerId === undefined ? "another task" : "another invocation"}. Do not call it again in this turn; end the turn with a one-line status.`;
 }
 
 /** Error code for a local subagent that failed to start. */
