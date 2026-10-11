@@ -20,10 +20,23 @@ process.env.ASSISTANT_TIMEZONE = "UTC";
 after(() => rmSync(vault, { recursive: true, force: true }));
 await import("../../scripts/lib/ts-esm-hooks.ts");
 const hook = (await import("../hooks/transcript.ts")).default as unknown as {
-  events: Record<string, (event: { data: Record<string, unknown> }) => void>;
+  events: Record<
+    string,
+    (
+      event: { data: Record<string, unknown> },
+      ctx: { channel: { kind?: string } },
+    ) => void
+  >;
 };
-const completed = (message: string, finishReason = "stop") =>
-  hook.events["message.completed"]?.({ data: { message, finishReason } });
+const completed = (
+  message: string,
+  finishReason = "stop",
+  kind = "channel:telegram",
+) =>
+  hook.events["message.completed"]?.(
+    { data: { message, finishReason } },
+    { channel: { kind } },
+  );
 
 const daily = () => {
   const dir = join(vault, "daily");
@@ -50,4 +63,17 @@ test("an intermediate step before a tool call is still skipped", () => {
   const before = daily();
   completed("думаю…", "tool-calls");
   assert.equal(daily(), before);
+});
+
+test("a reply the owner never received is not written: API, child and channel-less sessions", () => {
+  const before = daily();
+  completed("Отчёт скрипта: NOTHING", "stop", "http");
+  completed("Ответ дочерней сессии", "stop", "subagent");
+  hook.events["message.completed"]?.(
+    { data: { message: "Без канала", finishReason: "stop" } },
+    { channel: {} },
+  );
+  assert.equal(daily(), before);
+  completed("Ответ в чат владельца");
+  assert.match(daily(), /Ответ в чат владельца/u);
 });
