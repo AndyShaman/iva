@@ -18,6 +18,12 @@ const PIECES = [
   "at now",
   "batch",
 ] as const;
+const TOKEN_STREAM = [
+  `grep -nE "a|batch" file 2>/dev/null | head -n 5 2>&1;\n`,
+  `cut -d: -f1 file >/dev/null && wc -lc file;\n`,
+  `ls -la || getent hosts api.telegram.org;\n`,
+  `echo pre'|'post "a|batch";\n`,
+] as const;
 
 function randomInput(bytes: number): string {
   const chunks = ["echo '"];
@@ -38,10 +44,48 @@ function median(values: number[]): number {
   return ordered[Math.floor(ordered.length / 2)] ?? Number.POSITIVE_INFINITY;
 }
 
-function duration(input: string, parse: (value: string) => boolean): number {
+function tokenStream(bytes: number, rejected: boolean): string {
+  const suffix = rejected ? `echo 'printf -v' "sort --comp=x" |&` : "echo ok;";
+  const chunks: string[] = [];
+  let length = suffix.length;
+  let index = 0;
+  while (length + (TOKEN_STREAM[index]?.length ?? 0) <= bytes) {
+    const piece = TOKEN_STREAM[index] ?? "echo x;\n";
+    chunks.push(piece);
+    length += piece.length;
+    index = (index + 1) % TOKEN_STREAM.length;
+  }
+  chunks.push(" ".repeat(bytes - length), suffix);
+  return chunks.join("");
+}
+
+function duration(
+  input: string,
+  parse: (value: string) => boolean,
+  expected = true,
+): number {
   const started = performance.now();
-  assert.equal(parse(input), true);
+  assert.equal(parse(input), expected);
   return performance.now() - started;
+}
+
+function linearRatio(
+  one: string,
+  two: string,
+  parse: (value: string) => boolean,
+  expected: boolean,
+): readonly [number, number, number] {
+  duration(one, parse, expected);
+  duration(two, parse, expected);
+  const oneSamples: number[] = [];
+  const twoSamples: number[] = [];
+  for (let index = 0; index < 5; index += 1) {
+    oneSamples.push(duration(one, parse, expected));
+    twoSamples.push(duration(two, parse, expected));
+  }
+  const oneMs = median(oneSamples);
+  const twoMs = median(twoSamples);
+  return [oneMs, twoMs, twoMs / Math.max(oneMs, 0.01)];
 }
 
 test("разбор случайного мегабайта остаётся линейным", async () => {
@@ -61,3 +105,25 @@ test("разбор случайного мегабайта остаётся ли
   );
   assert.ok(ratio <= 3.1, `отношение ${ratio.toFixed(2)} превышает 3.1`);
 });
+
+for (const rejected of [false, true] as const) {
+  const name = rejected ? "отвергаемого мусора" : "принимаемого входа";
+  test(`разбор токенного потока ${name} остаётся линейным`, async () => {
+    const { plainDataCommand } = await import("./plain-shell-command.ts");
+    const one = tokenStream(MIB, rejected);
+    const two = tokenStream(2 * MIB, rejected);
+    assert.equal(one.length, MIB);
+    assert.equal(two.length, 2 * MIB);
+    plainDataCommand(tokenStream(64 * 1024, rejected));
+    const [oneMs, twoMs, ratio] = linearRatio(
+      one,
+      two,
+      plainDataCommand,
+      !rejected,
+    );
+    console.info(
+      `L11 token linearity (${name}): 1MiB=${oneMs.toFixed(2)}ms 2MiB=${twoMs.toFixed(2)}ms ratio=${ratio.toFixed(2)}`,
+    );
+    assert.ok(ratio <= 3.1, `отношение ${ratio.toFixed(2)} превышает 3.1`);
+  });
+}

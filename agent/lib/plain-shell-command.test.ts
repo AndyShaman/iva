@@ -26,6 +26,9 @@ const ACCEPTED_DATA = [
   `getent hosts api.telegram.org`,
   `grep -- -n file 2>/dev/null | head -n3 >/dev/null 2>&1`,
   `# ввод из комментария\necho ok`,
+  `echo "a|batch";`,
+  `grep -nE "at|batch" file;`,
+  `getent hosts api.telegram.org;`,
 ] as const;
 
 const ACCEPTED_HELP = [
@@ -35,6 +38,7 @@ const ACCEPTED_HELP = [
   `iva plugin sync -h`,
   `iva restart 2>&1 --help`,
   `iva plugin sync --help 2>&1 | head -20; echo ok`,
+  `iva restart --help;`,
 ] as const;
 
 const REJECTED = [
@@ -71,6 +75,18 @@ const REJECTED = [
   `iva restart >&2 --help`,
   `iva restart --help 2>/dev/null`,
   `"iva" restart --help`,
+  `a;;`,
+  `a;|`,
+  `a;&`,
+  `;`,
+  `echo a;;`,
+] as const;
+
+const TRAILING_SEMICOLON_CASES = [
+  `echo "a|batch";`,
+  `grep -nE "at|batch" file;`,
+  `getent hosts api.telegram.org;`,
+  `iva restart --help;`,
 ] as const;
 
 const SOFTENED = new Set([
@@ -117,6 +133,21 @@ test("справка iva принимает точное слово help и то
   }
   for (const input of REJECTED) {
     assert.equal(plainHelpCommand(input), false, input);
+  }
+});
+
+test("корпус пропускает завершающую точку с запятой через оба гварда", async () => {
+  const [{ selfRestartViolation }, { schedulerBypassViolation }] =
+    await Promise.all([
+      import("./self-restart-guard.ts"),
+      import("./scheduler-bypass-guard.ts"),
+    ]);
+  for (const input of TRAILING_SEMICOLON_CASES) {
+    assert.deepEqual(
+      pair(selfRestartViolation, schedulerBypassViolation, input),
+      [false, false],
+      input,
+    );
   }
 });
 

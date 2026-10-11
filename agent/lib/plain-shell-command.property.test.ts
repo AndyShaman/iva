@@ -54,7 +54,7 @@ const POLICIES: Readonly<Record<string, Policy>> = {
 };
 
 const TOKEN =
-  /2>\/dev\/null|>\/dev\/null|2>&1|#[^\n]*|'[^']*'|"[^"\\$`]*"|[A-Za-z0-9_./:=,@%+~^*-]+|[ \t]+|\n|;|\|\||\||&&/gy;
+  /2>\/dev\/null|>\/dev\/null|2>&1|<<|#[^\n]*|'[^']*'|"[^"\\$`]*"|[A-Za-z0-9_./:=,@%+~^*-]+|[ \t]+|\n|;|\|\||\||&&/gy;
 const REDIRECTS = new Set(["2>/dev/null", ">/dev/null", "2>&1"]);
 
 function lex(input: string): string[] | null {
@@ -105,6 +105,7 @@ function takePiece(state: ParseState, piece: string): boolean {
   if (piece.startsWith("#")) return state.parts.length === 0;
   finishWord(state);
   if (/^[ \t]+$/.test(piece)) return true;
+  if (piece === "<<") return false;
   if (REDIRECTS.has(piece)) {
     if (state.words.length === 0) return false;
     state.redirects.push(piece);
@@ -139,7 +140,8 @@ function shortOptionArity(value: string, policy: Policy): 0 | 1 | null {
     (letter) => !policy.plain.includes(letter),
   );
   if (valued < 0) return letters.length > 0 ? 0 : null;
-  if (!policy.valued.includes(letters[valued] ?? "")) return null;
+  const valuedLetter = letters[valued];
+  if (!valuedLetter || !policy.valued.includes(valuedLetter)) return null;
   return valued === letters.length - 1 ? 1 : 0;
 }
 
@@ -184,7 +186,6 @@ function helpCommand(command: Command): boolean {
 }
 
 function independentlyAllowed(input: string): boolean {
-  if (input.includes("<<")) return false;
   const commands = parsedCommands(input);
   return (
     commands !== null &&
@@ -353,10 +354,26 @@ const VALID_INPUTS = [
   `iva doctor --help 2>&1 | head -20`,
   `wc -lc file`,
   `ls -la`,
+  `iva restart`,
 ] as const;
 
+const dictionaryToken = fc.constantFrom(...TOKEN_DICTIONARY);
+const barePart = fc.constantFrom("pre", "left", "x", "right", "post");
+const quotedToken = fc.oneof(
+  dictionaryToken.map((content) => `'${content}'`),
+  dictionaryToken.map((content) => `"${content}"`),
+);
+const gluedWord = fc.oneof(
+  fc
+    .tuple(barePart, dictionaryToken, barePart)
+    .map(([left, content, right]) => `${left}'${content}'${right}`),
+  fc
+    .tuple(barePart, dictionaryToken, barePart)
+    .map(([left, content, right]) => `${left}"${content}"${right}`),
+);
+const generatedToken = fc.oneof(dictionaryToken, quotedToken, gluedWord);
 const randomTokens = fc
-  .array(fc.constantFrom(...TOKEN_DICTIONARY), { minLength: 1, maxLength: 18 })
+  .array(generatedToken, { minLength: 1, maxLength: 18 })
   .map((tokens) => tokens.join(" "));
 const inputArbitrary = fc.oneof(
   { weight: 3, arbitrary: fc.constantFrom(...VALID_INPUTS) },
@@ -401,6 +418,14 @@ test(`P3: вся принятая строка подтверждена неза
   );
 });
 
+test("P3: heredoc запрещён только вне кавычек", async () => {
+  const { plainDataCommand } = await candidate();
+  assert.equal(plainDataCommand("echo '<<'"), true);
+  assert.equal(independentlyAllowed("echo '<<'"), true);
+  assert.equal(plainDataCommand(`echo <<'EOF'`), false);
+  assert.equal(independentlyAllowed(`echo <<'EOF'`), false);
+});
+
 test(`P4: смягчение имеет разрешённый класс, усилений нет (seed ${SEED})`, async () => {
   const subject = await candidate();
   fc.assert(
@@ -441,8 +466,14 @@ test(`P4 10 000 входов сохраняет числа и корпус от�
     );
     const change = direction(before, after);
     counts[change] += 1;
+    assert.notEqual(change, "строже", JSON.stringify(input));
     if (change === "мягче") {
-      const kind = subject.plainDataCommand(input) ? "data" : "help";
+      const data = subject.plainDataCommand(input);
+      const help = subject.plainHelpCommand(input);
+      assert.equal(data || help, true, JSON.stringify(input));
+      const kind = data ? "data" : help ? "help" : undefined;
+      assert.notEqual(kind, undefined, JSON.stringify(input));
+      if (kind === undefined) continue;
       differences.set(input, kind);
     }
   }

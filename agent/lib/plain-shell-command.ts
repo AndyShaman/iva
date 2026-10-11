@@ -37,7 +37,8 @@ function decodedWord(raw: string): Word {
   };
 }
 function takeSeparator(state: ParseState, raw: string, next: string): boolean {
-  if (state.words.length === 0 || ";|&".includes(next)) return false;
+  if (state.words.length === 0 || (next !== "" && ";|&".includes(next)))
+    return false;
   pushCommand(state);
   state.required = raw !== ";";
   return true;
@@ -85,7 +86,8 @@ function shortNeedsValue(value: string, policy: Policy): boolean | null {
   if (policy[3] && /^-\d+$/.test(value)) return false;
   const letters = value.slice(1);
   for (let index = 0; index < letters.length; index += 1) {
-    const letter = letters[index] ?? "";
+    const letter = letters[index];
+    if (!letter) return null;
     if (policy[0].includes(letter)) continue;
     if (policy[1].includes(letter)) return index === letters.length - 1;
     return null;
