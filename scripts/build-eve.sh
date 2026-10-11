@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 export GIT_CEILING_DIRECTORIES="$repo_root"
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE
 eve_root="$repo_root/eve"
@@ -18,7 +18,7 @@ else
 fi
 [[ $# -eq 1 ]] || { echo "Usage: scripts/build-eve.sh <output-directory>" >&2; exit 64; }
 mkdir -p "$1"
-output_dir="$(cd "$1" && pwd)"
+output_dir="$(cd "$1" && pwd -P)"
 package_backup="$(mktemp)"
 stage_root="$(mktemp -d)"
 cp "$package_json" "$package_backup"

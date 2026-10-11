@@ -168,6 +168,10 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 
 Документация на русском → [docs/ru/](docs/ru/)
 
+## eve sources
+
+Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under Apache-2.0 and the original NOTICE. Maintainers build the package once; installations fetch the pinned archive. See [building and publishing eve](docs/eve.md).
+
 ## What's New
 
 <details>
