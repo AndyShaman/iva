@@ -215,3 +215,35 @@ await test(`property: repair preserves all other fields/rows; stale repair prese
     { seed, numRuns: 100 },
   );
 });
+
+await test("remove keeps the record as removed, hides it from list and never reuses its id", async () => {
+  reset([
+    { ...original(null), id: 5, text: "позвонить Ивану Тестову" },
+    { ...original(null), id: 6, text: "написать Ивану Тестову" },
+  ]);
+  const removed = await call({ action: "remove", id: 6 });
+  assert.equal(removed.ok, true);
+  const kept = read().find((row) => row.id === 6) as Row & { removedAt?: string };
+  assert.equal(kept.done, true);
+  assert.equal(new Date(kept.removedAt ?? "").toISOString(), kept.removedAt);
+  const before = readFileSync(file, "utf8");
+  assert.equal((await call({ action: "remove", id: 6 })).ok, true);
+  assert.equal((await call({ action: "done", id: 6 })).error, "Задача 6 удалена");
+  const updated = await call({
+    action: "update",
+    id: 6,
+    due: "2026-10-20",
+    expectedDue: null,
+  });
+  assert.equal(updated.ok, false);
+  assert.equal(readFileSync(file, "utf8"), before);
+  for (const includeDone of [false, true]) {
+    const listed = await call({ action: "list", includeDone });
+    assert.deepEqual(
+      listed.tasks?.map((row) => row.id),
+      [5],
+    );
+  }
+  const added = await call({ action: "add", text: "новая" });
+  assert.equal(added.added?.id, 7);
+});

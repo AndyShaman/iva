@@ -206,7 +206,10 @@ await test("зелёное: случайный поток add/done/remove из �
             ? { action: "done", id: row.id as number }
             : { action: "remove", id: row.id as number },
         );
-        assert.ok(outcome.ok, JSON.stringify(outcome));
+        assert.ok(
+          outcome.ok || /удалена/u.test(outcome.error ?? ""),
+          JSON.stringify(outcome),
+        );
         if (outcome.removed) removedTexts.add(String(outcome.removed.text));
       }
     }
