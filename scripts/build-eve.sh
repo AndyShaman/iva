@@ -11,7 +11,7 @@ version="0.51.1-iva.1"
 pnpm_version="11.25.0"
 upstream_commit="eb5949a622801b35a2a6f78bb58d9eef27273cac"
 if [[ -n "${EVE_PNPM_BIN:-}" ]]; then
-  [[ "$("$EVE_PNPM_BIN" --version)" == "$pnpm_version" ]]
+  [[ "$("$EVE_PNPM_BIN" --version)" == "$pnpm_version" ]] || { echo "Expected pnpm $pnpm_version in EVE_PNPM_BIN." >&2; exit 1; }
   pnpm_run=("$EVE_PNPM_BIN")
 else
   pnpm_run=(npx -y "pnpm@$pnpm_version")

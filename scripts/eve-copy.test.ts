@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   access,
@@ -69,14 +70,22 @@ test("installed eve is the package built from the current eve source tree", asyn
     hashEveTree(INSTALLED_ROOT, "packed"),
   ]);
 
+  const reference = await readJson<{
+    version: string;
+    sourceTreeHash: string;
+    packedTreeHash: string;
+  }>(path.join(ROOT, "eve.lock.json"));
+  assert.equal(build.sourceTreeHash, reference.sourceTreeHash);
+  assert.equal(build.packedTreeHash, reference.packedTreeHash);
+  assert.equal(build.packageVersion, reference.version);
   assert.equal(
     sourceTreeHash,
-    build.sourceTreeHash,
+    reference.sourceTreeHash,
     "eve/ differs from the built source tree",
   );
   assert.equal(
     packedTreeHash,
-    build.packedTreeHash,
+    reference.packedTreeHash,
     "node_modules/eve package was changed",
   );
   assert.equal(
@@ -145,30 +154,129 @@ test("eve installation uses the archive without a postinstall mutation", async (
   await assert.rejects(access(path.join(ROOT, "patches")), { code: "ENOENT" });
 });
 
-test("data migrations match release 0.4.16", async () => {
-  const baseline = execFileSync(
-    "git",
-    ["ls-tree", "-r", "v0.4.16", "--", "scripts/migrations"],
-    { cwd: ROOT, encoding: "utf8" },
+test("data migrations match the recorded migration file hashes", async () => {
+  const baseline = await readJson<Record<string, string>>(
+    path.join(ROOT, "scripts/fixtures/eve-migrations.json"),
   );
-  const current = (await readdir(path.join(ROOT, "scripts/migrations")))
-    .sort()
-    .map((file) => `scripts/migrations/${file}`);
-  const files = baseline
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => line.split("\t")[1]);
-  assert.deepEqual(current, files);
+  const current = (await readdir(path.join(ROOT, "scripts/migrations"))).sort();
+  assert.deepEqual(current, Object.keys(baseline).sort());
   for (const file of current)
     assert.equal(
-      await readFile(path.join(ROOT, file), "utf8"),
-      execFileSync("git", ["show", `v0.4.16:${file}`], {
-        cwd: ROOT,
-        encoding: "utf8",
-      }),
+      createHash("sha256")
+        .update(await readFile(path.join(ROOT, "scripts/migrations", file)))
+        .digest("hex"),
+      baseline[file],
+      file,
     );
 });
+
+test("migration guard works in a clone with no release tags", async (t) => {
+  const fixture = await mkdtemp(path.join(tmpdir(), "eve-migrations-"));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const dir of ["scripts/lib", "scripts/fixtures", "scripts/migrations"])
+    await mkdir(path.join(fixture, dir), { recursive: true });
+  for (const file of [
+    "scripts/eve-copy.test.ts",
+    "scripts/lib/eve-tree-hash.ts",
+    "scripts/fixtures/eve-migrations.json",
+    ...(await readdir(path.join(ROOT, "scripts/migrations"))).map(
+      (file) => `scripts/migrations/${file}`,
+    ),
+  ])
+    await copyFile(path.join(ROOT, file), path.join(fixture, file));
+  execFileSync("git", ["init", "--quiet"], { cwd: fixture });
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      "--test-name-pattern=^data migrations",
+      "scripts/eve-copy.test.ts",
+    ],
+    { cwd: fixture, env: testChildEnvironment(), encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test("coordinated changes to dist and BUILD are rejected by the repository reference", async (t) => {
+  const fixture = await mkdtemp(path.join(tmpdir(), "eve-reference-"));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const dir of ["scripts/lib", "eve", "node_modules/eve/dist"])
+    await mkdir(path.join(fixture, dir), { recursive: true });
+  for (const file of [
+    "scripts/eve-copy.test.ts",
+    "scripts/lib/eve-tree-hash.ts",
+  ])
+    await copyFile(path.join(ROOT, file), path.join(fixture, file));
+  await writeFile(path.join(fixture, "eve/NOTICE"), "source");
+  const installed = path.join(fixture, "node_modules/eve");
+  await writeFile(
+    path.join(installed, "package.json"),
+    JSON.stringify({ version: "0.51.1-iva.1" }),
+  );
+  await writeFile(path.join(installed, "dist/index.js"), "original code");
+  const reference = {
+    version: "0.51.1-iva.1",
+    sourceTreeHash: await hashEveTree(path.join(fixture, "eve"), "source"),
+    packedTreeHash: await hashEveTree(installed, "packed"),
+  };
+  const build = {
+    ...reference,
+    packageVersion: reference.version,
+    upstreamCommit: "a".repeat(40),
+    pnpmVersion: "11.25.0",
+    nodeVersion: process.version,
+  };
+  await writeFile(
+    path.join(fixture, "eve.lock.json"),
+    JSON.stringify(reference),
+  );
+  await writeFile(path.join(installed, "BUILD.json"), JSON.stringify(build));
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        "--test",
+        "--test-name-pattern=^installed eve is",
+        "scripts/eve-copy.test.ts",
+      ],
+      { cwd: fixture, encoding: "utf8", env: testChildEnvironment() },
+    );
+  const initial = run();
+  assert.equal(initial.status, 0, initial.stdout + initial.stderr);
+  await writeFile(path.join(installed, "dist/index.js"), "changed code");
+  build.packedTreeHash = await hashEveTree(installed, "packed");
+  await writeFile(path.join(installed, "BUILD.json"), JSON.stringify(build));
+  const changed = run();
+  assert.notEqual(changed.status, 0, changed.stdout + changed.stderr);
+});
+
+test("source guard sees ignored directory names nested in authored source", async () => {
+  const directory = path.join(SOURCE_ROOT, "packages/eve/src/dist");
+  await mkdir(directory, { recursive: true });
+  const file = path.join(directory, "r1-untracked.ts");
+  try {
+    await writeFile(file, "authored source");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--test",
+        "--test-name-pattern=^eve source files match",
+        "scripts/eve-copy.test.ts",
+      ],
+      { cwd: ROOT, encoding: "utf8", env: testChildEnvironment() },
+    );
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  } finally {
+    await rm(file);
+    await rm(directory, { recursive: true });
+  }
+});
+
+function testChildEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+}
 
 function gitEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -198,11 +306,12 @@ function hooksPath(root: string): string {
 
 const PNPM_FIXTURE = String.raw`#!/usr/bin/env node
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 const args = process.argv.slice(2);
-if (args[0] === "--version") { console.log("11.25.0"); process.exit(0); }
+if (args[0] === "--version") { console.log(process.env.EVE_TEST_WRONG_PNPM ? "0.0.0" : "11.25.0"); process.exit(0); }
 const stage = args[0] === "install" ? "install" : args.includes("build") ? "build" : "pack";
 const root = path.dirname(process.cwd());
 const probe = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { encoding: "utf8" });
@@ -217,6 +326,8 @@ if (stage === "pack") {
   rmSync(input, { recursive: true, force: true });
   mkdirSync(input);
   cpSync(source, path.join(input, "package"), { recursive: true });
+  if (process.env.EVE_TEST_CORRUPT_SECOND_PACK && readFileSync(path.join(root, "stages.txt"), "utf8").split("\n").filter(stage => stage === "pack").length >= 2)
+    writeFileSync(path.join(input, "package/corrupt.js"), "changed after metadata");
   execFileSync("tar", ["-czf", path.join(destination, "eve-" + version + ".tgz"), "-C", input, "package"]);
 }
 `;
@@ -340,6 +451,54 @@ for (const inheritedGitDirectory of [false, true]) {
           "install\nbuild\npack\npack\n",
           "release must reuse the archive",
         );
+        const unpacked = path.join(fixture, "out/tamper");
+        await mkdir(unpacked);
+        execFileSync("tar", ["-xzf", archive, "-C", unpacked]);
+        await writeFile(
+          path.join(unpacked, "package/corrupt.js"),
+          "different archive contents",
+        );
+        execFileSync("tar", ["-czf", archive, "-C", unpacked, "package"]);
+        const changedArchive = runRelease();
+        assert.notEqual(
+          changedArchive.status,
+          0,
+          "reused archive must match its packed hash",
+        );
+        assert.match(changedArchive.stderr, /Archive contents differ/u);
+        assert.deepEqual(
+          await readFile(path.join(fixture, "package-lock.json")),
+          lock,
+        );
+        await writeFile(archive, bytes);
+        await writeFile(path.join(fixture, "stages.txt"), "");
+        const corruptBuild = spawnSync(
+          "bash",
+          [
+            path.join(fixture, "scripts/build-eve.sh"),
+            path.join(fixture, "out"),
+          ],
+          {
+            env: { ...env, EVE_TEST_CORRUPT_SECOND_PACK: "1" },
+            encoding: "utf8",
+          },
+        );
+        assert.notEqual(
+          corruptBuild.status,
+          0,
+          "second packing must be checked against the first",
+        );
+        await writeFile(archive, bytes);
+        const wrongPnpm = spawnSync(
+          "bash",
+          [
+            path.join(fixture, "scripts/build-eve.sh"),
+            path.join(fixture, "out"),
+          ],
+          { env: { ...env, EVE_TEST_WRONG_PNPM: "1" }, encoding: "utf8" },
+        );
+        assert.notEqual(wrongPnpm.status, 0);
+        assert.match(wrongPnpm.stderr, /pnpm.*11\.25\.0/u);
         await writeFile(path.join(fixture, "eve/NOTICE"), "changed source\n");
         commit();
         const stale = runRelease();
