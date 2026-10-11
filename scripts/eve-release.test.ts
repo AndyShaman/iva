@@ -273,3 +273,47 @@ for (const asset of ["absent", "matching", "different"]) {
     f.clean();
   });
 }
+for (const condition of [
+  "eve.lock.json",
+  "package-lock.json",
+  "missing archive",
+  "different tag",
+]) {
+  test("publication rejects precondition: " + condition, async (t) => {
+    const f = await fixture(t);
+    if (condition === "eve.lock.json") {
+      const ref = JSON.parse(
+        readFileSync(path.join(f.root, condition), "utf8"),
+      ) as Record<string, string>;
+      ref.sourceTreeHash = "0".repeat(64);
+      f.json(condition, ref);
+      f.commit();
+    }
+    if (condition === "package-lock.json") {
+      const lock = JSON.parse(
+        readFileSync(path.join(f.root, condition), "utf8"),
+      ) as { packages: Record<string, { integrity: string }> };
+      lock.packages["node_modules/eve"].integrity = "sha512-wrong";
+      f.json(condition, lock);
+      f.commit();
+    }
+    if (condition === "missing archive") rmSync(f.archive);
+    if (condition === "different tag") f.git("tag", TAG, "HEAD~1");
+    const result = f.run(),
+      output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.ok(
+      !f.calls().some((call) => call.step === "push" || call.tool === "gh"),
+    );
+    assert.ok(!output.includes("BUILD_INVOKED"));
+    assert.match(
+      output,
+      condition === "missing archive"
+        ? /Prepare and commit the archive/
+        : condition === "different tag"
+          ? /Existing tag belongs to another commit/
+          : /AssertionError/,
+    );
+    f.clean();
+  });
+}
