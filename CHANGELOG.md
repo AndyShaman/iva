@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- 🛠 **eve теперь собирается из исходников Ивы**: поведение осталось прежним; установка и обновление скачивают eve одним готовым архивом. Iva now builds eve from its own sources; behavior stays the same and installations fetch one ready archive.
+- 🛠 **eve теперь собирается из исходников Ивы**: поведение осталось прежним; установка и обновление скачивают eve одним готовым архивом. В бете стоит проверить привычное: обновление и откат (`iva update`, `iva rollback`), долгий ход с инструментами, напоминание, ночной отчёт, файл в чат и из чата. Любое отличие от 0.4.17 считается ошибкой. Iva now builds eve from its own sources; behavior stays the same and installations fetch one ready archive.
 
 ## [0.4.17] - 2026-10-11
 

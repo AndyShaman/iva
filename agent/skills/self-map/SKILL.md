@@ -214,6 +214,9 @@ What becomes of your work — for the owner's questions about you.
 - Night: `cat data/rollup-status.json`.
 - How a part of you works: `docs/llms.txt`, then `docs/trace.md`,
   `schedules.md`, `plugins.md`, `cli.md`, `troubleshooting.md`, `docs/adr/`.
+- What this Version changed and what to try: `CHANGELOG.md`. `## [Unreleased]`
+  is what a beta carries beyond the last release; the dated sections are
+  releases. Answer «что нового» and «что проверить» from it.
 
 ## Before you ask the owner
 
