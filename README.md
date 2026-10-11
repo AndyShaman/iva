@@ -175,9 +175,15 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.4.16 · 11.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.4.17 · 11.10.2026 — expand the latest releases</b></summary>
 
 ### 11.10.2026
+
+#### v0.4.17
+
+- 🐚 **Iva runs server commands in bash**: they used to go through the minimal `/bin/sh` shell, and on Ubuntu and Debian ordinary bash syntax failed with «Syntax error». Iva corrected herself, but lost a step and logged a failure. Now such commands pass the first time.
+- 🛡 **Iva refuses harmless commands less often**: search and print commands (grep, echo, head, cut, wc, ls, getent) were refused when quoted text held words like «batch» or «at». Now they pass, and so does `iva … --help`. Restarting Iva and schedules that bypass reminders are blocked as before. Command chains with sed, heredoc text and git commit messages may still be refused (#287).
+- 📓 **A helper's draft no longer lands in the daily note**: when Iva handed part of the work to a helper, its raw answer was written to the daily note as her reply, though you never received it. Now the daily note holds only what Iva wrote to you.
 
 #### v0.4.16
 
