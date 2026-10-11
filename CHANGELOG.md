@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.16] - 2026-10-11
+
+- 📨 **Сообщения, присланные, пока Ива занята, она читает вместе**: если во время её ответа вы прислали несколько сообщений или файлов, она получит их разом и ответит один раз, а не на каждое по очереди. Команды, ответы на её сообщения и нажатия кнопок по-прежнему идут отдельно. В режиме «Перебивать» новое сообщение подождёт, пока Ива не заберёт уже накопленные. Messages and files that arrive while Iva is busy now reach her together, and she answers once.
+- 💬 **В долгой работе видно, чем Ива занята**: то, что модель пишет по ходу дела («Ищу в почте…», «Собираю черновик…»), теперь появляется в строке статуса рядом с кнопкой ⏹ и не пропадает. Лишних сообщений в чате нет, статус меняется не чаще раза в 15 секунд, ответ приходит как раньше. What the model says while it works now shows in the status line next to the stop button instead of a silent wait.
+- 🔎 **Ива сначала ищет сама, потом спрашивает**: прежде чем задать вопрос, она смотрит в своей памяти, в чатах и почте, в интернете и на сервере, а в самом вопросе пишет, что уже проверила. Что выбрать и можно ли что-то делать, она по-прежнему спрашивает у вас. Before asking, Iva looks for the answer herself in her memory, chats, mail, the web and the server, and says what she checked; choices and consent stay with you.
+- 📄 **Замены в файлах Word больше не задваиваются**: в объединённой ячейке таблицы замена «100» на «1000» давала «10000». Теперь каждая замена делается один раз, а разрывы страниц, табуляции и картинки рядом с текстом остаются на месте. Text replacements in Word files no longer run twice in merged table cells and keep page breaks, tabs and pictures in place.
+
+[0.4.16]: https://github.com/smixs/iva-agent/releases/tag/v0.4.16
+
 ## [0.4.15] - 2026-10-10
 
 - 🔧 **Юзербот снова поднимается после обновления**: после `iva update` юзербот больше не перезапускается по кругу. Ива сама находит uv, готовит юзерботу окружение до запуска и ждёт, пока он ответит. Если подготовить не вышло, юзербот выключается, и Ива пишет об этом в Telegram простыми словами: что без него не работает и где включить его обратно (`/menu`, экран 📡 Userbot, кнопка «Включить»); причина остаётся в выводе `iva update`. `iva restart` не трогает юзербот, который отвечает (Fixes #273). After an update the userbot is prepared before it starts again; one that cannot be prepared is switched off instead of restarting in a loop, and Iva tells you in Telegram where to turn it back on.

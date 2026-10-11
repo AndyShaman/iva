@@ -171,7 +171,16 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 ## What's New
 
 <details>
-<summary><b>v0.4.15 · 10.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.4.16 · 11.10.2026 — expand the latest releases</b></summary>
+
+### 11.10.2026
+
+#### v0.4.16
+
+- 📨 **Messages sent while Iva is busy reach her together**: if you send several messages or files while she is answering, Iva gets them at once and answers once instead of replying to each in turn. Commands, replies to her messages and button taps still go separately. In «Interrupt» mode a new message waits until Iva has picked up the ones already collected.
+- 💬 **During long work you can see what Iva is busy with**: what the model writes along the way («Searching mail…», «Putting a draft together…») now shows in the status line next to the ⏹ button and does not vanish. No extra messages in the chat, the status changes at most once every 15 seconds, and the answer arrives as before.
+- 🔎 **Iva searches on her own first, then asks**: before asking you a question, she checks her memory, chats and mail, the web and the server, and in the question she says what she has already checked. What to choose and whether something may be done she still asks you.
+- 📄 **Replacements in Word files no longer double up**: in a merged table cell, replacing «100» with «1000» gave «10000». Now each replacement is made once, and page breaks, tabs and pictures next to the text stay in place.
 
 ### 10.10.2026
 
@@ -200,18 +209,6 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 - 🔎 **Failures are easier to look into**: `iva trace show` opens exactly one turn, the turn journal keeps tool errors for 30 days, and Insight reviews the day's failures and offers a plugin fix or a ready issue for the developer, which you send yourself. `iva diagnose` no longer restarts anything, and `diagnose-usage.sh` no longer takes the turn journal.
 - 🧩 **A broken skill no longer turns off your tools**: your own skills are not part of the version build, and if your code does not build, Iva tells you in Telegram.
 - 📡 **The userbot is no longer beta**: working from your personal Telegram account is a regular part of Iva. The account-ban warning stays.
-
-### 05.10.2026
-
-#### v0.4.12
-
-- 👀 **Iva tells you what you missed**: once an hour code checks unread private chats, mentions in Telegram and Gmail without newsletters; the model wakes only for something new and sends one message per item with buttons «To tasks», «Remind later», «Mute this one». Quiet hours at night, at most 5 messages a day, one toggle «Writes on her own» in `/menu` → Notices.
-- ☀️ **The Brief replaces the morning digest**: at 08:30 and 14:00 Iva sends an overview of tasks, calendar, mail, Telegram, connections and plugins. Change the time with a phrase («brief at 9»); `/digest` returns the same overview.
-- 🚨 **Failed jobs reach you with the cause and a Fix button**: user timers and plugin services are checked hourly; Iva's own failed jobs are explained instead of silently self-fixed and come first in the morning Brief. `iva signal <source> <text>` lets any local script hand Iva a message.
-- 🧩 **Iva writes her own plugins**: say «make a plugin that…». A plugin of skills and scripts she installs herself; one with code or MCP she only proposes, and it is installed after you tap Install in a private chat.
-- 🗜 **A long conversation is compacted between turns, not in the middle of an answer**: after a turn that reached 60% of the model window or 275k tokens, Iva compacts the conversation while nobody waits. A message sent meanwhile gets «Compacting the conversation, I'll answer in a moment.» and its answer right after.
-- 🧹 **Iva no longer asks you to press /new**: the «context window is N% full» line is gone; `/new` works as before.
-- 🎬 **Video, audio and files are handled by Iva herself, and she sees an image on disk**: the model gets facts about an attachment instead of orders not to touch it, and `read_file` on an image returns its description from the vision model.
 
 </details>
 
