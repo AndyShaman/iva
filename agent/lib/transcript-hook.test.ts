@@ -12,18 +12,68 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { after } from "node:test";
+import test, { after, type TestContext } from "node:test";
 
 const vault = mkdtempSync(join(tmpdir(), "iva-transcript-hook-"));
+const previousVault = process.env.ASSISTANT_VAULT_DIR;
+const previousTimeZone = process.env.ASSISTANT_TIMEZONE;
 process.env.ASSISTANT_VAULT_DIR = vault;
 process.env.ASSISTANT_TIMEZONE = "UTC";
-after(() => rmSync(vault, { recursive: true, force: true }));
+after(() => {
+  if (previousVault === undefined) delete process.env.ASSISTANT_VAULT_DIR;
+  else process.env.ASSISTANT_VAULT_DIR = previousVault;
+  if (previousTimeZone === undefined) delete process.env.ASSISTANT_TIMEZONE;
+  else process.env.ASSISTANT_TIMEZONE = previousTimeZone;
+  rmSync(vault, { recursive: true, force: true });
+});
+
+function resetDaily(t: TestContext): void {
+  rmSync(join(vault, "daily"), { recursive: true, force: true });
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-10-11T08:15:00Z"),
+  });
+}
+
 await import("../../scripts/lib/ts-esm-hooks.ts");
 const hook = (await import("../hooks/transcript.ts")).default as unknown as {
-  events: Record<string, (event: { data: Record<string, unknown> }) => void>;
+  events: Record<
+    string,
+    (
+      event: { data: Record<string, unknown> },
+      ctx: Record<string, unknown>,
+    ) => void
+  >;
 };
-const completed = (message: string, finishReason = "stop") =>
-  hook.events["message.completed"]?.({ data: { message, finishReason } });
+
+const chatContext = {
+  session: { id: "chat-1", turn: { id: "turn-1", sequence: 1 } },
+  channel: { kind: "channel:telegram" },
+};
+const reminderContext = {
+  session: { id: "reminder-1", turn: { id: "turn-1", sequence: 0 } },
+  channel: { kind: "http" },
+};
+const childContext = {
+  session: {
+    id: "child-1",
+    turn: { id: "turn-0", sequence: 0 },
+    parent: {
+      callId: "call-1",
+      rootSessionId: "chat-1",
+      sessionId: "chat-1",
+      turn: { id: "turn-1", sequence: 1 },
+    },
+  },
+  channel: { kind: "subagent" },
+};
+
+const completed = (
+  message: string,
+  finishReason = "stop",
+  ctx: Record<string, unknown> = chatContext,
+) =>
+  hook.events["message.completed"]?.({ data: { message, finishReason } }, ctx);
 
 const daily = () => {
   const dir = join(vault, "daily");
@@ -34,7 +84,20 @@ const daily = () => {
     : "";
 };
 
-test("QUIET after trim is not written to the day; an ordinary reply is", () => {
+test("child text is skipped while chat and Reminder Turns are written", (t) => {
+  resetDaily(t);
+  completed("сырой ответ помощника", "stop", childContext);
+  completed("ответ в чате", "stop", chatContext);
+  completed("напоминание", "stop", reminderContext);
+
+  assert.doesNotMatch(daily(), /сырой ответ помощника/u);
+  assert.match(daily(), /\[iva\]\nответ в чате/u);
+  assert.match(daily(), /\[iva\]\nнапоминание/u);
+  assert.equal(daily().match(/## 08:15 \[iva\]/gu)?.length, 2);
+});
+
+test("QUIET after trim is not written to the day; an ordinary reply is", (t) => {
+  resetDaily(t);
   completed("QUIET");
   completed("  QUIET\n");
   completed("");
@@ -46,7 +109,8 @@ test("QUIET after trim is not written to the day; an ordinary reply is", () => {
   assert.equal(daily().match(/## \d\d:\d\d \[iva\]/gu)?.length, 2);
 });
 
-test("an intermediate step before a tool call is still skipped", () => {
+test("an intermediate step before a tool call is still skipped", (t) => {
+  resetDaily(t);
   const before = daily();
   completed("думаю…", "tool-calls");
   assert.equal(daily(), before);
