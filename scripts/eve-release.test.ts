@@ -134,6 +134,18 @@ for (const failure of ["none", ...STEPS, "sri"]) {
       assert.equal(result.status, 0, result.stdout + result.stderr);
     else assert.notEqual(result.status, 0, result.stdout + result.stderr);
     const calls = readFileSync(log, "utf8").trim().split("\n");
+    if (calls.some((call) => call.startsWith("create ")))
+      assert.ok(
+        calls.includes(
+          "create release create eve-0.51.1-iva.1 --repo smixs/iva-agent --verify-tag --latest=false --title eve-0.51.1-iva.1 --notes eve source archive for Iva.",
+        ),
+      );
+    if (calls.some((call) => call.startsWith("upload ")))
+      assert.ok(
+        calls.includes(
+          `upload release upload eve-0.51.1-iva.1 ${archive} --repo smixs/iva-agent`,
+        ),
+      );
     const expected =
       failure === "none"
         ? STEPS

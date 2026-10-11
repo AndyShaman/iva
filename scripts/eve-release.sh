@@ -63,7 +63,7 @@ if [[ "$publish" == true ]]; then
     git tag "$tag" "$commit"
   fi
   git push origin "refs/tags/$tag"
-  gh release create "$tag" --repo smixs/iva-agent --verify-tag --title "$tag" --notes "eve source archive for Iva."
+  gh release create "$tag" --repo smixs/iva-agent --verify-tag --latest=false --title "$tag" --notes "eve source archive for Iva."
   gh release upload "$tag" "$archive" --repo smixs/iva-agent
   curl --fail --location --silent --show-error "$url" --output "$stage/download.tgz"
   node --input-type=module - "$stage/download.tgz" <<'JS'
