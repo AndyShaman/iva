@@ -3,7 +3,11 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 export type EveTreeKind = "packed" | "source";
-const OUTPUT_DIRS = new Set(["node_modules", "dist", ".generated", ".turbo"]);
+const OUTPUT_DIRS = new Set(
+  ["", "packages/eve/", "packages/eve-catalog/"].flatMap((prefix) =>
+    ["node_modules", "dist", ".generated", ".turbo"].map((dir) => prefix + dir),
+  ),
+);
 function excluded(relativePath: string, kind: EveTreeKind): boolean {
   if (kind === "packed") {
     return (
@@ -16,7 +20,7 @@ function excluded(relativePath: string, kind: EveTreeKind): boolean {
     relativePath === "packages/eve/LICENSE" ||
     relativePath === "packages/eve/NOTICE" ||
     relativePath === "packages/eve/docs" ||
-    relativePath.split("/").some((part) => OUTPUT_DIRS.has(part))
+    OUTPUT_DIRS.has(relativePath)
   );
 }
 export async function listEveTreeFiles(
@@ -47,7 +51,7 @@ export async function hashEveTree(
   for (const relativePath of files) {
     const file = path.join(root, ...relativePath.split("/"));
     const [stat, bytes] = await Promise.all([lstat(file), readFile(file)]);
-    const header = `${Buffer.byteLength(relativePath)}:${relativePath}\0${(stat.mode & 0o777).toString(8)}\0${bytes.length}\0`;
+    const header = `${Buffer.byteLength(relativePath)}:${relativePath}\0${(stat.mode & 0o111) === 0 ? "0" : "1"}\0${bytes.length}\0`;
     hash.update(header).update(bytes).update("\0");
   }
   return hash.digest("hex");
