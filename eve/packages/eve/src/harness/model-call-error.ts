@@ -19,7 +19,16 @@ const GATEWAY_MODEL_REQUEST_REJECTED_MESSAGE =
  * anchor the match on the literal `tool type` prefix to avoid sweeping
  * in unrelated "not supported" errors.
  */
-const UNSUPPORTED_TOOL_TYPE_REGEX = /tool type ['"]([\w.-]+)['"] is not supported/i;
+const UNSUPPORTED_TOOL_TYPE_REGEX =
+  /tool type ['"]([\w.-]+)['"] is not supported/i;
+const DETERMINISTIC_PROMPT_ERROR_NAMES = new Set([
+  "AI_InvalidPromptError",
+  "AI_InvalidArgumentError",
+  "AI_TypeValidationError",
+  "AI_NoSuchToolError",
+  "AI_InvalidToolInputError",
+  "AI_UnsupportedFunctionalityError",
+]);
 
 /**
  * The most informative human-readable rejection a model-call error
@@ -52,7 +61,9 @@ interface ModelCallErrorSignals {
  * user-facing message should avoid implying a bad tool call. Returns
  * `null` when the error carries nothing better than its raw message.
  */
-export function extractUpstreamRejectionMessage(error: unknown): UpstreamRejectionSummary | null {
+export function extractUpstreamRejectionMessage(
+  error: unknown,
+): UpstreamRejectionSummary | null {
   const signals = readModelCallErrorSignals(error);
 
   // Transient upstream failures (throttles, overloads) keep the generic
@@ -89,7 +100,9 @@ function upstreamRejectionName(signals: ModelCallErrorSignals): string {
 }
 
 function isTransientHttpStatus(status: number | undefined): boolean {
-  return status === 408 || status === 429 || (status !== undefined && status >= 500);
+  return (
+    status === 408 || status === 429 || (status !== undefined && status >= 500)
+  );
 }
 
 /**
@@ -107,11 +120,16 @@ function isTransientHttpStatus(status: number | undefined): boolean {
  * {@link resolveFrameworkToolFromUpstreamType} for the mapping back to
  * framework tool names.
  */
-export function extractUnsupportedProviderToolTypes(error: unknown): readonly string[] {
+export function extractUnsupportedProviderToolTypes(
+  error: unknown,
+): readonly string[] {
   const found = new Set<string>();
 
   for (const candidate of walkCauseChain(error)) {
-    collectUnsupportedToolTypesFromValue(readObjectField(candidate, "data"), found);
+    collectUnsupportedToolTypesFromValue(
+      readObjectField(candidate, "data"),
+      found,
+    );
 
     const responseBody = readStringField(candidate, "responseBody");
     if (responseBody !== undefined) {
@@ -133,7 +151,10 @@ export function extractUnsupportedProviderToolTypes(error: unknown): readonly st
   return [...found];
 }
 
-function collectUnsupportedToolTypesFromValue(value: unknown, out: Set<string>): void {
+function collectUnsupportedToolTypesFromValue(
+  value: unknown,
+  out: Set<string>,
+): void {
   if (value === null || value === undefined) return;
 
   if (typeof value === "string") {
@@ -258,7 +279,9 @@ export function isNoOutputGeneratedError(error: unknown): boolean {
 /**
  * Classifies a model-call failure into the runtime's recovery policy.
  */
-export function classifyModelCallError(error: unknown): "retry" | "recoverable" | "terminal" {
+export function classifyModelCallError(
+  error: unknown,
+): "retry" | "recoverable" | "terminal" {
   if (isTurnCancellation(error)) {
     return "terminal";
   }
@@ -269,6 +292,10 @@ export function classifyModelCallError(error: unknown): "retry" | "recoverable" 
   // (attemptEmptyResponseRecovery in tool-loop.ts).
   if (error instanceof EmptyModelResponseError) {
     return "recoverable";
+  }
+
+  if (isDeterministicPromptError(error)) {
+    return "terminal";
   }
 
   // `APICallError` exposes `isRetryable`, populated by provider
@@ -322,12 +349,23 @@ export function classifyModelCallError(error: unknown): "retry" | "recoverable" 
     // 4xx responses usually point to a structural problem (invalid key,
     // context exceeded, malformed prompt) that repeating the same request
     // will not fix.
-    if (status === 408 || status === 409 || status === 429 || status >= 500) return "retry";
+    if (status === 408 || status === 409 || status === 429 || status >= 500)
+      return "retry";
     if (isAmbiguousGatewayInternalBadRequest(signals)) return "recoverable";
     if (status >= 400 && status < 500) return "terminal";
   }
 
   return "recoverable";
+}
+
+function isDeterministicPromptError(error: unknown): boolean {
+  for (const candidate of walkCauseChain(error)) {
+    const name = readErrorName(candidate);
+    if (name !== undefined && DETERMINISTIC_PROMPT_ERROR_NAMES.has(name)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function hasRetryableFlag(error: unknown): boolean {
@@ -352,13 +390,17 @@ function readModelCallErrorSignals(error: unknown): ModelCallErrorSignals {
       firstInformativeApiMessage([readErrorMessage(upstreamError)]),
     gatewayName: readErrorName(gatewayError),
     gatewayType: readStringField(gatewayError, "type"),
-    generationId: readStringField(gatewayError, "generationId") ?? upstreamBody?.generationId,
+    generationId:
+      readStringField(gatewayError, "generationId") ??
+      upstreamBody?.generationId,
     responseBodySnippet:
       responseBody === undefined
         ? undefined
         : truncateSnippet(responseBody, RESPONSE_BODY_SNIPPET_LIMIT),
     statusCode:
-      readStatusCode(gatewayError) ?? readStatusCode(upstreamError) ?? findStatusCode(error),
+      readStatusCode(gatewayError) ??
+      readStatusCode(upstreamError) ??
+      findStatusCode(error),
     upstreamMessage: upstreamBody?.message,
     upstreamStatusCode: readStatusCode(upstreamError),
     upstreamType: upstreamBody?.type,
@@ -369,7 +411,11 @@ function findGatewayError(error: unknown): unknown {
   for (const candidate of walkCauseChain(error)) {
     const name = readErrorName(candidate);
     const type = readStringField(candidate, "type");
-    if (name?.startsWith("Gateway") || type?.endsWith("_error") || type === "rate_limit_exceeded") {
+    if (
+      name?.startsWith("Gateway") ||
+      type?.endsWith("_error") ||
+      type === "rate_limit_exceeded"
+    ) {
       return candidate;
     }
   }
@@ -399,7 +445,9 @@ function readGatewayErrorBody(error: unknown):
       readonly type?: string;
     }
   | undefined {
-  const dataBody = readGatewayErrorBodyFromValue(readObjectField(error, "data"));
+  const dataBody = readGatewayErrorBodyFromValue(
+    readObjectField(error, "data"),
+  );
   if (dataBody !== undefined) {
     return dataBody;
   }
@@ -427,7 +475,8 @@ function readGatewayErrorBodyFromValue(value: unknown):
   if (!isObject(value)) return undefined;
   const error = readObjectField(value, "error");
   const generationId = readStringField(value, "generationId");
-  const message = readStringField(error, "message") ?? readStringField(value, "message");
+  const message =
+    readStringField(error, "message") ?? readStringField(value, "message");
   const type = readStringField(error, "type") ?? readStringField(value, "type");
   const apiErrorMessage = firstInformativeApiMessage([
     message,
@@ -463,7 +512,10 @@ function readStringField(value: unknown, key: string): string | undefined {
   return typeof field === "string" && field.length > 0 ? field : undefined;
 }
 
-function readObjectField(value: unknown, key: string): Record<string, unknown> | undefined {
+function readObjectField(
+  value: unknown,
+  key: string,
+): Record<string, unknown> | undefined {
   if (!isObject(value)) return undefined;
   const field = value[key];
   return isObject(field) ? field : undefined;
@@ -500,7 +552,9 @@ function appendString(out: string[], value: string | undefined): void {
   if (value !== undefined) out.push(value);
 }
 
-function firstInformativeApiMessage(messages: readonly (string | undefined)[]): string | undefined {
+function firstInformativeApiMessage(
+  messages: readonly (string | undefined)[],
+): string | undefined {
   for (const message of messages) {
     if (message !== undefined && isInformativeApiMessage(message)) {
       return truncateSnippet(message, API_ERROR_SUMMARY_LIMIT);
@@ -520,12 +574,15 @@ function isInformativeApiMessage(message: string): boolean {
   );
 }
 
-function formatApiCallErrorFallback(signals: ModelCallErrorSignals): string | undefined {
+function formatApiCallErrorFallback(
+  signals: ModelCallErrorSignals,
+): string | undefined {
   if (!signals.apiCallError) return undefined;
   const status = signals.statusCode ?? signals.upstreamStatusCode;
   const body = signals.responseBodySnippet;
   const type =
-    signals.upstreamType !== undefined && isInformativeApiMessage(signals.upstreamType)
+    signals.upstreamType !== undefined &&
+    isInformativeApiMessage(signals.upstreamType)
       ? signals.upstreamType
       : undefined;
   if (status === undefined && body === undefined && type === undefined) {
@@ -542,7 +599,11 @@ function formatApiCallErrorFallback(signals: ModelCallErrorSignals): string | un
 }
 
 function isRetryableGatewayType(type: string | undefined): boolean {
-  return type === "overloaded_error" || type === "rate_limit_exceeded" || type === "timeout_error";
+  return (
+    type === "overloaded_error" ||
+    type === "rate_limit_exceeded" ||
+    type === "timeout_error"
+  );
 }
 
 function isTerminalGatewayType(type: string | undefined): boolean {
@@ -557,16 +618,23 @@ function isGatewayErrorSignal(signals: ModelCallErrorSignals): boolean {
   return signals.gatewayName !== undefined || signals.gatewayType !== undefined;
 }
 
-function isAmbiguousGatewayInternalBadRequest(signals: ModelCallErrorSignals): boolean {
+function isAmbiguousGatewayInternalBadRequest(
+  signals: ModelCallErrorSignals,
+): boolean {
   return (
     signals.statusCode === 400 &&
     (signals.gatewayName === "GatewayInternalServerError" ||
       signals.gatewayType === "internal_server_error") &&
-    (signals.upstreamType === undefined || signals.upstreamType === "internal_server_error")
+    (signals.upstreamType === undefined ||
+      signals.upstreamType === "internal_server_error")
   );
 }
 
-function appendJsonField(target: Record<string, JsonValue>, key: string, value: unknown): void {
+function appendJsonField(
+  target: Record<string, JsonValue>,
+  key: string,
+  value: unknown,
+): void {
   if (typeof value === "string" && value.length > 0) {
     target[key] = value;
     return;
