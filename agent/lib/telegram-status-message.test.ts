@@ -368,3 +368,16 @@ await test("отказ rich оставляет тихий статус с тек
   assert.equal(next.calls[0].body.reply_markup, undefined);
   assert.equal(next.calls[0].body.disable_notification, true);
 });
+
+// Кнопка ⏹ и «Остановлено» живут в модуле без гейта (мосту), а модуль статуса отдаёт их дальше
+// теми же именами: канал и Custom layer, импортировавшие их отсюда, не ломаются.
+const stop = await load<typeof import("./telegram-status-stop.ts")>(
+  "./telegram-status-stop.ts",
+);
+
+await test("модуль статуса отдаёт кнопку ⏹ и «Остановлено» из модуля без гейта", () => {
+  assert.equal(status.TELEGRAM_STOP_CALLBACK, stop.TELEGRAM_STOP_CALLBACK);
+  assert.equal(status.TELEGRAM_STOP_CALLBACK, "iva_cancel");
+  assert.equal(status.stoppedText, stop.stoppedText);
+  assert.match(stop.stoppedText(), /^⏹ Stopped\./u);
+});
