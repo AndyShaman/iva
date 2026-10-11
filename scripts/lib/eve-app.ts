@@ -28,13 +28,13 @@ export async function prepareApp(sandbox: string): Promise<string> {
   const app = join(sandbox, "app");
   await mkdir(app, { recursive: true });
   // Деревья те же, что у промоутнутого рантайма; полноту списка держит страж.
-  for (const dir of [...RUNTIME_SOURCE_TREES, "patches", "vault-template"]) {
+  for (const dir of [...RUNTIME_SOURCE_TREES, "vault-template"]) {
     await cp(join(ROOT, dir), join(app, dir), { recursive: true });
   }
   for (const file of ["package.json", "package-lock.json", "tsconfig.json"]) {
     await cp(join(ROOT, file), join(app, file));
   }
-  // node_modules симлинком: npm ci уже проверяет разрешение зависимостей в соседнем CI-шаге,
+  // node_modules симлинком: npm ci отдельно проверяет разрешение зависимостей,
   // а здесь он бы стоил минуты и сотни мегабайт на каждый прогон.
   await symlink(join(ROOT, "node_modules"), join(app, "node_modules"), "dir");
   await mkdir(join(app, "data"), { recursive: true });
