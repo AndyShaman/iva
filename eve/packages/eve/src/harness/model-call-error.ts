@@ -198,8 +198,26 @@ export function extractModelCallErrorDetails(error: unknown): JsonObject {
   appendJsonField(details, "upstreamType", signals.upstreamType);
   appendJsonField(details, "upstreamMessage", signals.upstreamMessage);
   appendJsonField(details, "responseBodySnippet", signals.responseBodySnippet);
+  appendModelCallAttempts(details, error);
 
   return details;
+}
+
+function appendModelCallAttempts(
+  details: Record<string, JsonValue>,
+  error: unknown,
+): void {
+  for (const candidate of walkCauseChain(error)) {
+    const attempts = isObject(candidate)
+      ? candidate.eveModelCallAttempts
+      : undefined;
+    if (!isObject(attempts)) continue;
+
+    appendJsonField(details, "attempts", attempts.attempts);
+    appendJsonField(details, "providerWaitMs", attempts.providerWaitMs);
+    if (attempts.answerStarted === true) details.answerStarted = true;
+    return;
+  }
 }
 
 function readErrorName(error: unknown): string | undefined {
