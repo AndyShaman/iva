@@ -7,6 +7,7 @@ import {
   readdir,
   chmod,
   copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -250,28 +251,53 @@ test("coordinated changes to dist and BUILD are rejected by the repository refer
   assert.notEqual(changed.status, 0, changed.stdout + changed.stderr);
 });
 
-test("source guard sees ignored directory names nested in authored source", async () => {
-  const fixture = await mkdtemp(
-    path.join(SOURCE_ROOT, "packages/eve/src/r1-guard-"),
+test("source guard sees ignored directory names nested in authored source", async (t) => {
+  const fixture = await mkdtemp(path.join(tmpdir(), "eve-source-guard-"));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  assert.ok(
+    !fixture.startsWith(SOURCE_ROOT),
+    "fixture must stay outside the real eve source",
   );
-  const directory = path.join(fixture, "dist");
-  await mkdir(directory);
-  const file = path.join(directory, "r1-untracked.ts");
-  try {
-    await writeFile(file, "authored source");
-    const result = spawnSync(
+  await cp(SOURCE_ROOT, path.join(fixture, "eve"), { recursive: true });
+  await mkdir(path.join(fixture, "scripts/lib"), { recursive: true });
+  for (const file of [
+    ".gitignore",
+    "scripts/eve-copy.test.ts",
+    "scripts/lib/eve-tree-hash.ts",
+  ])
+    await copyFile(path.join(ROOT, file), path.join(fixture, file));
+  execFileSync("git", ["init", "--quiet"], {
+    cwd: fixture,
+    env: gitEnvironment(),
+  });
+  execFileSync("git", ["add", "--", "eve"], {
+    cwd: fixture,
+    env: gitEnvironment(),
+  });
+  const run = () =>
+    spawnSync(
       process.execPath,
       [
         "--test",
         "--test-name-pattern=^eve source files match",
         "scripts/eve-copy.test.ts",
       ],
-      { cwd: ROOT, encoding: "utf8", env: testChildEnvironment() },
+      { cwd: fixture, encoding: "utf8", env: testChildEnvironment() },
     );
-    assert.notEqual(result.status, 0, result.stdout + result.stderr);
-  } finally {
-    await rm(fixture, { recursive: true });
-  }
+  const baseline = run();
+  assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr);
+  const directory = path.join(
+    fixture,
+    "eve/packages/eve/src/guard-fixture/dist",
+  );
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "untracked.ts"), "authored source");
+  const changed = run();
+  assert.notEqual(changed.status, 0, changed.stdout + changed.stderr);
+  assert.match(
+    changed.stdout + changed.stderr,
+    /eve source files differ from git index/u,
+  );
 });
 
 function testChildEnvironment(): NodeJS.ProcessEnv {
