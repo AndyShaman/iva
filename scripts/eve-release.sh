@@ -63,8 +63,20 @@ if [[ "$publish" == true ]]; then
     git tag "$tag" "$commit"
   fi
   git push origin "refs/tags/$tag"
-  gh release create "$tag" --repo smixs/iva-agent --verify-tag --latest=false --title "$tag" --notes "eve source archive for Iva."
-  gh release upload "$tag" "$archive" --repo smixs/iva-agent
+  if assets="$(gh release view "$tag" --repo smixs/iva-agent --json assets --jq '.assets[].name' 2>"$stage/release-error")"; then
+    :
+  elif grep -qiE 'release not found|HTTP 404' "$stage/release-error"; then
+    gh release create "$tag" --repo smixs/iva-agent --verify-tag --latest=false --title "$tag" --notes "eve source archive for Iva."
+    assets=""
+  else
+    cat "$stage/release-error" >&2; exit 1
+  fi
+  if [[ $'\n'"$assets"$'\n' == *$'\n'"eve-$version.tgz"$'\n'* ]]; then
+    gh release download "$tag" --repo smixs/iva-agent --pattern "eve-$version.tgz" --output "$stage/existing.tgz"
+    cmp -s "$archive" "$stage/existing.tgz" || { echo 'Опубликованный архив неизменяем: нужен новый N.' >&2; exit 1; }
+  else
+    gh release upload "$tag" "$archive" --repo smixs/iva-agent
+  fi
   curl --fail --location --silent --show-error "$url" --output "$stage/download.tgz"
   node --input-type=module - "$stage/download.tgz" <<'JS'
 import assert from 'node:assert/strict';
