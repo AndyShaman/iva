@@ -37,7 +37,7 @@ export function formatFallbackSkillPath(input: {
 export async function resolveSandboxSkillRoot(input: {
   readonly sandbox: SandboxSession;
 }): Promise<string> {
-  return await resolveSandboxModelPath({ path: MODEL_SKILL_ROOT, sandbox: input.sandbox });
+  return resolveSkillRootFromHome(await resolveSandboxHome(input.sandbox));
 }
 
 /**
@@ -55,16 +55,22 @@ export async function resolveSandboxModelPath(input: {
   }
 
   const home = await resolveSandboxHome(input.sandbox);
+  if (isModelSkillPath(input.path)) {
+    return `${resolveSkillRootFromHome(home)}${input.path.slice(MODEL_SKILL_ROOT.length)}`;
+  }
+
   if (home !== null) {
     const suffix = input.path.slice(MODEL_HOME_ROOT.length);
     return suffix.length === 0 ? home : `${home === "/" ? "" : home}${suffix}`;
   }
 
-  if (isModelSkillPath(input.path)) {
-    return `${FALLBACK_SKILL_ROOT}${input.path.slice(MODEL_SKILL_ROOT.length)}`;
-  }
-
   return input.path;
+}
+
+function resolveSkillRootFromHome(home: string | null): string {
+  return home === null || home === "/"
+    ? FALLBACK_SKILL_ROOT
+    : `${home}/.agents/skills`;
 }
 
 export async function resolveSandboxSkillReadPaths(input: {
@@ -101,7 +107,9 @@ function formatSkillPath(input: {
   return `${input.root}/${input.name}/${input.relativePath}`;
 }
 
-async function resolveSandboxHome(sandbox: SandboxSession): Promise<string | null> {
+async function resolveSandboxHome(
+  sandbox: SandboxSession,
+): Promise<string | null> {
   const cached = sandboxHomeCache.get(sandbox);
   if (cached !== undefined) {
     return await cached;
@@ -112,7 +120,9 @@ async function resolveSandboxHome(sandbox: SandboxSession): Promise<string | nul
   return await next;
 }
 
-async function probeSandboxHome(sandbox: SandboxSession): Promise<string | null> {
+async function probeSandboxHome(
+  sandbox: SandboxSession,
+): Promise<string | null> {
   try {
     const result = await sandbox.run({ command: HOME_PROBE_COMMAND });
     if (result.exitCode !== 0) {
