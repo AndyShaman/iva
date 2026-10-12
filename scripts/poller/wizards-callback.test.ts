@@ -3,19 +3,22 @@
 // (метод + текст/клавиатура) и что записалось в состояние. Сеть и .env подменены:
 // fetch пишет вызовы, состояние сеется напрямую во flows.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
-process.env.ASSISTANT_DATA_DIR = mkdtempSync(join(tmpdir(), "iva-wizard-cb-"));
+const home = mkdtempSync(join(tmpdir(), "iva-wizard-cb-"));
+process.env.ASSISTANT_DATA_DIR = home;
+after(() => rmSync(home, { recursive: true, force: true }));
 process.env.AGENT_LANGUAGE = "en";
 process.env.TELEGRAM_BOT_TOKEN = "token";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "42";
 
-const { flows, handleWizardCallback } = (await import(
-  `./wizards.ts?wizards-callback=${Date.now()}`
-)) as typeof import("./wizards.ts");
+const { flows, handleWizardCallback, handleModelCmd, getWizard } =
+  (await import(
+    `./wizards.ts?wizards-callback=${Date.now()}`
+  )) as typeof import("./wizards.ts");
 
 type TgCall = {
   method: string;
@@ -186,5 +189,51 @@ test("m: выбирает модель и рисует уровни размыш
     assert.match(last.text, /Thinking level for m1:/u);
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
+  }
+});
+
+test("helper model appears on the model screen and its catalog closes unknown windows", async () => {
+  spy();
+  try {
+    const { chat, user } = seed("intro");
+    await handleModelCmd(chat, user, { msgId: 11 });
+    assert.match(edits().at(-1)!.text, /Helper model/);
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper/);
+    assert.equal(await tap(chat, user, "iva_model:helper"), true);
+    const st = getWizard(chat, user) as unknown as {
+      helperModel: boolean;
+      modelOptions: { id: string }[];
+    };
+    assert.equal(st.helperModel, true);
+    assert.deepEqual(
+      st.modelOptions.map((m) => m.id),
+      ["deepseek-v4-pro"],
+    );
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper-same/);
+  } finally {
+    if (previousFetch) globalThis.fetch = previousFetch;
+  }
+});
+
+test("R1 helper back returns to /model and clears helper flag; exit clears it too", async () => {
+  spy();
+  try {
+    const { chat, user, st } = seed("model_error", {
+      helperModel: true,
+      provider: "ollama",
+    });
+    assert.equal(await tap(chat, user, "iva_model:back"), true);
+    assert.equal(st.helperModel, undefined);
+    assert.equal(
+      (getWizard(chat, user) as unknown as { step: string }).step,
+      "intro",
+    );
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper/);
+    assert.doesNotMatch(edits().at(-1)!.text, /Pick a provider:/);
+    const exit = seed("intro", { helperModel: true });
+    await tap(exit.chat, exit.user, "iva_model:keep");
+    assert.equal(exit.st.helperModel, undefined);
+  } finally {
+    globalThis.fetch = previousFetch!;
   }
 });

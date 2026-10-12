@@ -517,3 +517,27 @@ await test("отказ обещания usage у стрима зрения — �
     assert.equal(readEntries(dir).length, 1);
   });
 });
+
+await test("R1 compaction usage records each selected step model", () =>
+  withDir(async (dir) => {
+    for (const modelName of ["chat-model", "helper-model"]) {
+      const model = wrapLanguageModel({
+        model: mockModel(usage(5000, 1000, 300)),
+        middleware: [compactionUsageMiddleware(LABEL, modelName)],
+      });
+      await compactMessages(
+        HISTORY,
+        model,
+        CONFIG,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    }
+    assert.deepEqual(
+      readEntries(dir).map((row) => row.model),
+      ["chat-model", "helper-model"],
+    );
+  }));

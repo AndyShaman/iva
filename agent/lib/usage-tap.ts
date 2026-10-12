@@ -191,13 +191,14 @@ export async function recordVisionStreamUsage(
  */
 export function compactionUsageMiddleware(
   label?: UsageLabel,
+  model = TEXT_MODEL,
 ): LanguageModelMiddleware {
   return {
     async wrapGenerate({ doGenerate, params }) {
       const result = await doGenerate();
       if (isCompactionPrompt(params.prompt))
         recordTapUsage(
-          { source: "compaction", model: TEXT_MODEL, label },
+          { source: "compaction", model, label },
           providerUsageTokens(result.usage),
         );
       return result;

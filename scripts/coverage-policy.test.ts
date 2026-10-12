@@ -22,7 +22,6 @@ const BLIND_SPOT: ReadonlyArray<{
   readonly why: string;
 }> = [
   // Границы фреймворка: грузит только eve, тесты гоняют швы вокруг.
-  { path: "agent/agent.ts", why: "сборка eve; тесты держат провайдер и тулзы" },
   {
     path: "agent/channels/eve.ts",
     why: "адаптер канала eve; тесты идут через инбаунд",
@@ -76,10 +75,6 @@ const BLIND_SPOT: ReadonlyArray<{
   {
     path: "scripts/replica-smoke.ts",
     why: "ручной стенд; e2e идет через capture/analyze",
-  },
-  {
-    path: "scripts/live-turn.ts",
-    why: "стенд приёмки: живой ход на настоящем провайдере, сам и есть проверка",
   },
 ];
 

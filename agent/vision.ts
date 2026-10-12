@@ -254,37 +254,50 @@ export function makeVisionProbe(
   };
 }
 
-const probe = makeVisionProbe(
-  async () => {
-    const result = await generateText({
-      model: makeTextModel({ chatModelSeesImages }),
-      // Ответ в одно слово, но потолок высокий: думающая модель тратит на reasoning
-      // сотни токенов ДО первого слова ответа, и на десятке их ответ пуст.
-      maxOutputTokens: 1024,
-      // Ретраи тут только тянут время: сбой сети мы и так не кэшируем.
-      maxRetries: 0,
-      // Молчащий провайдер не должен держать первую картинку владельца бесконечно.
-      abortSignal: AbortSignal.timeout(30_000),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: PROBE_PROMPT },
-            { type: "file", data: RED_SQUARE_PNG, mediaType: "image/png" },
-          ],
-        },
-      ],
-    });
-    // Пробник — тоже вызов модели чата: его токены идут в учёт как зрение.
-    recordVisionUsage(providerConfig.textModel, sdkUsageTokens(result.usage));
-    return { text: result.text, finishReason: result.finishReason };
-  },
-  () => providerConfig.textModel,
-);
+const probes = new Map<string, () => Promise<boolean>>();
+function modelProbe(model: string) {
+  const key = JSON.stringify([providerName, model]);
+  const cached = probes.get(key);
+  if (cached) return cached;
+  const probe = makeVisionProbe(
+    async () => {
+      const result = await generateText({
+        model: makeTextModel({
+          model,
+          chatModelSeesImages: () => chatModelSeesImages(model),
+        }),
+        // Ответ в одно слово, но потолок высокий: думающая модель тратит на reasoning
+        // сотни токенов ДО первого слова ответа, и на десятке их ответ пуст.
+        maxOutputTokens: 1024,
+        // Ретраи тут только тянут время: сбой сети мы и так не кэшируем.
+        maxRetries: 0,
+        // Молчащий провайдер не должен держать первую картинку владельца бесконечно.
+        abortSignal: AbortSignal.timeout(30_000),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: PROBE_PROMPT },
+              { type: "file", data: RED_SQUARE_PNG, mediaType: "image/png" },
+            ],
+          },
+        ],
+      });
+      // Пробник — тоже вызов модели чата: его токены идут в учёт как зрение.
+      recordVisionUsage(model, sdkUsageTokens(result.usage));
+      return { text: result.text, finishReason: result.finishReason };
+    },
+    () => model,
+  );
+  probes.set(key, probe);
+  return probe;
+}
 
 /** Принимает ли текстовая модель картинки. codex и claude — да без сети: подписки мультимодальны. */
-export function chatModelSeesImages(): Promise<boolean> {
+export function chatModelSeesImages(
+  model = providerConfig.textModel,
+): Promise<boolean> {
   if (providerName === "codex" || providerName === "claude")
     return Promise.resolve(true);
-  return probe();
+  return modelProbe(model)();
 }

@@ -1,3 +1,4 @@
+import { helperModelWindow } from "../../packages/context-window/index.ts";
 import { resolveOpenCodeProtocol } from "@iva/opencode-protocol";
 import {
   CATALOG,
@@ -65,6 +66,7 @@ type WizardState = TelegramFlowState & {
   // План подписки из чужого CLI (вендор claude): экран моделей называет его владельцу.
   plan?: string | null;
   reenterKey?: string | null;
+  helperModel?: boolean;
 };
 type WizardRequestResult<T> =
   | { stale: true; ok?: false; value?: never; error?: never }
@@ -136,8 +138,10 @@ const newWizard = (
 // больше не собираются, движок рисует rich-сообщение сам.
 const wizScreen = (st: WizardState, text: string) =>
   flows.screenWithResult(st, text);
-const endWizard = (st: WizardState, text: string) =>
-  flows.endWithResult(st, text);
+const endWizard = (st: WizardState, text: string) => {
+  delete st.helperModel;
+  return flows.endWithResult(st, text);
+};
 const wizardIsCurrent = (st: WizardState) =>
   flows.get(st.chatId, st.userId) === st;
 
@@ -177,6 +181,8 @@ export function isStaleWizard(
 const PLAIN_STEPS = new Map<string, readonly string[]>([
   ["keep", ["intro", "effort"]],
   ["chg", ["intro"]],
+  ["helper", ["intro"]],
+  ["helper-same", ["models", "model_error"]],
   // «Без ключа» — только там, где ключ на самом деле необязателен.
   ["nokey", ["awaiting_key"]],
   ["retry", ["model_error", "cli_status"]],
@@ -251,6 +257,21 @@ export function selectableWizardOptions(
   ].slice(0, limit);
 }
 
+function thinkingAvailable(provider: string, env: Record<string, string>) {
+  return (
+    providerSupportsReasoning(provider) &&
+    (provider !== "opencode" ||
+      resolveOpenCodeProtocol(env.OPENCODE_PROTOCOL) === "chat-completions")
+  );
+}
+function helperModelLabel(provider: string, env: Record<string, string>) {
+  const model = env.HELPER_MODEL?.trim();
+  return model === undefined
+    ? provider === "claude"
+      ? "claude-sonnet-5-5"
+      : tr("same as Iva", "как у Ивы")
+    : model || tr("same as Iva", "как у Ивы");
+}
 export async function currentConfig({
   readEnv = () => readEnvValues(ENV_PATH),
 } = {}) {
@@ -258,13 +279,11 @@ export async function currentConfig({
   const configured = env.MODEL_PROVIDER ?? "ollama";
   const valid = Boolean(catalogProvider(configured));
   const provider = valid ? configured : "ollama";
+  const adjustableThinking = thinkingAvailable(provider, env);
   return {
     provider,
     providerIsValid: valid,
-    adjustableThinking:
-      providerSupportsReasoning(provider) &&
-      (provider !== "opencode" ||
-        resolveOpenCodeProtocol(env.OPENCODE_PROTOCOL) === "chat-completions"),
+    adjustableThinking,
     // Что реально стоит в .env. На неизвестном имени агент не стартует вовсе, и назвать
     // его «ollama» в строке «Сейчас…» значило бы спрятать причину, ради которой визард
     // и открыли. Экраны после сохранения показывают уже записанное имя, оно валидно.
@@ -272,12 +291,8 @@ export async function currentConfig({
     // Модель — тем же правилом, что у Статуса и рантайма. У невалидного провайдера модели
     // нет: показать OLLAMA_MODEL значило бы назвать модель, к которой никто не пойдёт.
     model: catalogModel(configured, env) ?? "?",
-    effort:
-      providerSupportsReasoning(provider) &&
-      (provider !== "opencode" ||
-        resolveOpenCodeProtocol(env.OPENCODE_PROTOCOL) === "chat-completions")
-        ? (env.THINKING_EFFORT ?? "").toLowerCase()
-        : "",
+    helperModel: helperModelLabel(provider, env),
+    effort: adjustableThinking ? (env.THINKING_EFFORT ?? "").toLowerCase() : "",
   };
 }
 
@@ -413,7 +428,7 @@ async function handleModelCmd(
   from: FlowId,
   { msgId }: { msgId?: number } = {},
 ) {
-  const { providerLabel, model, effort } = await currentConfig();
+  const { providerLabel, model, effort, helperModel } = await currentConfig();
   const st = newWizard(chatId, from, "model");
   st.msgId = msgId ?? null;
   st.step = "intro";
@@ -424,6 +439,7 @@ async function handleModelCmd(
       "| --- | --- | --- |",
       `| ${escapeRichText(providerLabel)} | ${escapeRichText(model)} | ${escapeRichText(effortLabel(effort))} |`,
     ].join("\n"),
+    `${button(tr("Helper model", "Модель помощника"), "iva_model:helper")}: ${escapeRichText(helperModel)}`,
     `${button(tr("Change", "Сменить"), "iva_model:chg")} — ${tr(
       "pick another provider or model.",
       "выбрать другого провайдера или модель.",
@@ -790,6 +806,49 @@ async function askKeyOrShowModels(
   return showModelScreen(st);
 }
 
+function loadWizardModels(st: WizardState, env: Record<string, string>) {
+  const cat = CATALOG[st.provider];
+  const base = cat.baseVar
+    ? (st.pendingBase ?? providerBase(cat, env))
+    : undefined;
+  return runWizardRequest(st, () =>
+    fetchModelOptions(
+      st.provider,
+      cat.keyVar ? (st.pendingKey ?? env[cat.keyVar]) : undefined,
+      { dataDir: DATA_DIR_ABS, ...(base ? { base } : {}) },
+    ),
+  );
+}
+function turnModelOptions(
+  st: WizardState,
+  options: ModelOption[],
+  env: Record<string, string>,
+) {
+  const responses =
+    st.provider === "opencode" &&
+    resolveOpenCodeProtocol(env.OPENCODE_PROTOCOL) === "responses";
+  const candidates = responses
+    ? options.map((option) => ({ ...option, reasoningLevels: [] }))
+    : options;
+  const summary = st.helperModel ? modelSummary(env) : null;
+  const selectable = summary
+    ? candidates.filter(
+        (option) =>
+          helperModelWindow(
+            st.provider,
+            option.id,
+            summary.model,
+            summary.contextWindow,
+          ) !== null,
+      )
+    : candidates;
+  return wizardModelOptions(
+    st.provider,
+    selectable,
+    env[CATALOG[st.provider].modelVar],
+  );
+}
+
 async function showModelScreen(st: WizardState) {
   const cat = CATALOG[st.provider];
   const env = await readEnvValues(ENV_PATH);
@@ -807,32 +866,17 @@ async function showModelScreen(st: WizardState) {
     ].join("\n\n"),
   );
   if (!wizardIsCurrent(st)) return loadingShown;
-  const base = cat.baseVar
-    ? (st.pendingBase ?? providerBase(cat, env))
-    : undefined;
-  const loaded = await runWizardRequest(st, () =>
-    fetchModelOptions(
-      st.provider,
-      cat.keyVar ? (st.pendingKey ?? env[cat.keyVar]) : undefined,
-      { dataDir: DATA_DIR_ABS, ...(base ? { base } : {}) },
-    ),
-  );
+  const loaded = await loadWizardModels(st, env);
   if (loaded.stale) return loadingShown;
   if (!loaded.ok) {
     // У чужого эндпоинта GET /models не обязан существовать: отсутствие каталога — не
     // поломка, а повод спросить имя модели у владельца. Отказ по ключу остаётся отказом.
-    if (cat.baseVar && !isAuthRejection(loaded.error))
+    if (!st.helperModel && cat.baseVar && !isAuthRejection(loaded.error))
       return askModelId(st, errorReason(loaded.error));
     return showModelValidationError(st, loaded.error);
   }
-  const responses =
-    st.provider === "opencode" &&
-    resolveOpenCodeProtocol(env.OPENCODE_PROTOCOL) === "responses";
-  const options = responses
-    ? loaded.value.map((option) => ({ ...option, reasoningLevels: [] }))
-    : loaded.value;
   const current = env[cat.modelVar];
-  st.modelOptions = wizardModelOptions(st.provider, options, current);
+  st.modelOptions = turnModelOptions(st, loaded.value, env);
   st.step = "models";
   const lines = [
     `# ${tr("🧠 Model", "🧠 Модель")} · ${escapeRichText(cat.label)}`,
@@ -846,6 +890,8 @@ async function showModelScreen(st: WizardState) {
         ]
       : []),
   ];
+  if (st.helperModel)
+    lines.push(button(tr("Same as Iva", "Как у Ивы"), "iva_model:helper-same"));
   lines.push(modelPrompt());
   // Модели — равноправные варианты без пояснений, но id бывают длинными: по одной в строке.
   lines.push(
@@ -1123,6 +1169,66 @@ async function handleModelIdText(
   return true;
 }
 
+function wizardSelection(st: WizardState, env: Record<string, string>) {
+  const cat = CATALOG[st.provider];
+  const key = cat.keyVar
+    ? st.dropKey
+      ? undefined
+      : (st.pendingKey ?? env[cat.keyVar])
+    : undefined;
+  const base = cat.baseVar
+    ? (st.pendingBase ?? providerBase(cat, env))
+    : undefined;
+  return {
+    provider: st.provider,
+    ...(st.provider === "opencode"
+      ? { opencodeProtocol: env.OPENCODE_PROTOCOL }
+      : {}),
+    model: st.model,
+    key,
+    dataDir: DATA_DIR_ABS,
+    ...(base ? { base } : {}),
+  };
+}
+function wizardUpdates(
+  st: WizardState,
+  env: Record<string, string>,
+): Record<string, string | null> {
+  const updates: Record<string, string | null> = { THINKING_EFFORT: st.effort };
+  if (st.flow !== "model") return updates;
+  const cat = CATALOG[st.provider];
+  updates.MODEL_PROVIDER = st.provider;
+  if (st.provider !== (env.MODEL_PROVIDER ?? "ollama"))
+    updates.HELPER_MODEL = null;
+  updates[cat.modelVar] = st.model;
+  if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
+  if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
+  else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;
+  return updates;
+}
+
+function assertHelperModelWindow(st: WizardState, env: Record<string, string>) {
+  if (!st.helperModel) return;
+  if (st.provider !== (env.MODEL_PROVIDER ?? "ollama"))
+    throw new ModelValidationError(
+      "invalid_selection",
+      "helper provider changed",
+    );
+
+  if (
+    helperModelWindow(
+      st.provider,
+      st.model,
+      catalogModel(st.provider, env) ?? "?",
+      modelSummary(env).contextWindow,
+    ) === null
+  )
+    throw new ModelValidationError(
+      "invalid_selection",
+      "unknown helper context window",
+    );
+}
+
 export async function validateAndSaveWizard(
   st: WizardState,
   {
@@ -1140,41 +1246,25 @@ export async function validateAndSaveWizard(
       "invalid wizard selection",
     );
   }
-  const key = cat.keyVar
-    ? st.dropKey
-      ? undefined
-      : (st.pendingKey ?? env[cat.keyVar])
-    : undefined;
-  const base = cat.baseVar
-    ? (st.pendingBase ?? providerBase(cat, env))
-    : undefined;
-  await validate({
-    provider: st.provider,
-    ...(st.provider === "opencode"
-      ? { opencodeProtocol: env.OPENCODE_PROTOCOL }
-      : {}),
-    model: st.model,
-    key,
-    dataDir: DATA_DIR_ABS,
-    ...(base ? { base } : {}),
-  });
-  const updates: Record<string, string | null> = { THINKING_EFFORT: st.effort }; // null ⇒ drop the line ("не задан")
-  if (st.flow === "model") {
-    updates.MODEL_PROVIDER = st.provider;
-    updates[cat.modelVar] = st.model;
-    if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
-    if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
-    // Явное «без ключа» СНОСИТ строку: иначе на новый эндпоинт уехал бы ключ от прошлого.
-    else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;
-  }
-  await write(updates);
+  assertHelperModelWindow(st, env);
+  await validate(wizardSelection(st, env));
+  await write(
+    st.helperModel ? { HELPER_MODEL: st.model } : wizardUpdates(st, env),
+  );
 }
 
 const saveWizard = (st: WizardState) => validateAndSaveWizard(st);
 
 async function showSaved(st: WizardState) {
-  const { provider, model, effort } = await currentConfig();
+  const {
+    provider,
+    model: chatModel,
+    helperModel,
+    effort,
+  } = await currentConfig();
+  const model = st.helperModel ? helperModel : chatModel;
   if (!wizardIsCurrent(st)) return;
+  delete st.helperModel;
   st.step = "saved";
   await wizScreen(
     st,
@@ -1258,6 +1348,12 @@ async function onWizardRetry(st: WizardState): Promise<boolean> {
 }
 
 function onWizardBack(st: WizardState): Promise<boolean> {
+  if (st.helperModel) {
+    delete st.helperModel;
+    return handleModelCmd(st.chatId, st.userId, {
+      msgId: st.msgId ?? undefined,
+    });
+  }
   if (st.flow === "think") {
     return endWizard(
       st,
@@ -1277,7 +1373,7 @@ async function onWizardModel(
 ): Promise<boolean> {
   const option = selectWizardModel(st, action.slice("m:".length));
   if (!option) return false;
-  if (option.reasoningLevels.length === 0) {
+  if (st.helperModel || option.reasoningLevels.length === 0) {
     st.effort = null;
     try {
       await saveWizard(st);
@@ -1401,7 +1497,23 @@ async function onWizardRestartNow(st: WizardState): Promise<boolean> {
 
 // Таблица глагол → обработчик. Точные совпадения — по ключу, префиксные глаголы
 // (prov:/m:/eff:) — по началу действия.
+async function onWizardHelper(st: WizardState): Promise<boolean> {
+  const config = await currentConfig();
+  if (!wizardIsCurrent(st)) return false;
+  st.provider = config.provider;
+  st.helperModel = true;
+  return showModelScreen(st);
+}
+async function onWizardHelperSame(st: WizardState): Promise<boolean> {
+  if (!st.helperModel) return false;
+  await upsertEnv(ENV_PATH, { HELPER_MODEL: "" });
+  if (wizardIsCurrent(st)) await showSaved(st);
+  return true;
+}
+
 const WIZARD_VERB_HANDLERS: Record<string, WizardVerbHandler> = {
+  helper: onWizardHelper,
+  "helper-same": onWizardHelperSame,
   keep: onWizardKeep,
   cancel: onWizardCancel,
   chg: onWizardChg,

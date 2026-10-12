@@ -816,13 +816,17 @@ const adjacentUserMessagesMiddleware: LanguageModelMiddleware = {
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
  */
 export function makeTextModel(options: {
+  model?: string;
   sessionId?: string;
   chatModelSeesImages: ImageCapability;
   // Чей шаг ведёт модель: расход компактации eve уходит в usage.jsonl под этим ходом.
   usage?: UsageLabel;
 }) {
   return wrapLanguageModel({
-    model: makeBareTextModel(options.sessionId),
+    model: makeBareTextModel(
+      options.model ?? providerConfig.textModel,
+      options.sessionId,
+    ),
     middleware: [
       repeatGuardMiddleware,
       attachImagesMiddleware(options.chatModelSeesImages),
@@ -831,7 +835,10 @@ export function makeTextModel(options: {
       adjacentUserMessagesMiddleware,
       // Порядок свободен: кодирование идемпотентно, других читателей toolName в цепочке нет.
       toolNameWireMiddleware(MODEL_PROVIDERS[providerName].toolNameMax),
-      compactionUsageMiddleware(options.usage),
+      compactionUsageMiddleware(
+        options.usage,
+        options.model ?? providerConfig.textModel,
+      ),
     ],
   });
 }
@@ -861,18 +868,17 @@ export function makeOpenCodeModel(
       })(model);
 }
 
-function makeBareTextModel(sessionId?: string) {
+function makeBareTextModel(model: string, sessionId?: string) {
   // Codex-подписка говорит на Responses API — отдельная модель-фабрика (@ai-sdk/openai).
   // Claude-подписка — тоже своя модель: рукописная LanguageModelV4 поверх Claude Code CLI
   // (stream-json), потому что API-адреса у неё нет вовсе.
   // Go выбирает провод явно; остальные API-ключи говорят chat/completions.
-  if (providerName === "codex")
-    return makeCodexModel(providerConfig.textModel, sessionId);
+  if (providerName === "codex") return makeCodexModel(model, sessionId);
   if (providerName === "claude")
-    return makeClaudeCliModel(providerConfig.textModel, { sessionId });
+    return makeClaudeCliModel(model, { sessionId });
   if (providerName === "opencode")
     return makeOpenCodeModel(
-      providerConfig.textModel,
+      model,
       providerConfig.opencodeProtocol!,
       sessionId,
     );
@@ -884,7 +890,7 @@ function makeBareTextModel(sessionId?: string) {
     // {include_usage:true}) → событие step.completed приходит без поля usage, и учёт токенов
     // (agent/hooks/usage.ts) пуст. Включаем, чтобы провайдер отдавал расход в финальном чанке.
     includeUsage: true,
-  })(providerConfig.textModel);
+  })(model);
 }
 
 // --- Рассуждение в истории хода: возвращаем там, где вендор его принимает ---------------------

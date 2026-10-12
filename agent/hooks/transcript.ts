@@ -1,3 +1,4 @@
+import { isHelperTurn } from "../lib/eve-auth.ts";
 import { defineHook } from "eve/hooks";
 // Двусторонний транскрипт: финальный ответ Iva дозаписывается в ТОТ ЖЕ дневной файл
 // vault, что и реплики юзера (agent/lib/telegram-inbound.ts).
@@ -10,7 +11,7 @@ export default defineHook({
     // пишем только финальные реплики Iva.
     "message.completed": (event, ctx) => {
       // ctx.session.parent — типизированная связь eve с родительским ходом при любом адаптере.
-      if (ctx.session.parent) return;
+      if (ctx.session.parent || isHelperTurn(ctx)) return;
       if (event.data.finishReason === "tool-calls") return;
       const text = (event.data.message ?? "").trim();
       // QUIET — ответ планового хода Watch или Brief «писать не о чем»: в чат он не уходит

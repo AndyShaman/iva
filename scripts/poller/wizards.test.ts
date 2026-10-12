@@ -343,6 +343,7 @@ test("saving custom writes the endpoint, the model and drops a key nobody wants"
   assert.deepEqual(seen[1].updates, {
     THINKING_EFFORT: null,
     MODEL_PROVIDER: "custom",
+    HELPER_MODEL: null,
     CUSTOM_MODEL: "some-model",
     CUSTOM_BASE_URL: "https://api.example.com/v1",
     // null сносит строку: старый ключ не должен уехать на новый эндпоинт.
@@ -568,6 +569,7 @@ test("picking a claude model asks the thinking level, and saving writes THINKING
   assert.deepEqual(written, {
     THINKING_EFFORT: "xhigh",
     MODEL_PROVIDER: "claude",
+    HELPER_MODEL: null,
     CLAUDE_MODEL: "claude-opus-5-5",
   });
 });
@@ -702,5 +704,81 @@ test("model changes validate Go Responses and preserve the owner’s transport s
     written?.OPENCODE_PROTOCOL,
     undefined,
     "upsert leaves the configured protocol intact",
+  );
+});
+
+test("helper model choice validates its known window and writes only HELPER_MODEL", async () => {
+  let written: Record<string, string | null> | undefined;
+  let called = 0;
+  const env = {
+    MODEL_PROVIDER: "claude",
+    CLAUDE_MODEL: "claude-haiku-4-5-20251001",
+    CLAUDE_CONTEXT_WINDOW: "200000",
+    THINKING_EFFORT: "high",
+  };
+  const options = {
+    readEnv: async () => env,
+    validate: async () => {
+      called++;
+      return { id: "claude-sonnet-5-5", reasoningLevels: [] };
+    },
+    write: async (updates: Record<string, string | null>) => {
+      written = updates;
+    },
+  };
+  await validateAndSaveWizard(
+    {
+      flow: "model",
+      provider: "claude",
+      model: "claude-sonnet-5-5",
+      effort: null,
+      helperModel: true,
+    } as never,
+    options,
+  );
+  assert.equal(called, 1);
+  assert.deepEqual(written, { HELPER_MODEL: "claude-sonnet-5-5" });
+  await assert.rejects(
+    validateAndSaveWizard(
+      {
+        flow: "model",
+        provider: "claude",
+        model: "future-unknown",
+        helperModel: true,
+      } as never,
+      options,
+    ),
+    /unknown helper context window/,
+  );
+  assert.equal(called, 1);
+  const defaultConfig = await currentConfig({ readEnv: async () => env });
+  assert.equal(defaultConfig.helperModel, "claude-sonnet-5-5");
+  const same = await currentConfig({
+    readEnv: async () => ({ ...env, HELPER_MODEL: "" }),
+  });
+  assert.match(same.helperModel, /same as Iva|как у Ивы/);
+});
+
+test("R1 switching provider resets helper model and stale helper cannot save", async () => {
+  const env = { MODEL_PROVIDER: "ollama", HELPER_MODEL: "deepseek-v4-pro" };
+  let updates: Record<string, string | null> = {};
+  const st = {
+    flow: "model",
+    provider: "claude",
+    model: "claude-sonnet-5-5",
+    effort: "high",
+  };
+  const options = {
+    readEnv: async () => env,
+    validate: async () => ({ id: st.model, reasoningLevels: [] }),
+    write: async (next: Record<string, string | null>) => {
+      updates = next;
+    },
+  };
+  await validateAndSaveWizard(st as never, options);
+  assert.equal(updates.HELPER_MODEL, null);
+  await assert.rejects(
+    validateAndSaveWizard({ ...st, helperModel: true } as never, options),
+    /helper provider changed/,
   );
 });

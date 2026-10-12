@@ -26,14 +26,35 @@ export const TURN_KINDS: ReadonlySet<string> = new Set([
   "reminder",
   "signal",
   "alert",
+  "helper",
 ]);
 
-/** Вид хода — атрибутом, только у запроса, уже прошедшего bearer, и только из списка. */
+export function isHelperTurn(ctx?: {
+  session: {
+    auth?: {
+      initiator?: { attributes: Readonly<Record<string, unknown>> } | null;
+      current?: { attributes: Readonly<Record<string, unknown>> } | null;
+    };
+  };
+}): boolean {
+  return [ctx?.session.auth?.initiator, ctx?.session.auth?.current].some(
+    (auth) => auth?.attributes.iva_turn === "helper",
+  );
+}
+
+/** Service attributes are accepted only after bearer authentication. */
 function serviceAuth(request: Request) {
   const turn = request.headers.get("x-iva-turn");
-  return turn !== null && TURN_KINDS.has(turn)
-    ? { ...SERVICE_AUTH, attributes: { iva_turn: turn } }
-    : SERVICE_AUTH;
+  if (turn === null || !TURN_KINDS.has(turn)) return SERVICE_AUTH;
+  if (turn !== "helper")
+    return { ...SERVICE_AUTH, attributes: { iva_turn: turn } };
+  const id = request.headers.get("x-iva-helper");
+  return id !== null && /^h-[0-9a-f]{6}$/.test(id)
+    ? {
+        ...SERVICE_AUTH,
+        attributes: { iva_turn: turn, iva_helper: id, iva_max_steps: 80 },
+      }
+    : null;
 }
 
 function equalSecret(left: string, right: string): boolean {

@@ -115,3 +115,13 @@ test("an intermediate step before a tool call is still skipped", (t) => {
   completed("думаю…", "tool-calls");
   assert.equal(daily(), before);
 });
+
+test("helper text is skipped and an ordinary chat still writes", (t) => {
+  resetDaily(t);
+  completed("helper private result", "stop", {
+    session: { auth: { initiator: { attributes: { iva_turn: "helper" } } } },
+  });
+  assert.equal(daily(), "");
+  completed("chat reply");
+  assert.match(daily(), /chat reply/);
+});

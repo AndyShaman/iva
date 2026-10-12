@@ -1,5 +1,6 @@
 import { defineHook } from "eve/hooks";
-import { TURN_KINDS } from "../lib/eve-auth.js";
+import { stepModelChoice } from "../agent.ts";
+import { TURN_KINDS, isHelperTurn } from "../lib/eve-auth.js";
 import { resolveModelProvider } from "../lib/model-provider.js";
 import {
   appendUsage,
@@ -30,7 +31,7 @@ import {
 // КАЖДОМ шаге модели, включая tool-call раунды.
 
 // Модель/провайдер не приходят в событие — используем тот же строгий выбор, что и runtime.
-const { name: PROVIDER, model: MODEL } = resolveModelProvider();
+const { name: PROVIDER } = resolveModelProvider();
 
 interface StepData {
   stepIndex: number;
@@ -45,6 +46,7 @@ interface StepData {
 
 /** Чей шаг: сессия, канал, имя инлайн-субагента и родитель сессии-ребёнка. */
 interface StepOwner {
+  readonly model: string;
   readonly sessionId: string;
   readonly source: string;
   readonly subagent?: string;
@@ -60,11 +62,15 @@ interface Initiator {
 /** Источник строки: вид хода Ивы из bearer-атрибута, иначе вид канала. */
 function sourceOf(ctx: {
   readonly session: {
-    readonly auth?: { readonly initiator: Initiator | null };
+    readonly auth?: {
+      readonly initiator: Initiator | null;
+      readonly current?: Initiator | null;
+    };
   };
   readonly channel: { readonly kind?: string };
 }): string {
-  const initiator = ctx.session.auth?.initiator;
+  if (isHelperTurn(ctx)) return "helper";
+  const initiator = ctx.session.auth?.current ?? ctx.session.auth?.initiator;
   const turn =
     initiator?.authenticator === "iva-bearer"
       ? initiator.attributes.iva_turn
@@ -95,7 +101,7 @@ function record(data: StepData, owner: StepOwner): void {
     {
       source,
       provider: PROVIDER,
-      model: MODEL,
+      model: owner.model,
       sessionId,
       turnId: data.turnId ?? "",
       step: data.stepIndex ?? 0,
@@ -117,6 +123,7 @@ export default defineHook({
       // ребёнок встроенного agent идёт под своей сессией.
       recordStepInput(ctx.session.id, stepInputTokens(event.data.usage));
       record(event.data, {
+        model: stepModelChoice(ctx).model,
         sessionId: ctx.session.id,
         source: sourceOf(ctx),
         parent: ctx.session.parent,
@@ -149,6 +156,7 @@ export default defineHook({
             ),
           },
           {
+            model: stepModelChoice(ctx).model,
             sessionId: ctx.session.id,
             source: sourceOf(ctx),
             subagent: event.data.subagentName,

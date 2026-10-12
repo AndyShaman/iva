@@ -1,3 +1,4 @@
+import { isHelperTurn } from "../lib/eve-auth.ts";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,7 +56,9 @@ function nowMarkdown(): string {
 export default defineDynamic({
   events: {
     // turn.started — пересчитывается на каждом турне, чтобы время и локаль не «застывали».
-    "turn.started": () =>
-      defineInstructions({ content: nowMarkdown(), role: "user" }),
+    "turn.started": (_event, ctx) =>
+      isHelperTurn(ctx)
+        ? null
+        : defineInstructions({ content: nowMarkdown(), role: "user" }),
   },
 });

@@ -58,6 +58,7 @@ export interface ModelProviderSelection {
 export const MODEL_PROVIDERS = {
   ollama: {
     modelVar: "OLLAMA_MODEL",
+    defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
     // Рассуждение прошлых шагов обратно не шлём, как и у остальных OpenAI-совместимых:
@@ -74,6 +75,7 @@ export const MODEL_PROVIDERS = {
   },
   opencode: {
     modelVar: "OPENCODE_MODEL",
+    defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
     replaysReasoning: false,
@@ -90,6 +92,7 @@ export const MODEL_PROVIDERS = {
   },
   codex: {
     modelVar: "CODEX_MODEL",
+    defaultHelperModel: null,
     defaultModel: "gpt-5.5",
     compatibleReasoning: false,
     // Бэкенд подписки принимает рассуждение прошлых шагов обратно (reasoning-item с
@@ -108,6 +111,7 @@ export const MODEL_PROVIDERS = {
     // (scripts/lib/model-catalog.ts просит его рукопожатием CLI), поэтому здесь кандидаты, а
     // не единственно верное имя: fable, opus, sonnet, Haiku 5.5 — 1M контекста, Haiku 4.5 — 200k.
     modelVar: "CLAUDE_MODEL",
+    defaultHelperModel: "claude-sonnet-5-5",
     defaultModel: "claude-fable-5-1",
     compatibleReasoning: false,
     // Подписка отвергает рассуждение без подписи, а сборка промпта CLI его и так пропускает.
@@ -122,6 +126,7 @@ export const MODEL_PROVIDERS = {
     // Слаг модели вида vendor/model (напр. anthropic/claude-sonnet-5.5) — задаётся мастером.
     // Дефолт — лишь заглушка на случай ручного .env; мастер всегда перезапишет живой проверкой.
     modelVar: "OPENROUTER_MODEL",
+    defaultHelperModel: null,
     defaultModel: "openai/gpt-5.1",
     compatibleReasoning: false,
     replaysReasoning: false,
@@ -138,6 +143,7 @@ export const MODEL_PROVIDERS = {
     modelVar: "CUSTOM_MODEL",
     // Дефолту взяться неоткуда: что за модели у чужого эндпоинта, знает только его владелец.
     // null — «обязательна»: пустая переменная валит старт, а не подставляет чужое имя.
+    defaultHelperModel: null,
     defaultModel: null,
     // reasoning_effort незнакомому эндпоинту не шлём: OpenAI-совместимость этого поля не
     // обещает, а лишний параметр — HTTP 400 на каждом ходу.
@@ -154,6 +160,7 @@ export const MODEL_PROVIDERS = {
   {
     modelVar: string;
     // null = обязательная переменная: у провайдера нет модели, которую можно подставить молча.
+    defaultHelperModel: string | null;
     defaultModel: string | null;
     compatibleReasoning: boolean;
     // Рассуждение прошлых шагов возвращается модели в истории хода. false — вырезается и из

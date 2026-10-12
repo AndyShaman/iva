@@ -22,6 +22,7 @@ export const REMINDER_TURN_KINDS = [
   "reminder",
   "signal",
   "alert",
+  "helper",
 ] as const;
 
 export type ReminderTurnKind = (typeof REMINDER_TURN_KINDS)[number];

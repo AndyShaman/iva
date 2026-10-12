@@ -1,3 +1,4 @@
+import { isHelperTurn } from "../lib/eve-auth.ts";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,6 +40,9 @@ export default defineDynamic({
   events: {
     // turn.started — перечитывается каждый турн, чтобы смена PERSONA в /menu применялась
     // со следующего сообщения без рестарта.
-    "turn.started": () => defineInstructions({ markdown: personaMarkdown() }),
+    "turn.started": (_event, ctx) =>
+      isHelperTurn(ctx)
+        ? null
+        : defineInstructions({ markdown: personaMarkdown() }),
   },
 });
