@@ -28,6 +28,7 @@ import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
 import { contextStorage } from "#context/container.js";
 import {
   AuthKey,
+  InitiatorAuthKey,
   ParentSessionKey,
   ScheduleIdKey,
   SessionCallbackKey,
@@ -440,13 +441,15 @@ function updateCompactionThresholdForModelReference(input: {
     return input.compaction;
   }
 
+  const percent = input.modelReference.compactionThresholdPercent ?? input.compaction.thresholdPercent ?? 0.9;
   return {
     ...input.compaction,
+    ...(input.modelReference.compactionThresholdPercent === undefined ? {} : { thresholdPercent: percent }),
     threshold: Math.max(
       1,
       Math.floor(
         input.modelReference.contextWindowTokens *
-          (input.compaction.thresholdPercent ?? 0.9),
+          percent,
       ),
     ),
   };
@@ -512,6 +515,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     ): readonly ModelMessage[] => prepareHistory(messages, state).messages;
 
     let emissionState = getHarnessEmissionState(session.state);
+    if (baseEmit === undefined && hasStepInput(input)) emissionState = { ...emissionState, stepIndex: 0 };
     const store = contextStorage.getStore();
     const parent = store?.get(ParentSessionKey);
     const callback = store?.get(SessionCallbackKey);
@@ -1170,6 +1174,14 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     // Direct harness unit tests may run without an ambient context.
     const ctx = store;
+    const limits = [ctx?.get(InitiatorAuthKey), ctx?.get(AuthKey)].flatMap(auth => {
+      const attrs = auth?.attributes;
+      if (!attrs || !Object.hasOwn(attrs, "iva_max_steps")) return [];
+      const value = attrs.iva_max_steps;
+      return [typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 1];
+    });
+    const maxSteps = limits.length ? Math.min(...limits) : undefined;
+    const lastIvaStep = maxSteps !== undefined && emissionState.stepIndex + 1 >= maxSteps;
     let resolvedModel: Awaited<ReturnType<typeof resolveActiveRuntimeModel>>;
     try {
       if (ctx !== undefined && config.dispatchDynamicModelEvent !== undefined) {
@@ -1389,7 +1401,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const backgroundBatch = createBackgroundToolCallBatch();
       const advertisedHarnessTools = getAdvertisedTools({
         session,
-        tools: harnessTools,
+        tools: lastIvaStep ? new Map() : harnessTools,
       });
       modelCallCoordinationTools = advertisedHarnessTools;
 
@@ -1405,7 +1417,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       if (ctx !== undefined) {
         const dynamicTools = getAdvertisedTools({
           session,
-          tools: buildDynamicTools(ctx),
+          tools: lastIvaStep ? [] : buildDynamicTools(ctx),
         });
         const dynamicToolSet = buildToolSetFromDefinitions({
           approvedTools,
@@ -1429,7 +1441,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         }
       }
 
-      if (session.outputSchema !== undefined) {
+      if (!lastIvaStep && session.outputSchema !== undefined) {
         flatTools[FINAL_OUTPUT_TOOL_NAME] = buildFinalOutputTool(
           session.outputSchema,
         );
@@ -1447,7 +1459,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         workflow: workflowConfig,
       });
       session = advertisedModelTools.session;
-      const modelTools = advertisedModelTools.modelTools;
+      const modelTools = lastIvaStep ? {} : advertisedModelTools.modelTools;
 
       const effectiveTools = marker
         ? applyLastToolCacheBreakpoint(modelTools, marker)
@@ -1951,6 +1963,16 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     });
 
     // --- Handle result ------------------------------------------------------
+
+    if (lastIvaStep) {
+      const output = resolveAssistantStepText(result.response.messages, result.text) ?? "";
+      session = { ...session, history: [...messages, ...result.response.messages], outputSchema: undefined };
+      if (emit) session = setHarnessEmissionState(session,
+        await emitTurnEpilogue(emit, emissionState, config.mode, "step-limit"));
+      return config.mode === "task"
+        ? { next: { done: true, output }, session }
+        : { next: null, session, settledTurn: { output } };
+    }
 
     return handleStepResult({
       config,
@@ -2919,10 +2941,8 @@ async function handleStepResult(input: {
       normalizedProviderHistory.outcomeEndsResponse ||
       hasDeferredStepInput(nextSession));
   if (continueLoop) {
-    if (emit) {
-      emissionState = advanceStep(emissionState);
-      nextSession = setHarnessEmissionState(nextSession, emissionState);
-    }
+    emissionState = advanceStep(emissionState);
+    nextSession = setHarnessEmissionState(nextSession, emissionState);
 
     return { next: runStep, session: nextSession };
   }

@@ -100,6 +100,7 @@ import {
 
 vi.mock("ai", () => ({
   ToolLoopAgent: vi.fn(),
+  wrapLanguageModel: vi.fn((options: { model: unknown }) => options.model),
   gateway: {
     tools: {
       exaSearch: vi.fn(() => ({})),

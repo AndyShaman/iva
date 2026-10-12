@@ -46,6 +46,7 @@ export type ModelRouting =
 export type InternalAgentModelDefinition = {
   id: string;
   contextWindowTokens?: number;
+  compactionThresholdPercent?: number;
   maxOutputTokens?: number;
   source?: ModuleSourceRef;
   providerOptions?: Record<string, JsonObject>;
@@ -64,6 +65,7 @@ export interface PublicAgentModelSelectionDefinition {
   readonly model: PublicAgentStaticModelDefinition;
   /** Context window of the selected model, in tokens. */
   readonly modelContextWindowTokens?: number;
+  readonly modelCompactionThresholdPercent?: number;
   /** Provider options for the selected model. */
   readonly modelOptions?: AgentModelOptionsDefinition;
 }

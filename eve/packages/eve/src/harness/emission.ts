@@ -215,11 +215,13 @@ export async function emitTurnEpilogue(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
   mode: RunMode,
+  reason?: "step-limit",
 ): Promise<HarnessEmissionState> {
   await emitFn(
     createTurnCompletedEvent({
       sequence: state.sequence,
       turnId: state.turnId,
+      ...(reason === undefined ? {} : { reason }),
     }),
   );
 

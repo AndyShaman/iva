@@ -176,6 +176,7 @@ export async function resolveRuntimeModelSelection(input: {
       reference: {
         id: metadata.resolvedModelId,
         contextWindowTokens: metadata.contextWindowTokens,
+        compactionThresholdPercent: selection.modelCompactionThresholdPercent,
         maxOutputTokens: metadata.maxOutputTokens,
         providerOptions,
       },
@@ -211,6 +212,7 @@ export async function resolveRuntimeModelSelection(input: {
     reference: {
       id: metadata.resolvedModelId,
       contextWindowTokens: metadata.contextWindowTokens,
+      compactionThresholdPercent: selection.modelCompactionThresholdPercent,
       maxOutputTokens: metadata.maxOutputTokens,
       providerOptions,
     },
@@ -271,7 +273,7 @@ async function resolveSelectionMetadata(input: {
   return entry;
 }
 
-const DYNAMIC_MODEL_SELECTION_KEYS = new Set(["model", "modelContextWindowTokens", "modelOptions"]);
+const DYNAMIC_MODEL_SELECTION_KEYS = new Set(["model", "modelContextWindowTokens", "modelCompactionThresholdPercent", "modelOptions"]);
 
 function validateDynamicModelSelection(selection: PublicAgentModelSelectionDefinition): void {
   const unknownKeys = Object.keys(selection).filter(
@@ -283,6 +285,10 @@ function validateDynamicModelSelection(selection: PublicAgentModelSelectionDefin
     );
   }
 
+  const percent = selection.modelCompactionThresholdPercent;
+  if (percent !== undefined && (!Number.isFinite(percent) || percent <= 0 || percent > 1)) {
+    throw new Error("Dynamic model resolver returned an invalid modelCompactionThresholdPercent; expected (0, 1].");
+  }
   const contextWindowTokens = selection.modelContextWindowTokens;
   if (
     contextWindowTokens !== undefined &&

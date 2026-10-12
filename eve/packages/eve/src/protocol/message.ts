@@ -554,6 +554,7 @@ export interface StepFailedStreamEvent {
  */
 export interface TurnCompletedStreamEvent {
   data: {
+    reason?: "step-limit";
     sequence: number;
     turnId: string;
   };
@@ -1536,11 +1537,13 @@ export function createStepFailedEvent(input: {
  * Creates the `turn.completed` event for one terminal successful turn.
  */
 export function createTurnCompletedEvent(input: {
+  readonly reason?: "step-limit";
   readonly sequence: number;
   readonly turnId: string;
 }): TurnCompletedStreamEvent {
   return {
     data: {
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
       sequence: input.sequence,
       turnId: input.turnId,
     },
