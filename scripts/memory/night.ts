@@ -253,14 +253,16 @@ async function applyCachePending(cache: DayCache): Promise<void> {
       ]);
       continue;
     }
-    writeAtomic(
-      found.file,
-      fm.renderCardDocument(
-        found.parsed,
-        found.fields,
-        withFacts(found.body, rows),
-      ),
+    const next = fm.renderCardDocument(
+      found.parsed,
+      found.fields,
+      withFacts(found.body, rows),
     );
+    if (readIf(found.file) !== found.raw)
+      throw new Error(
+        `${card}: Card changed after read; pending facts stay cached`,
+      );
+    writeAtomic(found.file, next);
     if (!(await commit(`${card}: pending facts`, [found.file])))
       throw new Error(`${card}: отложенные факты не закоммичены`);
     delete cache.pending![card];
@@ -448,7 +450,12 @@ class Day {
         : "";
       if (!draft || next === draft.before) return [];
       mkdirSync(dirname(draft.file), { recursive: true });
+      if ((readIf(draft.file) ?? "") !== draft.before)
+        throw new Error(
+          `${draft.file}: Card changed after read; cached facts wait for the next night`,
+        );
       writeAtomic(draft.file, next);
+      draft.before = next;
       return [draft.file];
     });
   }
@@ -711,7 +718,10 @@ function applyTruthCard(run: TruthRun, card: string, entry: Truth) {
   entry.post = textHash(next);
   run.save();
   if (next === current!.raw) return null;
-  writeAtomic(current!.file, next);
+  const latest = readCard(card);
+  if (!latest || textHash(latest.raw) !== hash)
+    return giveUp(run, card, entry, latest);
+  writeAtomic(latest.file, next);
   return current!.file;
 }
 
@@ -731,14 +741,15 @@ function giveUp(
   delete entry.answer;
   entry.done = true;
   run.save();
-  const pending = str(current?.fields, "truth_pending");
-  if (!current || (pending && pending <= run.date)) return null;
-  const fields = { ...current.fields, truth_pending: run.date };
+  const latest = readCard(card);
+  const pending = str(latest?.fields, "truth_pending");
+  if (!latest || (pending && pending <= run.date)) return null;
+  const fields = { ...latest.fields, truth_pending: run.date };
   writeAtomic(
-    current.file,
-    fm.renderCardDocument(current.parsed, fields, current.body),
+    latest.file,
+    fm.renderCardDocument(latest.parsed, fields, latest.body),
   );
-  return current.file;
+  return latest.file;
 }
 
 /** B, затем CAS и запись под замком дневных писателей. */
@@ -814,11 +825,23 @@ function summaryOf(cache: DayCache, entries: DayEntry[], raw: string): string {
   return input.summaryText(fields, text);
 }
 
-async function finishDay(cache: DayCache, entries: DayEntry[], raw: string) {
+async function finishDay(
+  cache: DayCache,
+  entries: DayEntry[],
+  raw: string,
+  expectedSummary: string | null,
+) {
   const { date, pass } = { date: cache.date, pass: cache.pass! };
   const [summary, daily] = [summaryFile(date), dailyFile(date)];
   mkdirSync(dirname(summary), { recursive: true });
-  writeAtomic(summary, summaryOf(cache, entries, raw));
+  const nextSummary = summaryOf(cache, entries, raw);
+  const currentSummary = readIf(summary);
+  if (
+    currentSummary !== expectedSummary ||
+    (currentSummary !== null && input.summaryEdited(currentSummary))
+  )
+    return fail(`выжимка ${date} изменена вручную; день ждёт владельца`);
+  writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
   if (!input.markedDone(readFileSync(daily, "utf8")))
@@ -895,6 +918,7 @@ async function askPass(cache: DayCache, entries: DayEntry[]) {
 async function processDay(date: string): Promise<boolean> {
   const raw = readIf(dailyFile(date));
   if (raw === null) return !fail(`${date}: нет данных`);
+  const expectedSummary = readIf(summaryFile(date));
   const entries = input.parseDay(raw);
   const cache = openPass(date, entries);
   if (!cache?.pass) return true;
@@ -908,7 +932,7 @@ async function processDay(date: string): Promise<boolean> {
   const save = () => writeCache(cache);
   if (!(await applyTruth({ date, pass: cache.pass, save })))
     return fail(`${date}: правда не закоммичена`);
-  if (await finishDay(cache, entries, raw)) return true;
+  if (await finishDay(cache, entries, raw, expectedSummary)) return true;
   return fail(`${date}: выжимка не закоммичена`);
 }
 

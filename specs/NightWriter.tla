@@ -6,7 +6,7 @@
 \* только после коммита. Обрыв (kill -9) возможен на любом шаге применения.
 EXTENDS Naturals
 
-CONSTANT MaxDays
+CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
@@ -39,13 +39,29 @@ SaveAnswer ==
 
 \* Владелец правит Card, пока ночь ждёт ответа или держит его в кэше.
 HumanEdit ==
-  /\ phase \in {"called", "cached"} /\ file = "old"
+  /\ phase \in {"called", "cached", "checked", "saved", "rechecked"} /\ file = "old"
+  /\ (phase # "rechecked" \/ ~HumanPublishStable)
   /\ file' = "human" /\ human' = TRUE
   /\ Keep(<<phase, answer, committed, calls, lost, queue, pending, crashedOnce>>)
 
-\* Хеш совпал: раздел заменён целиком, атомарная запись.
-Replace ==
+\* First CAS read; run.save() publishes the cache before Card publication.
+Check ==
   /\ phase = "cached" /\ file = "old"
+  /\ phase' = "checked"
+  /\ Keep(<<file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>)
+SavePost ==
+  /\ phase = "checked"
+  /\ phase' = "saved"
+  /\ Keep(<<file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>)
+Recheck ==
+  /\ phase = "saved"
+  /\ phase' = IF RecheckAfterSave /\ file = "human" THEN "cached" ELSE "rechecked"
+  /\ Keep(<<file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>)
+\* Explicit filesystem assumption: the owner keeps the destination stable from the
+\* final reread through atomic rename. Cooperating Iva writers also share Card lock.
+\* With HumanPublishStable = FALSE the residual direct-edit window has a witness.
+Replace ==
+  /\ phase = "rechecked"
   /\ phase' = "written" /\ file' = "new"
   /\ Keep(<<answer, committed, calls, lost, queue, human, pending, crashedOnce>>)
 
@@ -80,7 +96,7 @@ NextDay ==
 
 \* kill -9 на любом шаге до готовности.
 Crash ==
-  /\ ~crashedOnce /\ phase \in {"called", "cached", "written", "committed"}
+  /\ ~crashedOnce /\ phase \in {"called", "cached", "checked", "saved", "rechecked", "written", "committed"}
   /\ phase' = "crashed" /\ crashedOnce' = TRUE
   /\ lost' = IF phase = "called" THEN 1 ELSE lost
   /\ Keep(<<file, answer, committed, calls, queue, human, pending>>)
@@ -95,16 +111,17 @@ Restart ==
 Done == queue = 0 /\ UNCHANGED vars
 
 Next ==
-  \/ Call \/ SaveAnswer \/ HumanEdit \/ Replace \/ Conflict \/ Resume
+  \/ Call \/ SaveAnswer \/ HumanEdit \/ Check \/ SavePost \/ Recheck \/ Replace \/ Conflict \/ Resume
   \/ Commit \/ Ready \/ NextDay \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
   /\ WF_vars(Call) /\ WF_vars(SaveAnswer) /\ WF_vars(Replace) /\ WF_vars(Conflict)
+  /\ WF_vars(Check) /\ WF_vars(SavePost) /\ WF_vars(Recheck)
   /\ WF_vars(Resume) /\ WF_vars(Commit) /\ WF_vars(Ready) /\ WF_vars(NextDay)
   /\ WF_vars(Restart)
 
 TypeOK ==
-  /\ phase \in {"idle", "called", "cached", "written", "committed", "done", "crashed"}
+  /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
   /\ file \in {"old", "new", "human"}
   /\ answer \in BOOLEAN /\ committed \in BOOLEAN /\ human \in BOOLEAN
   /\ pending \in BOOLEAN /\ crashedOnce \in BOOLEAN

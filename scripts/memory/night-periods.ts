@@ -148,6 +148,7 @@ async function buildPeriod(
   }));
   const inputs = children.map((child) => childInput(vault, child));
   const hash = input.stepHash(period, ask.model, ask.skill, [values, inputs]);
+  const expected = existsSync(file) ? readFileSync(file, "utf8") : null;
   if (!due(file, hash, jobs, `${period} ${id}`)) return null;
   let answer: z.infer<typeof periodAnswer>;
   let fallback = false;
@@ -201,7 +202,12 @@ async function buildPeriod(
     ...(fallback ? { mode: "fallback" } : {}),
   };
   mkdirSync(dirname(file), { recursive: true });
-  writeFileAtomicSync(file, input.summaryText(fields, body));
+  const next = input.summaryText(fields, body);
+  if ((existsSync(file) ? readFileSync(file, "utf8") : null) !== expected) {
+    jobs.push(`${period} ${id} изменён вручную; период не пересобирается`);
+    return null;
+  }
+  writeFileAtomicSync(file, next);
   if (!(await commitVaultWrite(`${period} ${id}: night`, [file], vault)).ok)
     throw new Error(`${period} ${id} не закоммичен`);
   return fallback ? `${period}/${id}` : "";

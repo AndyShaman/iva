@@ -183,6 +183,9 @@ function spawnNight(
     HOOKS,
     "--import",
     CLOCK,
+    ...(env.IVA_TEST_OWNER_TRIGGER
+      ? ["--import", join(ROOT, "scripts/fixtures/night-owner-edit.ts")]
+      : []),
     NIGHT,
     ...(date ? [date] : []),
   ];
@@ -2051,4 +2054,222 @@ void test("B: статус сверяется со схемой точной с�
       JSON.stringify(answer),
     );
   }
+});
+
+void test("owner edit window: Card save after B cache publication wins", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nАврора сменила курс\n");
+  const file = card(fx, "cards/projects/аврора", aurora);
+  fx.model.replies = [
+    A({
+      facts: [
+        {
+          card: "cards/projects/аврора",
+          text: "Курс сменён",
+          src: "e1",
+          quote: "Аврора сменила курс",
+        },
+      ],
+    }),
+    B({ card: "cards/projects/аврора", truth: "Ночная правда" }),
+  ];
+  const result = await night(fx, DATE, {
+    IVA_TEST_OWNER_FILE: file,
+    IVA_TEST_OWNER_TRIGGER: "applyTruthCard",
+    IVA_TEST_OWNER_STEP: "cache",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /OWNER_EDIT_WINDOW applyTruthCard/u);
+  assert.match(read(file), /Правда владельца/u);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.doesNotMatch(read(file), /Ночная правда/u);
+  assert.match(read(file), /truth_pending/u);
+});
+
+void test("owner edit window: giveUp keeps a save made during its cache publication", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nАврора сменила курс\n");
+  const file = card(fx, "cards/projects/аврора", aurora);
+  fx.model.replies = [
+    A({
+      facts: [
+        {
+          card: "cards/projects/аврора",
+          text: "Курс сменён",
+          src: "e1",
+          quote: "Аврора сменила курс",
+        },
+      ],
+    }),
+    B(),
+  ];
+  const result = await night(fx, DATE, {
+    IVA_TEST_OWNER_FILE: file,
+    IVA_TEST_OWNER_TRIGGER: "giveUp",
+    IVA_TEST_OWNER_STEP: "cache",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /OWNER_EDIT_WINDOW giveUp/u);
+  assert.match(read(file), /Правда владельца/u);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(read(file), /truth_pending/u);
+});
+
+void test("owner edit window: facts built from a Card draft preserve the owner's latest save", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nАврора сменила курс\n");
+  const file = card(fx, "cards/projects/аврора", aurora);
+  fx.model.replies = [
+    A({
+      facts: [
+        {
+          card: "cards/projects/аврора",
+          text: "Курс сменён",
+          src: "e1",
+          quote: "Аврора сменила курс",
+        },
+      ],
+    }),
+    B(),
+  ];
+  const result = await night(fx, DATE, {
+    IVA_TEST_OWNER_FILE: file,
+    IVA_TEST_OWNER_TRIGGER: "Day.draft",
+    IVA_TEST_OWNER_STEP: "read",
+  });
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /OWNER_EDIT_WINDOW Day.draft/u);
+  assert.match(read(file), /Правда владельца/u);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(result.stderr, /Card changed after read/u);
+  const calls = fx.model.prompts.length;
+  fx.model.replies = [B()];
+  const retry = await night(fx);
+  assert.equal(retry.code, 0, retry.stderr);
+  assert.equal(
+    fx.model.prompts.length,
+    calls + 1,
+    "A is reused from the saved cache",
+  );
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(read(file), /Курс сменён/u);
+});
+
+void test("owner edit window: links use the last Card publication as their snapshot", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nАврора сменила курс\n");
+  const file = card(fx, "cards/projects/аврора", aurora);
+  card(
+    fx,
+    "cards/projects/спутник",
+    aurora.map((row) => row.replace("Аврора", "Спутник")),
+  );
+  fx.model.replies = [
+    A({
+      facts: [
+        {
+          card: "cards/projects/аврора",
+          text: "Курс сменён",
+          src: "e1",
+          quote: "Аврора сменила курс",
+        },
+      ],
+      links: [
+        { a: "cards/projects/аврора", b: "cards/projects/спутник", src: "e1" },
+      ],
+    }),
+  ];
+  const result = await night(fx, DATE, {
+    IVA_TEST_OWNER_FILE: file,
+    IVA_TEST_OWNER_TRIGGER: "Day.write",
+    IVA_TEST_OWNER_STEP: "card",
+  });
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /OWNER_EDIT_WINDOW Day.write/u);
+  assert.match(read(file), /Правда владельца/u);
+  assert.match(read(file), /OWNER_EDIT/u);
+  fx.model.replies = [B()];
+  const retry = await night(fx);
+  assert.equal(retry.code, 0, retry.stderr);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(read(file), /\[\[cards\/projects\/спутник\]\]/u);
+});
+
+void test("owner edit window: pending facts keep their cache when the Card changes after read", async (t) => {
+  const fx = await fixture(t);
+  const file = card(fx, "cards/projects/аврора", aurora);
+  const cache = join(fx.data, "memory/night", `${DATE}.json`);
+  mkdirSync(join(cache, ".."), { recursive: true });
+  writeFileSync(
+    cache,
+    JSON.stringify({
+      v: 1,
+      date: DATE,
+      through: 0,
+      prefixHash: "",
+      touched: [],
+      core: [],
+      pending: { "cards/projects/аврора": [`- ${DATE}: Отложенный факт`] },
+    }),
+  );
+  const result = await night(fx, null, {
+    IVA_TEST_OWNER_FILE: file,
+    IVA_TEST_OWNER_TRIGGER: "applyCachePending",
+    IVA_TEST_OWNER_STEP: "read",
+  });
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /OWNER_EDIT_WINDOW applyCachePending/u);
+  assert.match(read(file), /Правда владельца/u);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(read(cache), /Отложенный факт/u);
+  const retry = await night(fx, null);
+  assert.equal(retry.code, 0, retry.stderr);
+  assert.match(read(file), /OWNER_EDIT/u);
+  assert.match(read(file), /Отложенный факт/u);
+});
+
+void test("owner edit window: daily summary saved while A runs stays on disk", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nПросто день\n");
+  fx.model.replies = [A()];
+  const held = fx.model.hold(1);
+  const run = spawnNight(fx);
+  await held.reached;
+  const { summaryText } = await import("./night-input.ts");
+  mkdirSync(join(summary(fx), ".."), { recursive: true });
+  writeFileSync(
+    summary(fx),
+    summaryText({ type: "daily-summary" }, "# Owner\n") + "\nOWNER_EDIT\n",
+  );
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(read(summary(fx)), /OWNER_EDIT/u);
+});
+
+void test("owner edit window: period summary saved while the model runs wins", async (t) => {
+  const fx = await fixture(t);
+  const { summaryText } = await import("./night-input.ts");
+  const daily = join(fx.vault, "summaries/daily/2026-08-17.md");
+  mkdirSync(join(daily, ".."), { recursive: true });
+  writeFileSync(
+    daily,
+    summaryText({ description: "День", input_hash: "old" }, "# Day\n"),
+  );
+  commit(fx.vault);
+  fx.model.replies = [periodReply("Ночная неделя")];
+  const held = fx.model.hold(1);
+  const run = spawnNight(fx, null);
+  await held.reached;
+  const weekly = join(fx.vault, "weekly/2026-W34.md");
+  mkdirSync(join(weekly, ".."), { recursive: true });
+  writeFileSync(
+    weekly,
+    summaryText({ description: "Владелец" }, "# Owner\n") + "\nOWNER_EDIT\n",
+  );
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(read(weekly), /OWNER_EDIT/u);
+  assert.doesNotMatch(read(weekly), /Ночная неделя/u);
 });
