@@ -9,14 +9,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { acquireLock, releaseLock } from "./json-store.ts";
 const chat = { id: "42", threadId: null };
-const finish = {
-  outcome: "done" as const,
-  summary: null,
-  reason: null,
-  model: null,
-  steps: 0,
-  tokens: 0,
-};
 async function setup(t: test.TestContext) {
   const dir = await fs.mkdtemp(join(tmpdir(), "iva-helper-fault-"));
   const prior = process.env.ASSISTANT_DATA_DIR;
@@ -46,7 +38,6 @@ test("T1 id collision 32 times preserves table and directories", async (t) => {
   assert.equal(calls, 32);
   assert.deepEqual(await s.readHelpers(), {
     schemaVersion: 1,
-    wakeSeq: 0,
     rows: [],
   });
   assert.deepEqual(await fs.readdir(join(dir, "helpers")), before);
@@ -58,7 +49,7 @@ test("T1 failed rename rolls back only its new directory and preserves table byt
   const s = await import("./helper-store.ts");
   await fs.writeFile(
     join(dir, "helpers.json"),
-    JSON.stringify({ schemaVersion: 1, wakeSeq: 0, rows: [] }),
+    JSON.stringify({ schemaVersion: 1, rows: [] }),
   );
   const before = await fs.readFile(join(dir, "helpers.json"), "utf8");
   const original = fs.rename;
@@ -99,7 +90,6 @@ test("lock timeout refuses a transition with existing bytes intact", async (t) =
     );
     assert.deepEqual(await s.readHelpers(), {
       schemaVersion: 1,
-      wakeSeq: 0,
       rows: [],
     });
   } finally {
@@ -134,48 +124,13 @@ test("orphan cleanup waits for mkdir-to-row critical section", async (t) => {
     steps: 0,
     tokens: 0,
     finishedAt: null,
-    wake: null,
-    wakes: 0,
-    lastWakeAt: null,
-    shown: null,
     delivered: null,
-    escalated: false,
   };
   await fs.writeFile(
     join(dir, "helpers.json"),
-    JSON.stringify({ schemaVersion: 1, wakeSeq: 0, rows: [row] }),
+    JSON.stringify({ schemaVersion: 1, rows: [row] }),
   );
   releaseLock(path, token);
   await cleaning;
   assert.ok((await fs.readdir(join(dir, "helpers"))).includes("h-aabbcc"));
-});
-test("reader rejects duplicate wake ids and wake id ahead of durable seq", async (t) => {
-  const dir = await setup(t);
-  const s = await import("./helper-store.ts");
-  const a = await s.addHelper({ task: "task", may: "", chat }, 1000);
-  const b = await s.addHelper({ task: "task", may: "", chat }, 1001);
-  assert.ok(a.ok && b.ok);
-  if (!a.ok || !b.ok) return;
-  await s.finalizeHelper(
-    a.row.id,
-    { kind: "pending", createdAt: 1000 },
-    finish,
-    1002,
-  );
-  await s.finalizeHelper(
-    b.row.id,
-    { kind: "pending", createdAt: 1001 },
-    finish,
-    1002,
-  );
-  await s.allocateHelperWake(a.row.id, 1003);
-  await s.allocateHelperWake(b.row.id, 1003);
-  const state = await s.readHelpers();
-  state.rows[1].wake = state.rows[0].wake;
-  await fs.writeFile(join(dir, "helpers.json"), JSON.stringify(state));
-  await assert.rejects(s.readHelpers(), s.HelperStoreError);
-  state.rows.pop();
-  state.wakeSeq = 0;
-  await fs.writeFile(join(dir, "helpers.json"), JSON.stringify(state));
-  await assert.rejects(s.readHelpers(), s.HelperStoreError);
 });

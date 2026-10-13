@@ -27,7 +27,7 @@ test("two independent T3 writers CAS the exact claim; stale/diagnostic helper an
   assert.ok(r.ok);
   await s.claimHelper(
     r.row.id,
-    { ownerPid: process.pid, ownerStartedAt: 1, maxRunning: 1 },
+    { ownerPid: process.pid, ownerStartedAt: 1 },
     2000,
   );
   const ctx = (fired?: string) => ({
