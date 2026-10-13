@@ -1,12 +1,18 @@
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; the async request double preserves the wizard boundary. */
 import "../fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { type TestContext } from "node:test";
+import test, { after, mock, type TestContext } from "node:test";
 import { ContextWindowConfigurationError } from "../../agent/lib/context-window.ts";
 import { MODEL_PROVIDER_NAMES } from "#lib/model-provider.ts";
+import {
+  ModelValidationError,
+  validateModelSelection,
+} from "../lib/model-validation.ts";
 import { CATALOG } from "../lib/model-catalog.ts";
 import { DATA_DIR_ABS } from "./config.ts";
 import {
@@ -25,6 +31,31 @@ import {
   wizardActionAllowed,
   wizardPickProvider,
 } from "./wizards.ts";
+
+// Every wizard settings read uses this fixture, including the full callback path.
+const originalReadFile = fsPromises.readFile;
+const settingsRead = mock.method(
+  fsPromises,
+  "readFile",
+  (
+    path: Parameters<typeof originalReadFile>[0],
+    options?: Parameters<typeof originalReadFile>[1],
+  ) =>
+    typeof path === "string" && path.endsWith("/.env")
+      ? Promise.resolve(
+          options === "utf8"
+            ? "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n"
+            : Buffer.from(
+                "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n",
+              ),
+        )
+      : originalReadFile(path, options),
+);
+syncBuiltinESMExports();
+after(() => {
+  settingsRead.mock.restore();
+  syncBuiltinESMExports();
+});
 
 test("reset copy rejects an invalid context window with the typed error", () => {
   assert.throws(
@@ -707,7 +738,7 @@ test("model changes validate Go Responses and preserve the owner’s transport s
   );
 });
 
-test("helper model choice validates its known window and writes only HELPER_MODEL", async () => {
+test("helper model choice invokes validation and writes only HELPER_MODEL", async () => {
   let written: Record<string, string | null> | undefined;
   let called = 0;
   const env = {
@@ -718,11 +749,17 @@ test("helper model choice validates its known window and writes only HELPER_MODE
   };
   const options = {
     readEnv: async () => env,
-    validate: async (selection: { model?: string | null }) => {
+    validate: async (
+      selection: Parameters<typeof validateModelSelection>[0],
+    ) => {
       called++;
-      if (selection.model === "future-unknown")
-        throw new Error("unknown Claude model");
-      return { id: "claude-sonnet-5-5", reasoningLevels: [] };
+      return validateModelSelection(selection, {
+        probeClaude: async (model) => {
+          if (model === "future-unknown")
+            throw new Error("unknown Claude model");
+          return { id: model, reasoningLevels: [] };
+        },
+      });
     },
     write: async (updates: Record<string, string | null>) => {
       written = updates;
@@ -750,7 +787,9 @@ test("helper model choice validates its known window and writes only HELPER_MODE
       } as never,
       options,
     ),
-    /Unknown Claude model|unknown Claude model|Unsupported Claude model|unsupported Claude model/,
+    (error: unknown) =>
+      error instanceof ModelValidationError &&
+      error.code === "catalog_unavailable",
   );
   assert.equal(called, 2);
   const defaultConfig = await currentConfig({ readEnv: async () => env });

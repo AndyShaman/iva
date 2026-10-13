@@ -1,3 +1,5 @@
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns test registration. */
 // Дешёвый CRAP-тест границы handleWizardCallback: шесть глаголов — что ушло в tg
 // (метод + текст/клавиатура) и что записалось в состояние. Сеть и .env подменены:
@@ -6,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { after } from "node:test";
+import test, { after, mock } from "node:test";
 
 const home = mkdtempSync(join(tmpdir(), "iva-wizard-cb-"));
 process.env.ASSISTANT_DATA_DIR = home;
@@ -19,6 +21,31 @@ const { flows, handleWizardCallback, handleModelCmd, getWizard, showSaved } =
   (await import(
     `./wizards.ts?wizards-callback=${Date.now()}`
   )) as typeof import("./wizards.ts");
+
+// Every wizard settings read uses this fixture, including the full callback path.
+const originalReadFile = fsPromises.readFile;
+const settingsRead = mock.method(
+  fsPromises,
+  "readFile",
+  (
+    path: Parameters<typeof originalReadFile>[0],
+    options?: Parameters<typeof originalReadFile>[1],
+  ) =>
+    typeof path === "string" && path.endsWith("/.env")
+      ? Promise.resolve(
+          options === "utf8"
+            ? "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n"
+            : Buffer.from(
+                "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n",
+              ),
+        )
+      : originalReadFile(path, options),
+);
+syncBuiltinESMExports();
+after(() => {
+  settingsRead.mock.restore();
+  syncBuiltinESMExports();
+});
 
 type TgCall = {
   method: string;

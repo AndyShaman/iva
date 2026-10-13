@@ -1,3 +1,4 @@
+import { resolveContextWindow } from "./lib/context-window.ts";
 import { claudeContextWindow } from "./lib/claude-cli.ts";
 import { isHelperTurn } from "./lib/eve-auth.ts";
 import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
@@ -27,7 +28,11 @@ export function stepModelChoice(
     : cfg.textModel;
   const contextWindow =
     helper && providerName === "claude"
-      ? claudeContextWindow(model)
+      ? resolveContextWindow(
+          "CLAUDE_CONTEXT_WINDOW",
+          process.env.CLAUDE_CONTEXT_WINDOW,
+          claudeContextWindow(model),
+        )
       : cfg.contextWindow;
   return Object.freeze({
     provider: providerName,

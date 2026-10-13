@@ -17,6 +17,7 @@ import {
   createResultCompletedEvent,
   createSessionWaitingEvent,
   createStepStartedEvent,
+  createStepCompletedEvent,
   createSubagentCalledEvent,
   createTurnCancelledEvent,
   encodeMessageStreamEvent,
@@ -31,6 +32,12 @@ import { isEventId } from "#protocol/event-id.js";
 import { createEveConnectionCallbackRoutePath } from "#protocol/routes.js";
 
 describe("message stream protocol", () => {
+  it("preserves the optional provider model id without Gateway normalization", () => {
+    const input = { finishReason: "stop" as const, sequence: 0, stepIndex: 0, turnId: "turn_0" };
+    expect(createStepCompletedEvent(input).data).not.toHaveProperty("providerModelId");
+    for (const providerModelId of ["claude-opus-5-5", "a/b"])
+      expect(createStepCompletedEvent({ ...input, providerModelId }).data.providerModelId).toBe(providerModelId);
+  });
   it("pins the stream version for timed session events", () => {
     expect(EVE_MESSAGE_STREAM_VERSION).toBe("25");
   });

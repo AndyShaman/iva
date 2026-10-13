@@ -518,6 +518,7 @@ export interface StepStartedStreamEvent {
  */
 export interface StepCompletedStreamEvent {
   data: {
+    providerModelId?: string;
     finishReason: AssistantStepFinishReason;
     providerMetadata?: StepCompletedProviderMetadata;
     sequence: number;
@@ -1476,6 +1477,7 @@ export function createStepStartedEvent(input: {
  * Creates the `step.completed` event for one completed model call.
  */
 export function createStepCompletedEvent(input: {
+  readonly providerModelId?: string;
   readonly finishReason: AssistantStepFinishReason;
   readonly providerMetadata?: StepCompletedProviderMetadata;
   readonly sequence: number;
@@ -1496,6 +1498,7 @@ export function createStepCompletedEvent(input: {
     turnId: input.turnId,
   };
 
+  if (input.providerModelId !== undefined) data.providerModelId = input.providerModelId;
   if (input.usage !== undefined) {
     data.usage = input.usage;
   }

@@ -246,8 +246,6 @@ test("R5 records actual root, planner and inline models and never resolves helpe
     const { makeTextModel } = await import("../agent/provider.ts");
     const planner = (await import("../agent/subagents/planner/agent.ts"))
       .default;
-    const { formatLanguageModelGatewayId } =
-      await import("../node_modules/eve/dist/src/internal/runtime-model.js");
     const previous = globalThis.fetch;
     const wire: string[] = [];
     globalThis.fetch = (_url, init) => {
@@ -304,22 +302,17 @@ test("R5 records actual root, planner and inline models and never resolves helpe
           session: { ...ctx.session, id },
           channel: { kind },
         };
-        await hook.events!["step.started"]!(
-          { data: { modelId: formatLanguageModelGatewayId(model) } } as never,
-          owner as never,
-        );
         await hook.events!["step.completed"]!(
-          { data } as never,
+          { data: { ...data, providerModelId: model.modelId } } as never,
           owner as never,
         );
       }
       await generateText({ model: planner.model, prompt: "inline plan" });
       for (const inner of [
         {
-          type: "step.started",
-          data: { modelId: formatLanguageModelGatewayId(planner.model) },
+          type: "step.completed",
+          data: { ...data, providerModelId: planner.model.modelId },
         },
-        { type: "step.completed", data },
       ])
         await hook.events!["subagent.event"]!(
           { data: { subagentName: "planner", event: inner } } as never,
@@ -421,7 +414,7 @@ test("R7 helper windows use Claude resolution and the other provider windows", a
       contextWindow: number;
     }[];
     assert.equal(chat.contextWindow, provider === "claude" ? 12345 : 8000);
-    if (provider === "claude") assert.ok(choice.contextWindow >= 200000);
+    if (provider === "claude") assert.equal(choice.contextWindow, 12345);
     else assert.equal(choice.contextWindow, 8000);
   }
 });

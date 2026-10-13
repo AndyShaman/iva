@@ -862,13 +862,18 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       };
     }
 
-    const pending = resolvePendingInput({
+    let pending = resolvePendingInput({
       deferMessagesWhileApprovalsPending: config.mode !== "conversation",
       history: resolvedCoordination.messages,
       resolveApprovalKey,
       session,
       stepInput: coordinated.stepInput,
     });
+    const startsTurn = (hasStepInput(effectiveStepInput) || (effectiveStepInput?.context?.length ?? 0) > 0) &&
+      !effectiveStepInput?.inputResponses?.some(response => pendingRequestIds.has(response.requestId)) &&
+      (pending.outcome !== "unresolved" || (config.mode === "conversation" && pending.deferredMessage === true));
+    if (startsTurn) pending = { ...pending, session: { ...pending.session,
+      state: { ...pending.session.state, "eve.harness.modelCalls": 0 } } };
     if (pending.outcome === "unresolved") {
       // The coordination batch owns the assistant messages. Once that batch
       // resolves, commit its results before the still-pending HITL batch parks.
@@ -884,7 +889,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         emit &&
         config.mode === "conversation" &&
         pending.deferredMessage === true &&
-        hasStepInput(input)
+        startsTurn
       ) {
         if (store !== undefined) {
           prepareDynamicInstructionPreamble(
@@ -1030,7 +1035,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     let instructionMessages: ModelMessage[] = [];
     let memoryCommit: ReturnType<typeof drainMemoryCommit> = undefined;
-    if (emit && hasStepInput(input)) {
+    if (emit && startsTurn) {
       if (store !== undefined) {
         prepareDynamicInstructionPreamble(
           store,
@@ -1180,7 +1185,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       return [typeof value === "string" && /^[1-9][0-9]{0,8}$/.test(value) && !value.endsWith("\n") ? Number(value) : 1];
     });
     const maxSteps = limits.length ? Math.min(...limits) : undefined;
-    const modelCalls = input?.message !== undefined ? 0 : (session.state?.["eve.harness.modelCalls"] as number | undefined) ?? 0;
+    const modelCalls = (session.state?.["eve.harness.modelCalls"] as number | undefined) ?? 0;
     const lastIvaStep = maxSteps !== undefined && modelCalls + 1 >= maxSteps;
     let resolvedModel: Awaited<ReturnType<typeof resolveActiveRuntimeModel>>;
     try {
@@ -1598,6 +1603,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             throw new EmptyModelResponseError();
           }
           await emitStepActions(emit, emissionState, stepResult, {
+            providerModelId: typeof model === "string" ? undefined : model.modelId,
             emittedActionCallIds,
             excludedActionCallIds: invalidInputToolCallIds,
             excludedActionToolNames,
@@ -3052,7 +3058,9 @@ async function emitStructuredResult(
 }
 
 function terminalTurnFailure(schema: JsonObject | undefined, structured: JsonValue | undefined,
-  stepLimit: boolean | undefined, result: HarnessStepResult, stepOutput: string | null) {
+  stepLimit: boolean | undefined, result: HarnessStepResult, stepOutput: string | null, session: HarnessSession) {
+  if (stepLimit && hasDeferredStepInput(session))
+    return { ...STEP_LIMIT_REACHED, message: "Step limit reached with unprocessed deferred input." };
   if (schema !== undefined && structured === undefined) return OUTPUT_SCHEMA_NOT_FULFILLED;
   if (stepLimit && (result.toolCalls.length > 0 || !stepOutput?.trim()))
     return STEP_LIMIT_REACHED;
@@ -3078,7 +3086,7 @@ async function finishTaskTurn(input: {
   let { emissionState, session } = input;
 
   const structured = schema === undefined ? undefined : extractFinalOutput(result);
-  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput);
+  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput, session);
 
   if (schema === undefined && failure === undefined) {
     if (emit) {
@@ -3139,7 +3147,7 @@ async function finishConversationTurn(input: {
   let { emissionState, session } = input;
 
   const structured = schema === undefined ? undefined : extractFinalOutput(result);
-  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput);
+  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput, session);
 
   if (schema === undefined && failure === undefined) {
     if (emit) {

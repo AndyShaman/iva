@@ -133,15 +133,10 @@ test("F14: concurrent chat and helper use separate wire models and image verdict
   await writeFile(join(home, "usage.jsonl"), "");
   for (const turn of [chat, helper]) {
     const ctx = turn.authored.eve.buildResolveContext(turn.ctx, []);
-    await usageHook.events!["step.started"]!(
-      {
-        data: { modelId: turn.result.session.agent.modelReference!.id },
-      } as never,
-      ctx as never,
-    );
     await usageHook.events!["step.completed"]!(
       {
         data: {
+          providerModelId: turn === helper ? "deepseek-v4-pro" : "text-fixture",
           stepIndex: 0,
           turnId: ctx.session.id,
           usage: { inputTokens: 5, outputTokens: 1 },

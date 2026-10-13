@@ -234,6 +234,7 @@ export async function emitStepActions(
   state: HarnessEmissionState,
   step: HarnessStepResult,
   options: {
+    readonly providerModelId?: string;
     readonly emittedActionCallIds?: ReadonlySet<string>;
     readonly excludedActionCallIds?: ReadonlySet<string>;
     readonly excludedActionToolNames: ReadonlySet<string>;
@@ -322,6 +323,7 @@ export async function emitStepActions(
   // step.completed
   await emitFn(
     createStepCompletedEvent({
+      providerModelId: options.providerModelId,
       finishReason: normalizeAssistantStepFinishReason(step.finishReason),
       providerMetadata: extractStepProviderMetadata(step.providerMetadata),
       sequence: state.sequence,
