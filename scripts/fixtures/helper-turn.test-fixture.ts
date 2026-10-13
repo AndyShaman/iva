@@ -298,7 +298,9 @@ export async function wireTurn(
               input:
                 name === "ask_question"
                   ? '{"question":"Choose","options":[{"id":"one","label":"One"}]}'
-                  : '{"path":"CORE.md"}',
+                  : name === "final_output"
+                    ? '{"answer":"ok"}'
+                    : '{"path":"CORE.md"}',
             },
           ]
         : [

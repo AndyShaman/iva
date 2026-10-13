@@ -161,7 +161,7 @@ for (const mode of ["conversation", "task"] as const)
       if (!noEvents)
         assert.equal(
           turn.events.filter((e) => e.type === "turn.started").length,
-          1,
+          2,
         );
     });
     for (const delivery of ["context", "stale-response", "message"] as const)
@@ -200,7 +200,7 @@ for (const mode of ["conversation", "task"] as const)
         if (!noEvents)
           assert.equal(
             turn.events.filter((e) => e.type === "turn.started").length,
-            2,
+            delivery === "context" ? 1 : 2,
           );
       });
     test(`N3 ordinary message answering a question opens a new turn: ${mode} events ${!noEvents}`, async () => {

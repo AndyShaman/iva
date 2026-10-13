@@ -869,10 +869,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       session,
       stepInput: coordinated.stepInput,
     });
-    const startsTurn = (hasStepInput(effectiveStepInput) || (effectiveStepInput?.context?.length ?? 0) > 0) &&
+    const resetsModelCallCount = (hasStepInput(effectiveStepInput) || (effectiveStepInput?.context?.length ?? 0) > 0) &&
       !effectiveStepInput?.inputResponses?.some(response => pendingRequestIds.has(response.requestId)) &&
       (pending.outcome !== "unresolved" || (config.mode === "conversation" && pending.deferredMessage === true));
-    if (startsTurn) pending = { ...pending, session: { ...pending.session,
+    if (resetsModelCallCount) pending = { ...pending, session: { ...pending.session,
       state: { ...pending.session.state, "eve.harness.modelCalls": 0 } } };
     if (pending.outcome === "unresolved") {
       // The coordination batch owns the assistant messages. Once that batch
@@ -889,7 +889,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         emit &&
         config.mode === "conversation" &&
         pending.deferredMessage === true &&
-        startsTurn
+        hasStepInput(input)
       ) {
         if (store !== undefined) {
           prepareDynamicInstructionPreamble(
@@ -1035,7 +1035,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     let instructionMessages: ModelMessage[] = [];
     let memoryCommit: ReturnType<typeof drainMemoryCommit> = undefined;
-    if (emit && startsTurn) {
+    if (emit && hasStepInput(input)) {
       if (store !== undefined) {
         prepareDynamicInstructionPreamble(
           store,
