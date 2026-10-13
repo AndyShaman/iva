@@ -27,6 +27,7 @@ export type EventCase = (typeof eventCases)[number];
 export async function eventProbe(
   mode: "conversation" | "task",
   scenario: EventCase,
+  full = false,
 ) {
   const question = scenario.startsWith("question");
   const turn = await wireTurn({
@@ -123,6 +124,14 @@ export async function eventProbe(
   }
   const calls = [...turn.model.doStreamCalls, ...turn.model.doGenerateCalls];
   return {
+    ...(full
+      ? {
+          history: result.session.history,
+          state: result.session.state,
+          payloads: turn.events,
+          wire: turn.wire,
+        }
+      : {}),
     initial,
     resumed: turn.events.slice(index).map((e) => e.type),
     calls: calls.length,
