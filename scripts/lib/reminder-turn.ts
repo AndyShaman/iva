@@ -659,7 +659,6 @@ async function runHelperClient(
     stopping = false,
     parked = false,
     lastEvent = Date.now();
-  const completed: string[] = [];
   try {
     if (deps.onSession && !(await deps.onSession(response.sessionId)))
       failure = "ход не записан";
@@ -718,7 +717,6 @@ async function runHelperClient(
       typeof data.message === "string"
     ) {
       message = data.message;
-      completed.push(message);
     }
     if (event.type === "step.completed" && !stopping) {
       const usage = (data.usage ?? {}) as HelperStepUsage;
@@ -753,7 +751,7 @@ async function runHelperClient(
   const turn: ReminderTurn = {
     status: failure || stopping || !ended ? "failed" : "completed",
     message: failure ?? message,
-    partial: completed.join("\n\n"),
+    partial: message ?? "",
     reason,
     serverEnded: ended,
     feedback: (text) => session.send(text),

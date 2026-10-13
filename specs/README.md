@@ -137,87 +137,77 @@ specs/queue-drain-check.sh
 
 ## Helpers
 
-HelperRun.tla и HelperOutcome.tla проверяют v6.2. Run сохраняет CAS/первый stop,
-один durable слот, dual T3, physical spawn отдельно от durable pid, accepted cancel
-до подтверждённого конца, ограниченный lost-id tail, owner-life для SIGKILL,
-partial/close/KEEP и запрет helper-start из самого helper. May — непрозрачное значение:
-missing/type/oversize отказаны, empty валиден.
+HelperRun.tla и HelperOutcome.tla проверяют v6.3. Run: CAS/первый stop, один слот,
+клиентский create→recordSession, owner epoch, отмена до подтверждённого конца,
+lost-id исключение, отказ клиентской записи, существующий runner timeout, partial последнего сообщения,
+close/read/KEEP, auth/may. Общие auth/Trace и applyTurnEvent равны базе.
 
-Outcome: finish-once, чистое чтение нескольких исходов, volatile read marker полной
-пары session/turn, delivered после непустого ответа, retention/visibility, close/KEEP.
-Две сессии имеют turn_0; Restart стирает read marker. NoTwoReads и NoRepeatedRead —
-ожидаемые красные witnesses принятых последствий; остальные Outcome red — мутанты.
+Outcome: finish-once, чистое чтение нескольких исходов, память полной пары
+session/turn у потребителя, durable deliveredAt после подтверждённого непустого
+ответа, retention/visibility. Две сессии имеют turn_0; Restart стирает read marker.
+NoTwoReads/NoRepeatedRead — ожидаемые красные свидетели принятых последствий.
 
-V6Spec и Outcome — полные графы без VIEW. Legacy Run Spec/VIEW сохраняет CAS/slot/T3
-и liveness; FullView — мутанты. Bounds в cfg: два/три helper id, два server owner,
-MaxRunning=1, MaxClaims/MaxSteps из cfg; v6 Run один lifecycle, clock 0..2, две effect
-попытки. Outcome две строки, две сессии, clock 0..2, KEEP=1, максимум два чтения строки.
-Fair Tick/ServerStep/eventual server end — предпосылки liveness; вечная тишина держит
-слот. Качество пересказа и словесные инструкции — суждение модели, не инварианты.
+Единственный Run граф без VIEW/legacy. Bounds: один helper (capacity — два),
+capacity=1, clock 0..3, две завершённые реплики/действия. Outcome: две строки,
+две сессии, clock 0..2, KEEP=1, два чтения строки. Шаговый предел 2 и объём работы 3
+проверяются Run с формулой положительного прироста входа плюс выход;
+MAX_OPEN/MAX_ROWS проверяются продуктовым PBT. FairSpec требует fair Clock/Cancel/End/
+RunnerTimeout/T9; вечная тишина держит слот. Late/duplicate effect и lost-id tail
+имеют достижимые свидетели; качество пересказа остаётся решением модели.
+Удалены все прежние HelperRun cfg, в том числе dual writer/child pid/kill mutant;
+оставшиеся контракты и мутанты имеют префикс HelperRun-v63-.
 
 ```sh
 PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/helper-check.sh
 ```
 
 Load <20 перед каждым cfg, workers 1..4, BFS seed 20261013/fingerprint 1;
-simulation seed 20261011 отделён от BFS. Trap очищает temp metadir/states.
+simulation seed 20261011 отделён от BFS. Trap очищает metadir/states.
 Ожидаемая invariant ошибка — exit12 и точное имя; temporal witness — exit13.
-Ошибка инфраструктуры не считается red. LOG_DIR сохраняет результат каждого cfg.
-TLC пока локально; Node проверки/typecheck/lint/build — mini-run с Node24.
+Инфраструктурная ошибка красного мутанта не доказывает. LOG_DIR хранит результаты.
+Проверки идут на Mac mini с Node24 и OpenJDK25.
 
-| Конфигурация                                                           | Ожидаемый результат       |
-| ---------------------------------------------------------------------- | ------------------------- |
-| [HelperRun-v6-auth.cfg](HelperRun-v6-auth.cfg)                         | PASS                      |
-| [HelperRun-v6-spawn.cfg](HelperRun-v6-spawn.cfg)                       | PASS                      |
-| [HelperRun-v6-question.cfg](HelperRun-v6-question.cfg)                 | PASS                      |
-| [HelperRun-v6-owner.cfg](HelperRun-v6-owner.cfg)                       | PASS                      |
-| [HelperRun-v6-effects.cfg](HelperRun-v6-effects.cfg)                   | PASS                      |
-| [HelperRun-v6-live.cfg](HelperRun-v6-live.cfg)                         | PASS                      |
-| [HelperRun-v6-helper-start.cfg](HelperRun-v6-helper-start.cfg)         | RED: V6Authorized         |
-| [HelperRun-v6-may.cfg](HelperRun-v6-may.cfg)                           | RED: V6MayRequired        |
-| [HelperRun-v6-may-copy.cfg](HelperRun-v6-may-copy.cfg)                 | RED: V6MayUnchanged       |
-| [HelperRun-v6-pid.cfg](HelperRun-v6-pid.cfg)                           | RED: V6PidKnown           |
-| [HelperRun-v6-owner-kill.cfg](HelperRun-v6-owner-kill.cfg)             | RED: V6OwnerKillSafe      |
-| [HelperRun-v6-stop-kill.cfg](HelperRun-v6-stop-kill.cfg)               | RED: V6StopKillSafe       |
-| [HelperRun-v6-question-done.cfg](HelperRun-v6-question-done.cfg)       | RED: V6QuestionFailed     |
-| [HelperRun-v6-early-free.cfg](HelperRun-v6-early-free.cfg)             | RED: V6SlotFreedAfterEnd  |
-| [HelperRun-v6-partial.cfg](HelperRun-v6-partial.cfg)                   | RED: V6PartialKept        |
-| [HelperRun-v6-sweep.cfg](HelperRun-v6-sweep.cfg)                       | RED: V6KeepClosed         |
-| [HelperRun-v6-read.cfg](HelperRun-v6-read.cfg)                         | RED: V6ClosedReadable     |
-| [HelperRun-v6-late-effect.cfg](HelperRun-v6-late-effect.cfg)           | RED: V6NoLateEffect       |
-| [HelperRun-v6-duplicate-effect.cfg](HelperRun-v6-duplicate-effect.cfg) | RED: V6NoDuplicateEffect  |
-| [HelperRun-v6-tail-effect.cfg](HelperRun-v6-tail-effect.cfg)           | RED: V6NoTailEffect       |
-| [HelperRun-v6-normal-waiting.cfg](HelperRun-v6-normal-waiting.cfg)     | RED: V6NoNormalWaiting    |
-| [HelperRun-v6-before-pid.cfg](HelperRun-v6-before-pid.cfg)             | RED: V6NoUnrecordedCreate |
-| [HelperRun-v6-close-outcome.cfg](HelperRun-v6-close-outcome.cfg)       | RED: V6CloseKeepsOutcome  |
-| [HelperRun-v6-close-inflight.cfg](HelperRun-v6-close-inflight.cfg)     | RED: V6NoCloseInFlight    |
-| [HelperRun-v6-live-nofair.cfg](HelperRun-v6-live-nofair.cfg)           | RED: V6NoSilentEnd        |
-| [HelperRun-live.cfg](HelperRun-live.cfg)                               | PASS                      |
-| [HelperRun.cfg](HelperRun.cfg)                                         | PASS                      |
-| [HelperRun-nofinalize.cfg](HelperRun-nofinalize.cfg)                   | RED: OutcomeOnce          |
-| [HelperRun-noreap.cfg](HelperRun-noreap.cfg)                           | RED: NoSilentEnd          |
-| [HelperRun-ownerme.cfg](HelperRun-ownerme.cfg)                         | RED: OneRun               |
-| [HelperRun-nolimit.cfg](HelperRun-nolimit.cfg)                         | RED: WithinLimits         |
-| [HelperRun-earlyfree.cfg](HelperRun-earlyfree.cfg)                     | RED: SlotFreedAfterEnd    |
-| [HelperRun-spec-v43.cfg](HelperRun-spec-v43.cfg)                       | RED: SlotFreedAfterEnd    |
-| [HelperRun-unrecorded.cfg](HelperRun-unrecorded.cfg)                   | RED: NoUnrecordedTail     |
-| [HelperRun-bothwriters.cfg](HelperRun-bothwriters.cfg)                 | RED: NoBothWriters        |
-| [HelperRun-serveronly.cfg](HelperRun-serveronly.cfg)                   | RED: NoServerOnly         |
-| [HelperOutcome-safety.cfg](HelperOutcome-safety.cfg)                   | PASS                      |
-| [HelperOutcome-finish-twice.cfg](HelperOutcome-finish-twice.cfg)       | RED: OutcomeOnce          |
-| [HelperOutcome-before-reply.cfg](HelperOutcome-before-reply.cfg)       | RED: DeliveredAfterReply  |
-| [HelperOutcome-empty-reply.cfg](HelperOutcome-empty-reply.cfg)         | RED: DeliveredAfterReply  |
-| [HelperOutcome-without-read.cfg](HelperOutcome-without-read.cfg)       | RED: DeliveredAfterReply  |
-| [HelperOutcome-turn-only.cfg](HelperOutcome-turn-only.cfg)             | RED: DeliveredAfterReply  |
-| [HelperOutcome-lose-unread.cfg](HelperOutcome-lose-unread.cfg)         | RED: UndeliveredKept      |
-| [HelperOutcome-hide-unread.cfg](HelperOutcome-hide-unread.cfg)         | RED: Visible              |
-| [HelperOutcome-early-close.cfg](HelperOutcome-early-close.cfg)         | RED: ClosedKept           |
-| [HelperOutcome-read-write.cfg](HelperOutcome-read-write.cfg)           | RED: ReadPure             |
-| [HelperOutcome-multiple.cfg](HelperOutcome-multiple.cfg)               | RED: NoTwoReads           |
-| [HelperOutcome-restart.cfg](HelperOutcome-restart.cfg)                 | RED: NoRepeatedRead       |
-
-Bounded PASS относится к описанной среде. Late/duplicate effect, lost-id tail и
-restart до тика — принятые риски с reachability witnesses. Я5 вынесено.
+| Конфигурация                                                             | Ожидаемый результат      |
+| ------------------------------------------------------------------------ | ------------------------ |
+| [HelperRun-v63-auth.cfg](HelperRun-v63-auth.cfg)                         | PASS                     |
+| [HelperRun-v63-capacity.cfg](HelperRun-v63-capacity.cfg)                 | PASS                     |
+| [HelperRun-v63-run.cfg](HelperRun-v63-run.cfg)                           | PASS                     |
+| [HelperRun-v63-effects.cfg](HelperRun-v63-effects.cfg)                   | PASS                     |
+| [HelperRun-v63-live.cfg](HelperRun-v63-live.cfg)                         | PASS                     |
+| [HelperRun-v63-helper-start.cfg](HelperRun-v63-helper-start.cfg)         | RED: Authorized          |
+| [HelperRun-v63-may.cfg](HelperRun-v63-may.cfg)                           | RED: MayRequired         |
+| [HelperRun-v63-may-copy.cfg](HelperRun-v63-may-copy.cfg)                 | RED: MayUnchanged        |
+| [HelperRun-v63-no-capacity.cfg](HelperRun-v63-no-capacity.cfg)           | RED: OneRun              |
+| [HelperRun-v63-finalize-twice.cfg](HelperRun-v63-finalize-twice.cfg)     | RED: OutcomeOnce         |
+| [HelperRun-v63-stale-cas.cfg](HelperRun-v63-stale-cas.cfg)               | RED: SlotFreedAfterEnd   |
+| [HelperRun-v63-step-limit.cfg](HelperRun-v63-step-limit.cfg)             | RED: WithinLimits        |
+| [HelperRun-v63-work-output.cfg](HelperRun-v63-work-output.cfg)           | RED: WorkMeasured        |
+| [HelperRun-v63-work-stop.cfg](HelperRun-v63-work-stop.cfg)               | RED: WorkStops           |
+| [HelperRun-v63-stop-twice.cfg](HelperRun-v63-stop-twice.cfg)             | RED: StopOnce            |
+| [HelperRun-v63-question-done.cfg](HelperRun-v63-question-done.cfg)       | RED: QuestionFailed      |
+| [HelperRun-v63-early-free.cfg](HelperRun-v63-early-free.cfg)             | RED: SlotFreedAfterEnd   |
+| [HelperRun-v63-partial.cfg](HelperRun-v63-partial.cfg)                   | RED: PartialKept         |
+| [HelperRun-v63-sweep.cfg](HelperRun-v63-sweep.cfg)                       | RED: KeepClosed          |
+| [HelperRun-v63-read.cfg](HelperRun-v63-read.cfg)                         | RED: ClosedReadable      |
+| [HelperRun-v63-close-outcome.cfg](HelperRun-v63-close-outcome.cfg)       | RED: CloseKeepsOutcome   |
+| [HelperRun-v63-late-effect.cfg](HelperRun-v63-late-effect.cfg)           | RED: NoLateEffect        |
+| [HelperRun-v63-duplicate-effect.cfg](HelperRun-v63-duplicate-effect.cfg) | RED: NoDuplicateEffect   |
+| [HelperRun-v63-tail-effect.cfg](HelperRun-v63-tail-effect.cfg)           | RED: NoTailEffect        |
+| [HelperRun-v63-normal-waiting.cfg](HelperRun-v63-normal-waiting.cfg)     | RED: NoNormalWaiting     |
+| [HelperRun-v63-live-nofair.cfg](HelperRun-v63-live-nofair.cfg)           | RED: NoSilentEnd         |
+| [HelperRun-v63-restart-effect.cfg](HelperRun-v63-restart-effect.cfg)     | RED: NoRestartEffect     |
+| [HelperOutcome-safety.cfg](HelperOutcome-safety.cfg)                     | PASS                     |
+| [HelperOutcome-finish-twice.cfg](HelperOutcome-finish-twice.cfg)         | RED: OutcomeOnce         |
+| [HelperOutcome-before-reply.cfg](HelperOutcome-before-reply.cfg)         | RED: DeliveredAfterReply |
+| [HelperOutcome-empty-reply.cfg](HelperOutcome-empty-reply.cfg)           | RED: DeliveredAfterReply |
+| [HelperOutcome-without-read.cfg](HelperOutcome-without-read.cfg)         | RED: DeliveredAfterReply |
+| [HelperOutcome-turn-only.cfg](HelperOutcome-turn-only.cfg)               | RED: DeliveredAfterReply |
+| [HelperOutcome-lose-unread.cfg](HelperOutcome-lose-unread.cfg)           | RED: UndeliveredKept     |
+| [HelperOutcome-hide-unread.cfg](HelperOutcome-hide-unread.cfg)           | RED: Visible             |
+| [HelperOutcome-early-close.cfg](HelperOutcome-early-close.cfg)           | RED: ClosedKept          |
+| [HelperOutcome-read-write.cfg](HelperOutcome-read-write.cfg)             | RED: ReadPure            |
+| [HelperOutcome-multiple.cfg](HelperOutcome-multiple.cfg)                 | RED: NoTwoReads          |
+| [HelperOutcome-restart.cfg](HelperOutcome-restart.cfg)                   | RED: NoRepeatedRead      |
 
 ## GoalCheck
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers v6.2: новые контракты + регрессионные графы. BFS, последовательно, <=4 workers.
+# Helpers v6.3: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
 cd "$(dirname "$0")" || exit 2
@@ -80,42 +80,33 @@ check() {
     [ -n "$got" ] || return 2
   fi
 }
-check HelperRun-v6-auth none || exit 2
-check HelperRun-v6-spawn none || exit 2
-check HelperRun-v6-question none || exit 2
-check HelperRun-v6-owner none || exit 2
-check HelperRun-v6-effects none || exit 2
-check HelperRun-v6-live none || exit 2
-check HelperRun-v6-helper-start V6Authorized || exit 2
-check HelperRun-v6-may V6MayRequired || exit 2
-check HelperRun-v6-may-copy V6MayUnchanged || exit 2
-check HelperRun-v6-pid V6PidKnown || exit 2
-check HelperRun-v6-owner-kill V6OwnerKillSafe || exit 2
-check HelperRun-v6-stop-kill V6StopKillSafe || exit 2
-check HelperRun-v6-question-done V6QuestionFailed || exit 2
-check HelperRun-v6-early-free V6SlotFreedAfterEnd || exit 2
-check HelperRun-v6-partial V6PartialKept || exit 2
-check HelperRun-v6-sweep V6KeepClosed || exit 2
-check HelperRun-v6-read V6ClosedReadable || exit 2
-check HelperRun-v6-late-effect V6NoLateEffect || exit 2
-check HelperRun-v6-duplicate-effect V6NoDuplicateEffect || exit 2
-check HelperRun-v6-tail-effect V6NoTailEffect || exit 2
-check HelperRun-v6-normal-waiting V6NoNormalWaiting || exit 2
-check HelperRun-v6-before-pid V6NoUnrecordedCreate || exit 2
-check HelperRun-v6-close-outcome V6CloseKeepsOutcome || exit 2
-check HelperRun-v6-close-inflight V6NoCloseInFlight || exit 2
-check HelperRun-v6-live-nofair V6NoSilentEnd || exit 2
-check HelperRun-live none || exit 2
-check HelperRun none || exit 2
-check HelperRun-nofinalize OutcomeOnce || exit 2
-check HelperRun-noreap NoSilentEnd || exit 2
-check HelperRun-ownerme OneRun || exit 2
-check HelperRun-nolimit WithinLimits || exit 2
-check HelperRun-earlyfree SlotFreedAfterEnd || exit 2
-check HelperRun-spec-v43 SlotFreedAfterEnd || exit 2
-check HelperRun-unrecorded NoUnrecordedTail || exit 2
-check HelperRun-bothwriters NoBothWriters || exit 2
-check HelperRun-serveronly NoServerOnly || exit 2
+check HelperRun-v63-auth none || exit 2
+check HelperRun-v63-capacity none || exit 2
+check HelperRun-v63-run none || exit 2
+check HelperRun-v63-effects none || exit 2
+check HelperRun-v63-live none || exit 2
+check HelperRun-v63-helper-start Authorized || exit 2
+check HelperRun-v63-may MayRequired || exit 2
+check HelperRun-v63-may-copy MayUnchanged || exit 2
+check HelperRun-v63-no-capacity OneRun || exit 2
+check HelperRun-v63-finalize-twice OutcomeOnce || exit 2
+check HelperRun-v63-stale-cas SlotFreedAfterEnd || exit 2
+check HelperRun-v63-stop-twice StopOnce || exit 2
+check HelperRun-v63-step-limit WithinLimits || exit 2
+check HelperRun-v63-work-output WorkMeasured || exit 2
+check HelperRun-v63-work-stop WorkStops || exit 2
+check HelperRun-v63-question-done QuestionFailed || exit 2
+check HelperRun-v63-early-free SlotFreedAfterEnd || exit 2
+check HelperRun-v63-partial PartialKept || exit 2
+check HelperRun-v63-sweep KeepClosed || exit 2
+check HelperRun-v63-read ClosedReadable || exit 2
+check HelperRun-v63-close-outcome CloseKeepsOutcome || exit 2
+check HelperRun-v63-late-effect NoLateEffect || exit 2
+check HelperRun-v63-duplicate-effect NoDuplicateEffect || exit 2
+check HelperRun-v63-tail-effect NoTailEffect || exit 2
+check HelperRun-v63-normal-waiting NoNormalWaiting || exit 2
+check HelperRun-v63-live-nofair NoSilentEnd || exit 2
+check HelperRun-v63-restart-effect NoRestartEffect || exit 2
 check HelperOutcome-safety none || exit 2
 check HelperOutcome-finish-twice OutcomeOnce || exit 2
 check HelperOutcome-before-reply DeliveredAfterReply || exit 2

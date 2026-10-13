@@ -1,11 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./data-dir.ts";
 import { acquireLock, releaseLock, saveJsonAtomic } from "./json-store.ts";
-import { traceHelper, type HelperTraceEvent } from "./trace.ts";
+import { traceHelper } from "./trace.ts";
 
 export const HELPER_MAX_OPEN = 3,
   HELPER_MAX_ROWS = 20;
@@ -20,16 +19,9 @@ export const HELPER_SUMMARY_MAX = 1500,
 const integer = z.number().int().nonnegative();
 const text = z.string().min(1);
 const chatSchema = z.strictObject({ id: text, threadId: text.nullable() });
-const markSchema = z.strictObject({
-  sessionId: text,
-  turnId: text,
-  at: integer,
-});
 const runSchema = z.strictObject({
   firedAt: integer,
-  ownerPid: integer.positive(),
   ownerStartedAt: integer,
-  childPid: integer.positive().nullable(),
   deadlineAtMs: integer,
   sessionId: text.nullable(),
 });
@@ -60,7 +52,7 @@ const rowSchema = z
     steps: integer,
     tokens: integer,
     finishedAt: integer.nullable(),
-    delivered: markSchema.nullable(),
+    deliveredAt: integer.nullable(),
   })
   .refine(
     (r) =>
@@ -68,7 +60,7 @@ const rowSchema = z
         ? r.outcome === null && r.finishedAt === null
         : r.outcome !== null && r.finishedAt !== null && r.run === null) &&
       (r.stop === null || r.run !== null || r.outcome !== null) &&
-      (!r.delivered || r.status === "finished"),
+      (r.deliveredAt === null || r.status === "finished"),
     "inconsistent helper row",
   );
 const stateSchema = z
@@ -86,8 +78,6 @@ export type HelperRow = z.infer<typeof rowSchema>;
 export type HelpersState = z.infer<typeof stateSchema>;
 export type HelperChat = HelperRow["chat"];
 export type HelperRun = z.infer<typeof runSchema>;
-export type HelperTurnKey = Omit<z.infer<typeof markSchema>, "at">;
-export type HelperTurnMark = z.infer<typeof markSchema>;
 export type HelperStatus = HelperRow["status"];
 export type HelperStop = NonNullable<HelperRow["stop"]>;
 export type HelperOutcome = NonNullable<HelperRow["outcome"]>;
@@ -97,7 +87,7 @@ export type HelperFinish = Pick<
   HelperRow,
   "summary" | "reason" | "model" | "steps" | "tokens"
 > & { outcome: HelperOutcome };
-export type HelperShow = { row: HelperRow; moreReady: number };
+export type HelperShow = { row: HelperRow };
 export type HelperClose = {
   row: HelperRow;
   branch: "pending" | "running" | "finished";
@@ -118,7 +108,8 @@ const file = () => join(dataDir(), "helpers.json");
 const root = () => join(dataDir(), "helpers");
 const sameChat = (a: HelperChat, b: HelperChat) =>
   a.id === b.id && a.threadId === b.threadId;
-const ready = (r: HelperRow) => r.status === "finished" && r.delivered === null;
+const ready = (r: HelperRow) =>
+  r.status === "finished" && r.deliveredAt === null;
 const running = (r: HelperRow, firedAt: number) =>
   r.run?.firedAt === firedAt && r.outcome === null;
 const refuse = (reason: HelperRefusal, text: string) => ({
@@ -165,7 +156,6 @@ export const listHelpers = async (chat: HelperChat) =>
   (await readHelpers()).rows.filter((r) => sameChat(r.chat, chat));
 async function change(
   id: string,
-  event: HelperTraceEvent,
   fn: (r: HelperRow, s: HelpersState) => boolean,
 ): Promise<HelperRow | null> {
   return locked(async (s) => {
@@ -175,18 +165,6 @@ async function change(
       return null;
     }
     await save(s);
-    traceHelper(event, id, {
-      data: {
-        outcome: r.outcome,
-        stop: r.stop,
-        firedAt: r.run?.firedAt,
-        sessionId: r.run?.sessionId,
-        reason: r.reason ?? r.stop,
-        steps: r.steps,
-        tokens: r.tokens,
-        model: r.model,
-      },
-    });
     return r;
   });
 }
@@ -214,48 +192,37 @@ export async function addHelper(
         "capacity",
         `${pending.filter((r) => r.run).length} running, ${pending.filter((r) => !r.run).length} waiting, ${s.rows.filter(ready).length} outcomes; pending maximum 3. Wait, read or close.`,
       );
-    await mkdir(root(), { recursive: true, mode: 0o700 });
-    for (let i = 0; i < 32; i++) {
-      const id = `h-${randomBytes(3).toString("hex")}`,
-        dir = join(root(), id);
-      if (s.rows.some((r) => r.id === id) || existsSync(dir)) continue;
-      await mkdir(dir, { mode: 0o700 });
-      try {
-        await mkdir(dirname(helperResultPath(id)), { mode: 0o700 });
-        const row: HelperRow = {
-          ...parsed.data,
-          id,
-          createdAt: now,
-          status: "pending",
-          run: null,
-          stop: null,
-          outcome: null,
-          summary: null,
-          reason: null,
-          model: null,
-          steps: 0,
-          tokens: 0,
-          finishedAt: null,
-          delivered: null,
-        };
-        s.rows.push(row);
-        await save(s);
-        traceHelper("added", id, {});
-        return { ok: true, row };
-      } catch (error) {
-        await rm(dir, { recursive: true, force: true });
-        throw error;
-      }
-    }
-    return refuse("capacity", "Helper id collided 32 times; try again.");
+    let id: string;
+    do id = `h-${randomBytes(3).toString("hex")}`;
+    while (s.rows.some((r) => r.id === id));
+    const row: HelperRow = {
+      ...parsed.data,
+      id,
+      createdAt: now,
+      status: "pending",
+      run: null,
+      stop: null,
+      outcome: null,
+      summary: null,
+      reason: null,
+      model: null,
+      steps: 0,
+      tokens: 0,
+      finishedAt: null,
+      deliveredAt: null,
+    };
+    s.rows.push(row);
+    await save(s);
+    return { ok: true, row };
   });
 }
+
 export const claimHelper = (
   id: string,
-  owner: { ownerPid: number; ownerStartedAt: number },
+  owner: { ownerStartedAt: number },
   now: number,
 ) =>
-  change(id, "claimed", (r, s) => {
+  change(id, (r, s) => {
     if (
       r.status !== "pending" ||
       r.run ||
@@ -265,22 +232,10 @@ export const claimHelper = (
       return false;
     r.run = {
       firedAt: now,
-      ownerPid: owner.ownerPid,
       ownerStartedAt: owner.ownerStartedAt,
-      childPid: null,
       deadlineAtMs: now + HELPER_DEADLINE_MS,
       sessionId: null,
     };
-    return true;
-  });
-export const recordHelperChild = (
-  id: string,
-  firedAt: number,
-  childPid: number,
-) =>
-  change(id, "started", (r) => {
-    if (!running(r, firedAt) || !r.run || r.run.childPid !== null) return false;
-    r.run.childPid = childPid;
     return true;
   });
 export async function recordHelperSession(
@@ -288,7 +243,7 @@ export async function recordHelperSession(
   firedAt: number,
   sessionId: string,
 ): Promise<boolean> {
-  const result = await change(id, "started", (r) => {
+  const result = await change(id, (r) => {
     if (
       !running(r, firedAt) ||
       !r.run ||
@@ -301,7 +256,7 @@ export async function recordHelperSession(
   return result !== null;
 }
 export const stopHelper = (id: string, firedAt: number, stop: HelperStop) =>
-  change(id, "stopping", (r) => {
+  change(id, (r) => {
     if (!running(r, firedAt)) return false;
     r.stop ??= stop;
     return true;
@@ -320,7 +275,7 @@ export const finalizeHelper = (
   finish: HelperFinish,
   now: number,
 ) =>
-  change(id, "finished", (r) => {
+  change(id, (r) => {
     if (
       r.outcome !== null ||
       r.status !== "pending" ||
@@ -342,7 +297,7 @@ export async function closeHelper(
     if (!row) return refuse("not-found", "Helper not found.");
     if (!sameChat(row.chat, chat))
       return refuse("foreign-chat", "Helper belongs to another chat.");
-    if (row.delivered)
+    if (row.deliveredAt !== null)
       return refuse("already-delivered", "Outcome already delivered.");
     const branch = row.run ? "running" : row.outcome ? "finished" : "pending";
     if (branch === "running") row.stop ??= "closed";
@@ -362,16 +317,6 @@ export async function closeHelper(
       );
     } else row.status = "closed";
     await save(s);
-    if (branch === "pending")
-      traceHelper("finished", id, {
-        data: {
-          outcome: row.outcome,
-          steps: row.steps,
-          tokens: row.tokens,
-          reason: row.reason,
-        },
-      });
-    traceHelper("closed", id, {});
     return { ok: true, row, branch };
   });
 }
@@ -386,18 +331,11 @@ export async function showHelper(
     return refuse("foreign-chat", "Helper belongs to another chat.");
   if (row.outcome === null && row.stop !== "closed")
     return refuse("no-outcome", "Helper has not finished.");
-  return {
-    ok: true,
-    row,
-    moreReady: s.rows.filter(
-      (r) => r.id !== id && sameChat(r.chat, chat) && ready(r),
-    ).length,
-  };
+  return { ok: true, row };
 }
 export async function markHelperDelivered(
   id: string,
   chat: HelperChat,
-  key: HelperTurnKey,
   now: number,
 ): Promise<HelperRow | null> {
   return locked(async (s) => {
@@ -405,9 +343,8 @@ export async function markHelperDelivered(
       (r) => r.id === id && ready(r) && sameChat(r.chat, chat),
     );
     if (!row) return null;
-    row.delivered = { ...key, at: now };
+    row.deliveredAt = now;
     await save(s);
-    traceHelper("delivered", row.id, { data: key });
     return row;
   });
 }
@@ -420,21 +357,15 @@ export async function sweepHelpers(now: number): Promise<string[]> {
           ((r.status === "closed" &&
             r.finishedAt !== null &&
             r.finishedAt + HELPER_KEEP_MS <= now) ||
-            (r.delivered && r.delivered.at + HELPER_KEEP_MS <= now)),
+            (r.deliveredAt !== null && r.deliveredAt + HELPER_KEEP_MS <= now)),
       )
       .map((r) => r.id);
     if (removed.length) {
       s.rows = s.rows.filter((r) => !removed.includes(r.id));
       await save(s);
     }
-    for (const entry of await readdir(root()).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      },
-    ))
-      if (/^h-[0-9a-f]{6}$/.test(entry) && !s.rows.some((r) => r.id === entry))
-        await rm(join(root(), entry), { recursive: true, force: true });
+    for (const id of removed)
+      await rm(join(root(), id), { recursive: true, force: true });
     return removed;
   });
 }

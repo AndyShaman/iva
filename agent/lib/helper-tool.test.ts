@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns registration. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
@@ -171,7 +171,7 @@ test("real tool: flat schema, hostile operation/input/auth and foreign chat leav
       1000,
     );
     assert.ok(r.ok);
-    await s.claimHelper(r.row.id, { ownerPid: 123, ownerStartedAt: 1 }, 2000);
+    await s.claimHelper(r.row.id, { ownerStartedAt: 1 }, 2000);
     await s.finalizeHelper(
       r.row.id,
       { kind: "running", firedAt: 2000 },
@@ -189,6 +189,16 @@ test("real tool: flat schema, hostile operation/input/auth and foreign chat leav
   assert.match(
     await helperExecute({ action: "start", task: "t", may: "" }, ctx(), deps),
     /background/,
+  );
+  const logs = await Promise.all(
+    (await readdir(join(dir, "trace"))).map((f) =>
+      readFile(join(dir, "trace", f), "utf8"),
+    ),
+  );
+  assert.match(logs.join(""), /"name":"refused"/);
+  assert.doesNotMatch(
+    logs.join(""),
+    /"name":"(?:added|claimed|started|delivered|closed|stopping)"/,
   );
   const pending = (await readHelpers()).rows.find((r) => !r.outcome)!;
   assert.match(
@@ -210,7 +220,7 @@ test("real tool: flat schema, hostile operation/input/auth and foreign chat leav
     ),
     /another chat/,
   );
-  await s.claimHelper(pending.id, { ownerPid: 123, ownerStartedAt: 1 }, 2000);
+  await s.claimHelper(pending.id, { ownerStartedAt: 1 }, 2000);
   assert.match(
     await helperExecute({ action: "close", id: pending.id }, ctx(), deps),
     /частичный итог/,

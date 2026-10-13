@@ -5,11 +5,11 @@ Helpers == {"a", "b"}
 Keep == 1
 VARIABLE s
 vars == <<s>>
-Key == <<s.session, "turn_0">>
-Ready(h) == s.status[h] = "finished" /\ s.delivered[h] = <<>>
+\* Session/turn belongs to consumer memory; durable row holds only deliveredAt.
+Ready(h) == s.status[h] = "finished" /\ s.deliveredAt[h] = 0
 Init == s = [status |-> [h \in Helpers |-> "pending"],
   outcome |-> [h \in Helpers |-> FALSE], finishes |-> [h \in Helpers |-> 0],
-  finished |-> [h \in Helpers |-> 0], delivered |-> [h \in Helpers |-> <<>>],
+  finished |-> [h \in Helpers |-> 0],
   deliveredAt |-> [h \in Helpers |-> 0], retained |-> Helpers,
   session |-> 1, reads |-> {}, previousReads |-> {}, readCounts |-> [h \in Helpers |-> 0],
   replied |-> FALSE, nonempty |-> FALSE, now |-> 0,
@@ -33,21 +33,21 @@ Mark(h) ==
        (Mutant = "turn-only" /\ h \in s.previousReads /\ s.session = 2)
   /\ (s.replied /\ s.nonempty) \/ Mutant = "before-reply" \/
        (Mutant = "empty-reply" /\ s.replied)
-  /\ s' = [s EXCEPT !.delivered[h] = Key, !.deliveredAt[h] = s.now,
+  /\ s' = [s EXCEPT !.deliveredAt[h] = s.now + 1,
        !.proof[h] = s.replied /\ s.nonempty /\ h \in s.reads]
 Restart ==
   /\ s.session = 1
   /\ s' = [s EXCEPT !.session = 2, !.reads = {}, !.replied = FALSE, !.nonempty = FALSE]
 Close(h) ==
   /\ h \in s.retained /\ s.status[h] \in {"pending", "finished"}
-  /\ s.delivered[h] = <<>>
+  /\ s.deliveredAt[h] = 0
   /\ s' = [s EXCEPT !.status[h] = "closed", !.outcome[h] = TRUE,
        !.finished[h] = IF s.outcome[h] THEN @ ELSE s.now]
 Clock == /\ s.now < 2 /\ s' = [s EXCEPT !.now = @ + 1]
 Sweep(h) ==
   /\ h \in s.retained
   /\ (s.status[h] = "closed" /\ s.now >= s.finished[h] + Keep)
-      \/ (s.delivered[h] # <<>> /\ s.now >= s.deliveredAt[h] + Keep)
+      \/ (s.deliveredAt[h] # 0 /\ s.now + 1 >= s.deliveredAt[h] + Keep)
       \/ (Mutant = "lose-unread" /\ Ready(h))
       \/ (Mutant = "early-close" /\ s.status[h] = "closed")
   /\ s' = [s EXCEPT !.retained = @ \ {h},
@@ -60,7 +60,7 @@ TypeOK == /\ s.session \in {1,2} /\ s.now \in 0..2
           /\ s.retained \subseteq Helpers /\ s.reads \subseteq Helpers
           /\ \A h \in Helpers : s.status[h] \in {"pending","finished","closed"}
 OutcomeOnce == \A h \in Helpers : s.finishes[h] <= 1
-DeliveredAfterReply == \A h \in Helpers : s.delivered[h] # <<>> => s.proof[h]
+DeliveredAfterReply == \A h \in Helpers : s.deliveredAt[h] # 0 => s.proof[h]
 UndeliveredKept == ~s.lostUnread
 Visible == \A h \in Helpers : Ready(h) /\ h \in s.retained => Mutant # "hide-unread"
 ClosedKept == ~s.sweptEarly
