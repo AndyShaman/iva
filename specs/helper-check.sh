@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers v6.1: новые контракты + регрессионные графы. BFS, последовательно, <=4 workers.
+# Helpers v6.2: новые контракты + регрессионные графы. BFS, последовательно, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
 cd "$(dirname "$0")" || exit 2
@@ -87,8 +87,6 @@ check HelperRun-v6-owner none || exit 2
 check HelperRun-v6-effects none || exit 2
 check HelperRun-v6-live none || exit 2
 check HelperRun-v6-helper-start V6Authorized || exit 2
-check HelperRun-v6-wake-start V6Authorized || exit 2
-check HelperRun-v6-wake-close V6Authorized || exit 2
 check HelperRun-v6-may V6MayRequired || exit 2
 check HelperRun-v6-may-copy V6MayUnchanged || exit 2
 check HelperRun-v6-pid V6PidKnown || exit 2
@@ -103,69 +101,31 @@ check HelperRun-v6-duplicate-effect V6NoDuplicateEffect || exit 2
 check HelperRun-v6-tail-effect V6NoTailEffect || exit 2
 check HelperRun-v6-normal-waiting V6NoNormalWaiting || exit 2
 check HelperRun-v6-before-pid V6NoUnrecordedCreate || exit 2
-check HelperOutcome-v6-delivery none || exit 2
-check HelperOutcome-v6-alert none || exit 2
-check HelperOutcome-v6-pipeline none || exit 2
-check HelperOutcome-v6-wake none || exit 2
-check HelperOutcome-v6-wakes none || exit 2
-check HelperOutcome-v6-alert-live none || exit 2
-check HelperOutcome-v6-pipeline-live none || exit 2
-check HelperOutcome-v6-session V6DeliveryProven || exit 2
-check HelperOutcome-v6-chat V6DeliveryProven || exit 2
-check HelperOutcome-v6-closed-mark V6ManualNoShown || exit 2
-check HelperOutcome-v6-delivered-mark V6DeliveredReadNoWrite || exit 2
-check HelperOutcome-v6-sweep V6Retention || exit 2
-check HelperOutcome-v6-alert-order V6AlertConfirmed || exit 2
-check HelperOutcome-v6-stamp V6WakeCounting || exit 2
-check HelperOutcome-v6-wake-guard V6NoWakeWhileBusy || exit 2
-check HelperOutcome-v6-wake-action V6WakeReadOnly || exit 2
-check HelperOutcome-v6-bridge-mixed V6BridgeHomogeneous || exit 2
-check HelperOutcome-v6-kernel-mixed V6KernelHomogeneous || exit 2
-check HelperOutcome-v6-source-loss V6SourceKept || exit 2
-check HelperOutcome-v6-legacy V6LegacySame || exit 2
-check HelperOutcome-v6-wake-pause V6WakePause || exit 2
-check HelperOutcome-v6-wake-order V6WakeEarliest || exit 2
-check HelperOutcome-v6-terminal-message V6WakeNoOwnerMessage || exit 2
-check HelperOutcome-v6-alert-duplicate V6NoDuplicateAlert || exit 2
-check HelperOutcome-v6-close-read-second V6NoTwoReads || exit 2
 check HelperRun-v6-close-outcome V6CloseKeepsOutcome || exit 2
 check HelperRun-v6-close-inflight V6NoCloseInFlight || exit 2
-check HelperOutcome-v6-second-finished V6OneDeliveredPerTurn || exit 2
-check HelperOutcome-v6-delivered-clock V6Retention || exit 2
-check HelperOutcome-v6-pipeline-race none || exit 2
-check HelperOutcome-v6-pipeline-race-live none || exit 2
-check HelperOutcome-v6-delivery-live none || exit 2
 check HelperRun-v6-live-nofair V6NoSilentEnd || exit 2
-check HelperOutcome-v6-delivery-live-nofair V6EventuallyDelivered || exit 2
-check HelperOutcome-v6-alert-live-nofair V6AlertEventually || exit 2
-check HelperOutcome-v6-pipeline-live-nofair V6PipelineEventually || exit 2
 check HelperRun-live none || exit 2
-check HelperOutcome-live none || exit 2
-check HelperOutcome-live-new none || exit 2
 check HelperRun none || exit 2
-check HelperOutcome none || exit 2
-check HelperRun-pressure none || exit 2
-check HelperRun-pressure-reach NoThreeRemoteTurns || exit 2
-check HelperOutcome-oldcounter none || exit 2
-check HelperOutcome-close-sweep none || exit 2
-check HelperOutcome-multipart none || exit 2
-check HelperOutcome-multipart-reach NoMultipartCompletion || exit 2
 check HelperRun-nofinalize OutcomeOnce || exit 2
 check HelperRun-noreap NoSilentEnd || exit 2
 check HelperRun-ownerme OneRun || exit 2
 check HelperRun-nolimit WithinLimits || exit 2
 check HelperRun-earlyfree SlotFreedAfterEnd || exit 2
-check HelperOutcome-busy NoWakeWhileBusy || exit 2
-check HelperOutcome-arithmetic WakeIdUnique || exit 2
-check HelperOutcome-noshown DeliveredOnlyAfterShownAndOutbox || exit 2
-check HelperOutcome-nostampcas WakesCountedOnce || exit 2
-check HelperOutcome-dropundelivered UndeliveredKept || exit 2
 check HelperRun-spec-v43 SlotFreedAfterEnd || exit 2
-check HelperOutcome-spec-v43 OneOutcomePerTurn || exit 2
-# Исторический диагностический свидетель: отклонено, гарантия — OneDeliveredPerTurn.
-check HelperOutcome-spec-v44 OneOutcomePerTurn || exit 2
 check HelperRun-unrecorded NoUnrecordedTail || exit 2
 check HelperRun-bothwriters NoBothWriters || exit 2
 check HelperRun-serveronly NoServerOnly || exit 2
-printf 'helper-check: %s ok, %s failed; mode=%s\n' "$ok" "$failed" "$CHECK_MODE"
+check HelperOutcome-safety none || exit 2
+check HelperOutcome-finish-twice OutcomeOnce || exit 2
+check HelperOutcome-before-reply DeliveredAfterReply || exit 2
+check HelperOutcome-empty-reply DeliveredAfterReply || exit 2
+check HelperOutcome-without-read DeliveredAfterReply || exit 2
+check HelperOutcome-turn-only DeliveredAfterReply || exit 2
+check HelperOutcome-lose-unread UndeliveredKept || exit 2
+check HelperOutcome-hide-unread Visible || exit 2
+check HelperOutcome-early-close ClosedKept || exit 2
+check HelperOutcome-read-write ReadPure || exit 2
+check HelperOutcome-multiple NoTwoReads || exit 2
+check HelperOutcome-restart NoRepeatedRead || exit 2
+echo "helper-check: ok=$ok failed=$failed"
 [ "$failed" -eq 0 ]

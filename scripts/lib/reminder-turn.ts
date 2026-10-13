@@ -406,7 +406,7 @@ async function answeredInTime(work: Promise<unknown>, what: string) {
     `${what} timed out after ${SESSION_LIMIT_CANCEL_MS}ms`,
   );
   try {
-    await Promise.race([work, deadline.stalled]);
+    return await Promise.race([work, deadline.stalled]);
   } finally {
     deadline.stop();
   }
@@ -692,8 +692,9 @@ async function runHelperClient(
       stopping ||= !!failure || deps.signal?.aborted === true;
       if (stopping) {
         try {
-          const result = await answeredInTimeValue(
+          const result = await answeredInTime(
             session.cancel({ tasks: true }),
+            "helper cancel",
           );
           ended =
             (result as { status?: string } | null)?.status === "no_active_turn";
@@ -737,6 +738,7 @@ async function runHelperClient(
       failure ??= eventText(event) ?? "ход помощника упал";
       ended = true;
     }
+    if (event.type === "turn.cancelled") failure ??= "помощник остановлен";
     if (
       (event.type === "turn.completed" && !parked) ||
       event.type === "turn.cancelled" ||
@@ -765,12 +767,4 @@ async function runHelperClient(
   }
   stream.return?.().catch(() => {});
   return turn;
-}
-async function answeredInTimeValue(work: Promise<unknown>): Promise<unknown> {
-  const cap = stallAfter(SESSION_LIMIT_CANCEL_MS, "helper cancel timed out");
-  try {
-    return await Promise.race([work, cap.stalled]);
-  } finally {
-    cap.stop();
-  }
 }
