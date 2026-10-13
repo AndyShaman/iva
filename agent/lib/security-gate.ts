@@ -2,6 +2,10 @@
 // and bare-Node operational scripts.
 
 import secretKeyInventory from "../skills/security-defense/outbound-sensitive-keys.json" with { type: "json" };
+import {
+  redactSecretValues,
+  secretValuesFromEnv,
+} from "../../packages/secret-redaction/index.ts";
 import { traceInboundGate } from "./trace.ts";
 
 const INVISIBLE_RE = /[\p{Cf}\p{Cc}\u034F]/gu;
@@ -485,9 +489,8 @@ function judgeInbound(
 // which key leaked.
 // Ollama Cloud, DeepInfra and Deepgram issue keys with no telltale prefix. They are
 // caught by the name beside them - generic_key (any *_API_KEY=… or "api key": …),
-// bearer_token, dot_env_content. A bare high-entropy blob with no name next to it is
-// deliberately not matched: no rule tells it from ordinary text, and redacting the
-// model's own answers costs more than that miss.
+// bearer_token, dot_env_content. An unknown bare blob has no shape rule; known installation values are
+// matched by the shared secret-redaction package below.
 // The custom provider (MODEL_PROVIDER=custom) is exactly that case and has no pattern
 // here on purpose: the endpoint is the owner's, so its key can look like anything, and
 // a rule invented for it would either miss or redact ordinary text. CUSTOM_API_KEY is
@@ -605,6 +608,29 @@ export function scanOutbound(input: string, redact = true): OutboundResult {
         });
       }
     }
+  }
+  // The shared value matcher also recognizes prefixless and encoded installation keys.
+  const installationEnv = Object.fromEntries(
+    secretKeyInventory.flatMap((name) => {
+      const value = process.env[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+  const secretText = redactSecretValues(
+    input,
+    secretValuesFromEnv(installationEnv),
+  );
+  if (secretText !== input) {
+    findings.push({
+      type: "api_key",
+      name: "installation_secret",
+      preview: "[REDACTED]",
+    });
+    if (redact)
+      text = redactSecretValues(
+        text,
+        secretValuesFromEnv(installationEnv),
+      ).replaceAll("<redacted>", REDACTED);
   }
   const clean = findings.every(
     (finding) => finding.type === "injection_artifact",

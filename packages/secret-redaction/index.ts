@@ -169,7 +169,10 @@ function formPattern(form: string): string {
     ? `(?<![\\p{L}\\p{N}])${raw}(?![\\p{L}\\p{N}])`
     : raw;
 }
-export function redact(text: string, secrets: readonly string[]): string {
+export function redactSecretValues(
+  text: string,
+  secrets: readonly string[],
+): string {
   const forms = new Set<string>();
   for (const secret of secrets)
     for (const form of secretForms(secret))
@@ -182,7 +185,11 @@ export function redact(text: string, secrets: readonly string[]): string {
       REDACTED,
     );
   }
-  return cutKeyShapes(out)
+  return out;
+}
+
+export function redact(text: string, secrets: readonly string[]): string {
+  return cutKeyShapes(redactSecretValues(text, secrets))
     .replace(TELEGRAM_ID_RE, `$1${REDACTED}`)
     .replace(EMAIL_RE, REDACTED);
 }
