@@ -16,7 +16,6 @@ import fc from "fast-check";
 import * as s from "./helper-store.ts";
 const chat = { id: "42", threadId: null };
 const other = { id: "43", threadId: null };
-const key = { sessionId: "session-A", turnId: "turn_0" };
 const finish = {
   outcome: "done" as const,
   summary: "result",
@@ -130,28 +129,24 @@ test("input rejection before directory; empty may; capacity counts pending, max 
     assert.match(full.text, /h-/);
   }
   assert.equal((await stat(join(dir, "helpers.json"))).mode & 0o777, 0o600);
-  assert.equal(
-    (await stat(join(dir, "helpers", rows[0].id, "out"))).mode & 0o777,
-    0o700,
-  );
+  assert.equal(new Set(rows.map((r) => r.id)).size, 3);
+  await assert.rejects(stat(join(dir, "helpers")), { code: "ENOENT" });
 });
-test("claim/fired CAS, both T3 writers, first stop and finalize cannot resurrect/overwrite", async (t) => {
-  await data(t);
+test("claim/fired CAS, repeated client T3, first stop and finalize cannot resurrect/overwrite", async (t) => {
+  const dir = await data(t);
   const a = await added();
   const b = await added();
-  const owner = { ownerPid: 123, ownerStartedAt: 10 };
+  const owner = { ownerStartedAt: 10 };
   const claims = await Promise.all([
     s.claimHelper(a.id, owner, 1100),
     s.claimHelper(b.id, owner, 1100),
   ]);
   assert.equal(claims.filter(Boolean).length, 1);
   const row = claims.find(Boolean)!;
-  assert.equal(await s.recordHelperChild(row.id, 1099, 222), null);
   assert.equal(await s.recordHelperSession(row.id, 1099, "stale"), false);
   assert.equal(await s.recordHelperSession(row.id, 1100, "server"), true);
   assert.equal(await s.recordHelperSession(row.id, 1100, "server"), true);
   assert.equal(await s.recordHelperSession(row.id, 1100, "other"), false);
-  await s.recordHelperChild(row.id, 1100, 222);
   await s.stopHelper(row.id, 1100, "closed");
   await s.stopHelper(row.id, 1100, "deadline");
   assert.equal(
@@ -183,8 +178,18 @@ test("claim/fired CAS, both T3 writers, first stop and finalize cannot resurrect
     null,
   );
   assert.equal((await s.getHelper(row.id))?.summary, "result");
+  const logs = await Promise.all(
+    (await readdir(join(dir, "trace"))).map((f) =>
+      readFile(join(dir, "trace", f), "utf8"),
+    ),
+  );
+  assert.match(logs.join(""), /"name":"race_lost"/);
+  assert.doesNotMatch(
+    logs.join(""),
+    /"name":"(?:added|claimed|started|finished|delivered|closed|stopping)"/,
+  );
 });
-test("pure read of multiple outcomes; delivery by id and chat, full pair retained, sweep clocks", async (t) => {
+test("pure read of multiple outcomes; delivery timestamp once by id/chat, sweep clocks", async (t) => {
   const dir = await data(t);
   const a = await ready();
   const b = await ready(1002);
@@ -194,24 +199,19 @@ test("pure read of multiple outcomes; delivery by id and chat, full pair retaine
   for (const id of [a.id, b.id, a.id])
     assert.equal((await s.showHelper(id, chat)).ok, true);
   assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), before);
-  assert.equal(await s.markHelperDelivered(a.id, other, key, 2000), null);
-  assert.equal((await s.markHelperDelivered(a.id, chat, key, 2000))?.id, a.id);
-  assert.equal(
-    (await s.markHelperDelivered(b.id, chat, { ...key, sessionId: "B" }, 2001))
-      ?.id,
-    b.id,
-  );
-  assert.equal(await s.markHelperDelivered(a.id, chat, key, 2002), null);
-  assert.deepEqual((await s.getHelper(b.id))?.delivered, {
-    ...key,
-    sessionId: "B",
-    at: 2001,
-  });
+  assert.equal(await s.markHelperDelivered(a.id, other, 2000), null);
+  assert.equal((await s.markHelperDelivered(a.id, chat, 2000))?.id, a.id);
+  assert.equal((await s.markHelperDelivered(b.id, chat, 2001))?.id, b.id);
+  assert.equal(await s.markHelperDelivered(a.id, chat, 2002), null);
+  assert.equal((await s.getHelper(b.id))?.deliveredAt, 2001);
+  await mkdir(join(dir, "helpers", a.id, "out"), { recursive: true });
+  await writeFile(s.helperResultPath(a.id), "full result");
   const delivered = await readFile(join(dir, "helpers.json"), "utf8");
   await s.showHelper(a.id, chat);
   assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), delivered);
   assert.deepEqual(await s.sweepHelpers(2000 + s.HELPER_KEEP_MS - 1), []);
   assert.deepEqual(await s.sweepHelpers(2000 + s.HELPER_KEEP_MS), [a.id]);
+  await assert.rejects(stat(join(dir, "helpers", a.id)), { code: "ENOENT" });
   assert.deepEqual(await s.sweepHelpers(2001 + s.HELPER_KEEP_MS), [b.id]);
   const c = await ready(3000);
   const d = await ready(4000);
@@ -225,7 +225,7 @@ test("three close receipts and stop-in-flight remain pending for confirmed serve
   const a = await added();
   const b = await added();
   const c = await ready();
-  await s.claimHelper(b.id, { ownerPid: 123, ownerStartedAt: 10 }, 2000);
+  await s.claimHelper(b.id, { ownerStartedAt: 10 }, 2000);
   const results = await Promise.all([
     s.closeHelper(a.id, chat, 2100),
     s.closeHelper(b.id, chat, 2100),
@@ -260,11 +260,7 @@ test("command sequences preserve capacity, stop, receipts and undelivered lifeti
             await s.addHelper({ task: "pbt", may: "opaque", chat }, now);
           else if (r) {
             if (cmd === 1)
-              await s.claimHelper(
-                r.id,
-                { ownerPid: 123, ownerStartedAt: 10 },
-                now,
-              );
+              await s.claimHelper(r.id, { ownerStartedAt: 10 }, now);
             if (cmd === 2 && r.run)
               await s.stopHelper(r.id, r.run.firedAt, "deadline");
             if (cmd === 3)
@@ -278,7 +274,7 @@ test("command sequences preserve capacity, stop, receipts and undelivered lifeti
               );
             if (cmd === 4) await s.closeHelper(r.id, chat, now);
             if (cmd === 5) await s.showHelper(r.id, chat);
-            if (cmd === 6) await s.markHelperDelivered(r.id, chat, key, now);
+            if (cmd === 6) await s.markHelperDelivered(r.id, chat, now);
             if (cmd === 8) await s.sweepHelpers(now);
           }
           const state = await s.readHelpers();
@@ -295,15 +291,4 @@ test("command sequences preserve capacity, stop, receipts and undelivered lifeti
     ),
     { seed: 20261013, numRuns: 30 },
   );
-});
-test("orphan cleanup under table lock, corrupt reader prevents cleanup", async (t) => {
-  const dir = await data(t);
-  const a = await added();
-  await mkdir(join(dir, "helpers", "h-ffffff", "out"), { recursive: true });
-  await s.sweepHelpers(2000);
-  assert.deepEqual((await readdir(join(dir, "helpers"))).sort(), [a.id]);
-  await mkdir(join(dir, "helpers", "h-eeeeee", "out"), { recursive: true });
-  await writeFile(join(dir, "helpers.json"), "{");
-  await assert.rejects(s.sweepHelpers(2000), s.HelperStoreError);
-  assert.ok((await readdir(join(dir, "helpers"))).includes("h-eeeeee"));
 });

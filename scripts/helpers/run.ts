@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
 import * as s from "#lib/helper-store.ts";
-import { traceHelper } from "#lib/trace.ts";
 import { writeFileAtomic } from "#lib/fs-atomic.ts";
 import { ownerTimeZone } from "#lib/reminder-time.ts";
 import { formatZoned } from "#lib/zoned-time.ts";
@@ -18,14 +18,13 @@ export function helperWork(previous: number, usage: HelperStepUsage): number {
   );
 }
 export function helperSummary(text: string): string | null {
-  const bounded = text
-    .trim()
-    .slice(0, s.HELPER_SUMMARY_MAX)
-    .replace(/[\uD800-\uDBFF]$/u, "");
-  const paragraph = bounded.lastIndexOf("\n\n");
-  if (text.length > s.HELPER_SUMMARY_MAX && paragraph > 0)
-    return bounded.slice(0, paragraph);
-  return bounded || null;
+  const trimmed = text.trim();
+  if (trimmed.length <= s.HELPER_SUMMARY_MAX) return trimmed || null;
+  return (
+    trimmed
+      .slice(0, s.HELPER_SUMMARY_MAX - 1)
+      .replace(/[\uD800-\uDBFF]$/u, "") + "…"
+  );
 }
 export async function runHelper(id: string): Promise<void> {
   const row = await s.getHelper(id),
@@ -78,6 +77,10 @@ export async function runHelper(id: string): Promise<void> {
             : "помощник закрыт";
     if (usable)
       try {
+        await mkdir(dirname(s.helperResultPath(id)), {
+          recursive: true,
+          mode: 0o700,
+        });
         await writeFileAtomic(s.helperResultPath(id), text, { mode: 0o600 });
       } catch (error) {
         console.error("helper result:", error);
@@ -111,7 +114,6 @@ export async function runHelper(id: string): Promise<void> {
       headers: {
         ...base.headers,
         "x-iva-helper": id,
-        "x-iva-helper-fired": String(run.firedAt),
       },
     };
     const message = `Helper ${id}. Now: ${formatZoned(Date.now(), ownerTimeZone())}. Allowed: ${row.may || "nothing, look and draft only"}. Task: ${row.task}`;
@@ -122,21 +124,9 @@ export async function runHelper(id: string): Promise<void> {
       onSession: async (sessionId) => {
         session = sessionId;
         try {
-          const recorded = await s.recordHelperSession(
-            id,
-            run.firedAt,
-            sessionId,
-          );
-          if (recorded) return true;
-          const current = (await s.getHelper(id))?.run;
-          return (
-            current?.firedAt === run.firedAt && current.sessionId === sessionId
-          );
+          return await s.recordHelperSession(id, run.firedAt, sessionId);
         } catch (error) {
-          traceHelper("session_unrecorded", id, {
-            session: sessionId,
-            data: { error: String(error) },
-          });
+          console.error("helper session:", error);
           return false;
         }
       },
@@ -145,11 +135,6 @@ export async function runHelper(id: string): Promise<void> {
         previous = usage.inputTokens ?? 0;
         steps++;
         model = usage.model ?? model;
-        if (steps === 1)
-          traceHelper("started", id, {
-            session: session ?? undefined,
-            data: { model, firedAt: run.firedAt },
-          });
         if (tokens > s.HELPER_CEILING_TOKENS)
           void s
             .stopHelper(id, run.firedAt, "ceiling")

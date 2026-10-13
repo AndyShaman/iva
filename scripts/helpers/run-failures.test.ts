@@ -17,7 +17,7 @@ for (const scenario of [
   "ceiling",
   "rename",
 ]) {
-  test(`real client + process/store: ${scenario}, confirmed cancel, ordered partial and atomic result`, async (t) => {
+  test(`real client + process/store: ${scenario}, confirmed cancel, last completed partial and atomic result`, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), "iva-helper-failure-"));
     const prev = { ...process.env };
     Object.assign(process.env, {
@@ -43,7 +43,7 @@ for (const scenario of [
     const added = await s.addHelper({ task: "test", may: "draft", chat }, 1000);
     assert.ok(added.ok);
     const id = added.row.id;
-    await s.claimHelper(id, { ownerPid: process.pid, ownerStartedAt: 1 }, 2000);
+    await s.claimHelper(id, { ownerStartedAt: 1 }, 2000);
     let cancels = 0,
       reset = 0;
     const timeout = setTimeout;
@@ -139,11 +139,8 @@ for (const scenario of [
             : "failed",
     );
     if (scenario !== "rename") {
-      assert.equal(
-        await readFile(s.helperResultPath(id), "utf8"),
-        "first\n\nsecond",
-      );
-      assert.equal(row.summary, "first\n\nsecond");
+      assert.equal(await readFile(s.helperResultPath(id), "utf8"), "second");
+      assert.equal(row.summary, "second");
     } else {
       assert.equal(row.summary, "second");
       assert.match(row.reason ?? "", /полный текст не записан/);

@@ -46,7 +46,7 @@ function fixture(
   };
   return { calls, client };
 }
-test("helper completed waiting: all completed texts, reason, usage and finalize before reset", async () => {
+test("helper completed waiting: last completed text, reason, usage and finalize before reset", async () => {
   const f = fixture([
     { type: "message.completed", data: { message: "first" } },
     { type: "message.appended", data: { message: "delta" } },
@@ -80,7 +80,7 @@ test("helper completed waiting: all completed texts, reason, usage and finalize 
   });
   assert.equal(r.serverEnded, true);
   assert.equal(r.reason, "step-limit");
-  assert.equal(r.partial, "first\n\nfinal");
+  assert.equal(r.partial, "final");
   assert.equal(r.message, "final");
   assert.deepEqual(ids, ["s"]);
   assert.equal(usage.length, 1);

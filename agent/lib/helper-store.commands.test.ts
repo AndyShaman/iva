@@ -14,7 +14,7 @@ type Row = {
   session: string | null;
   stop: s.HelperStop | null;
   outcome: s.HelperOutcome | null;
-  delivered: s.HelperTurnKey | null;
+  delivered: number | null;
   finished: number | null;
 };
 type Model = { now: number; rows: Row[] };
@@ -27,12 +27,9 @@ const end = {
   steps: 1,
   tokens: 12,
 };
-const key = { sessionId: "A", turnId: "turn_0" };
 const ops = [
   "add",
   "claim",
-  "pid",
-  "server-session",
   "client-session",
   "stop",
   "finish",
@@ -56,7 +53,7 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
     return `${this.op}(${this.index})`;
   }
   async run(m: Model, r: typeof s) {
-    m.now += 400000;
+    m.now += 4000000;
     const now = m.now;
     const row = m.rows[this.index % m.rows.length];
     if (this.op === "add") {
@@ -85,23 +82,11 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
             row.fired === null &&
             row.stop === null &&
             m.rows.filter((x) => x.fired !== null).length < 1;
-          const a = await r.claimHelper(
-            row.id,
-            { ownerPid: 123, ownerStartedAt: 10 },
-            now,
-          );
+          const a = await r.claimHelper(row.id, { ownerStartedAt: 10 }, now);
           assert.equal(a !== null, allowed);
           if (allowed) row.fired = now;
           break;
         }
-        case "pid": {
-          const actual = await r.getHelper(row.id);
-          const allowed = row.fired !== null && actual?.run?.childPid === null;
-          const a = await r.recordHelperChild(row.id, row.fired ?? 0, 222);
-          assert.equal(a !== null, allowed);
-          break;
-        }
-        case "server-session":
         case "client-session": {
           const allowed = row.fired !== null && row.outcome === null;
           assert.equal(
@@ -149,6 +134,7 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
             row.status = row.stop === "closed" ? "closed" : "finished";
             row.finished = now;
             row.fired = null;
+            row.session = null;
           }
           break;
         }
@@ -176,9 +162,9 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
         }
         case "deliver": {
           const allowed = row.status === "finished" && row.delivered === null;
-          const a = await r.markHelperDelivered(row.id, chat, key, now);
+          const a = await r.markHelperDelivered(row.id, chat, now);
           assert.equal(a !== null, allowed);
-          if (allowed) row.delivered = key;
+          if (allowed) row.delivered = now;
           break;
         }
         case "sweep": {
@@ -186,9 +172,10 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
           const expected = m.rows
             .filter(
               (x) =>
-                x.status === "closed" &&
-                x.finished !== null &&
-                x.finished + 86400000 <= now,
+                (x.status === "closed" &&
+                  x.finished !== null &&
+                  x.finished + 86400000 <= now) ||
+                (x.delivered !== null && x.delivered + 86400000 <= now),
             )
             .map((x) => x.id);
           assert.deepEqual(removed, expected);
@@ -208,10 +195,11 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
       assert.equal(a.outcome, x.outcome);
       assert.equal(a.may, "opaque");
       assert.equal(a.finishedAt, x.finished);
+      assert.equal(a.deliveredAt, x.delivered);
     }
   }
 }
-test("fc.commands: lifecycle, dual T3, stale CAS, close, pure reads, delivery and sweep; seed 20261013", async (t) => {
+test("fc.commands: lifecycle, client T3, stale CAS, close, pure reads, delivery and sweep; seed 20261013", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "iva-helper-commands-"));
   const prior = process.env.ASSISTANT_DATA_DIR;
   process.env.ASSISTANT_DATA_DIR = dir;

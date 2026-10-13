@@ -134,7 +134,7 @@ function errorMessage(error: unknown): string {
   return (error as { message: string }).message;
 }
 
-export function reservationOwnerIsDead(
+function reservationOwnerIsDead(
   entry: ScheduleStatusEntry | undefined,
 ): boolean {
   const ownerPid = entry?.ownerPid;
@@ -880,48 +880,4 @@ async function unexpectedFailure(
     )
     .catch(() => undefined);
   return { skipped: false, ok: false, error };
-}
-
-export type StartedScheduledJob =
-  | { startFailed: true; error: unknown }
-  | {
-      startFailed: false;
-      pid: number;
-      completion: Promise<RunScheduledJobResult>;
-    };
-
-export function startScheduledJob(
-  options: RunScheduledJobOptions,
-): Promise<StartedScheduledJob> {
-  const o = resolveOptions({ ...options, timeoutMs: null });
-  return new Promise((resolve) => {
-    let started = false;
-    const completion = spawnChild(
-      {
-        ...o,
-        spawnImpl: (...args) => {
-          const child = o.spawnImpl(...args);
-          child.once("spawn", () => {
-            started = true;
-            resolve({ startFailed: false, pid: child.pid!, completion });
-          });
-          return child;
-        },
-      },
-      o.now(),
-    ).then((outcome) => {
-      if (!started)
-        resolve({
-          startFailed: true,
-          error: outcome.error ?? new Error("child did not start"),
-        });
-      return {
-        skipped: false,
-        ok: outcome.code === 0 && !outcome.error,
-        code: outcome.code,
-        signal: outcome.signal,
-        error: outcome.error,
-      };
-    });
-  });
 }

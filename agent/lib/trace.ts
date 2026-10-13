@@ -894,17 +894,7 @@ export function traceBridgeQueued(
 }
 
 export type HelperTraceEvent =
-  | "added"
-  | "refused"
-  | "claimed"
-  | "started"
-  | "stopping"
-  | "finished"
-  | "delivered"
-  | "closed"
-  | "race_lost"
-  | "session_unrecorded"
-  | "store_broken";
+  "refused" | "finished" | "race_lost" | "store_broken";
 
 export function traceHelper(
   event: HelperTraceEvent,

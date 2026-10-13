@@ -1,19 +1,10 @@
 import { Client, type CancelSessionResult } from "eve/client";
-import { uptime } from "node:os";
-import {
-  OWNER_STARTED_AT,
-  reservationOwnerIsDead,
-  startScheduledJob,
-} from "./schedule-runner.ts";
+import { OWNER_STARTED_AT, runScheduledJob } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 import { traceHelper } from "./trace.ts";
 type TickOptions = {
   nowMs?: number;
-  bootAt?: number;
-  start?: typeof startScheduledJob;
-  ownerDead?: typeof reservationOwnerIsDead;
-  alive?: (pid: number) => boolean;
-  kill?: (pid: number, signal: NodeJS.Signals) => unknown;
+  start?: typeof runScheduledJob;
   cancel?: (id: string) => Promise<CancelSessionResult>;
   completed?: { id: string; firedAt: number };
   log?: (...args: unknown[]) => void;
@@ -21,10 +12,6 @@ type TickOptions = {
 export async function runHelperTick(options: TickOptions = {}): Promise<void> {
   const now = options.nowMs ?? Date.now(),
     log = options.log ?? console.error;
-  const alive =
-    options.alive ??
-    ((pid: number) =>
-      !reservationOwnerIsDead({ ownerPid: pid, ownerStartedAt: 0 }));
   const cancel =
     options.cancel ??
     ((id: string) =>
@@ -47,28 +34,20 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
       try {
         const run = row.run;
         if (run) {
-          const current =
-            run.ownerPid === process.pid &&
-            run.ownerStartedAt === OWNER_STARTED_AT &&
-            !(options.ownerDead ?? reservationOwnerIsDead)(run) &&
-            run.ownerStartedAt >= (options.bootAt ?? now - uptime() * 1000);
-          const completed =
+          const current = run.ownerStartedAt === OWNER_STARTED_AT;
+          const exited =
             options.completed?.id === row.id &&
             options.completed.firedAt === run.firedAt;
-          const exited =
-            completed || (run.childPid !== null && !alive(run.childPid));
           if (
             !current ||
             exited ||
             now >= run.deadlineAtMs + s.HELPER_GRACE_MS
           ) {
-            if (current && run.childPid !== null && !exited)
-              (options.kill ?? process.kill)(-run.childPid, "SIGKILL");
             if (run.sessionId) {
               if ((await cancel(run.sessionId)).status !== "no_active_turn")
                 continue;
             } else if (!exited && current) continue;
-            await s.finalizeHelper(
+            const finished = await s.finalizeHelper(
               row.id,
               { kind: "running", firedAt: run.firedAt },
               {
@@ -81,45 +60,62 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
               },
               now,
             );
+            if (finished)
+              traceHelper("finished", row.id, {
+                session: run.sessionId ?? undefined,
+                data: {
+                  outcome: finished.outcome,
+                  reason: finished.reason,
+                  steps: finished.steps,
+                  tokens: finished.tokens,
+                },
+              });
           }
         } else if (row.status === "pending") {
           const claimed = await s.claimHelper(
             row.id,
-            {
-              ownerPid: process.pid,
-              ownerStartedAt: OWNER_STARTED_AT,
-            },
+            { ownerStartedAt: OWNER_STARTED_AT },
             now,
           );
           if (!claimed?.run) continue;
-          const child = await (options.start ?? startScheduledJob)({
+          void (options.start ?? runScheduledJob)({
             name: `helper-${row.id}`,
             argv: ["scripts/helpers/run.ts", row.id],
             root: process.cwd(),
             nodeBin: process.execPath,
-          });
-          if (child.startFailed)
-            await s.finalizeHelper(
-              row.id,
-              { kind: "running", firedAt: now },
-              {
-                outcome: "failed",
-                summary: null,
-                reason: "помощник не смог начать",
-                model: null,
-                steps: 0,
-                tokens: 0,
-              },
-              now,
-            );
-          else {
-            void child.completion
-              .then(() =>
-                runHelperTick({ completed: { id: row.id, firedAt: now } }),
-              )
-              .catch(log);
-            await s.recordHelperChild(row.id, now, child.pid);
-          }
+            timeoutMs: s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS,
+            log,
+          })
+            .then(async (result) => {
+              if (result.error) {
+                const finished = await s.finalizeHelper(
+                  row.id,
+                  { kind: "running", firedAt: now },
+                  {
+                    outcome: "failed",
+                    summary: null,
+                    reason: "помощник не смог начать",
+                    model: null,
+                    steps: 0,
+                    tokens: 0,
+                  },
+                  Date.now(),
+                );
+                if (finished)
+                  traceHelper("finished", row.id, {
+                    data: {
+                      outcome: finished.outcome,
+                      reason: finished.reason,
+                    },
+                  });
+              } else
+                await runHelperTick({
+                  ...options,
+                  nowMs: undefined,
+                  completed: { id: row.id, firedAt: now },
+                });
+            })
+            .catch(log);
         }
       } catch (error) {
         if (error instanceof s.HelperStoreError) throw error;

@@ -84,7 +84,7 @@ export async function helperExecute(
                 ? "закрыто"
                 : "готово",
           outcome: r.outcome,
-          delivered: r.delivered !== null,
+          delivered: r.deliveredAt !== null,
         })),
       );
     if (v.action === "close") {

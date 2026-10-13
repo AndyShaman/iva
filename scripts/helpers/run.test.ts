@@ -10,7 +10,7 @@ test("work formula includes first input, positive growth and output after compac
 });
 test("summary bounds Unicode and a single huge paragraph; seed 20261013", () => {
   fc.assert(
-    fc.property(fc.string({ maxLength: 10000 }), (text) => {
+    fc.property(fc.string({ unit: "grapheme", maxLength: 10000 }), (text) => {
       const s = helperSummary(text);
       assert.ok(s === null || s.length <= 1500);
     }),
@@ -18,6 +18,8 @@ test("summary bounds Unicode and a single huge paragraph; seed 20261013", () => 
   );
   assert.equal(helperSummary("a".repeat(3000))?.length, 1500);
   assert.equal(helperSummary(""), null);
+  assert.equal(helperSummary("a".repeat(1500)), "a".repeat(1500));
+  assert.equal(helperSummary("x\n\n" + "😀".repeat(1500))?.endsWith("…"), true);
 });
 
 test("real helper process through installed HTTP client saves text/usage and finalizes before reset", async (t) => {
@@ -58,7 +60,7 @@ test("real helper process through installed HTTP client saves text/usage and fin
     const u = String(url),
       h = new Headers(init.headers);
     assert.equal(h.get("x-iva-helper"), id);
-    assert.equal(h.get("x-iva-helper-fired"), "2000");
+    assert.equal(h.has("x-iva-helper-fired"), false);
     if (u.endsWith("/session")) {
       message = (
         JSON.parse(typeof init.body === "string" ? init.body : "null") as {
@@ -98,11 +100,11 @@ test("real helper process through installed HTTP client saves text/usage and fin
     assert.equal(row?.run, null);
     return Response.json({ ok: true, status: "no_active_session" });
   });
-  for (const scenario of [
-    { text: "a".repeat(3000), outcome: "done", reason: undefined },
-    { text: "result", outcome: "ceiling", reason: "step-limit" },
-    { text: "QUIET", outcome: "empty", reason: undefined },
-  ]) {
+  const checkScenario = async (scenario: {
+    text: string;
+    outcome: string;
+    reason: string | undefined;
+  }) => {
     text = scenario.text;
     expected = scenario.outcome;
     reason = scenario.reason;
@@ -112,11 +114,7 @@ test("real helper process through installed HTTP client saves text/usage and fin
     );
     assert.ok(added.ok);
     id = added.row.id;
-    await store.claimHelper(
-      id,
-      { ownerPid: process.pid, ownerStartedAt: 1 },
-      2000,
-    );
+    await store.claimHelper(id, { ownerStartedAt: 1 }, 2000);
     await runHelper(id);
     const r = await store.getHelper(id);
     assert.ok(r);
@@ -136,15 +134,36 @@ test("real helper process through installed HTTP client saves text/usage and fin
       assert.ok(r.summary!.length <= 1500);
     }
     if (expected === "ceiling") assert.equal(r.reason, "предел шагов");
-  }
+  };
+  for (const scenario of [
+    { text: "a".repeat(3000), outcome: "done", reason: undefined },
+    { text: "result", outcome: "ceiling", reason: "step-limit" },
+    { text: "QUIET", outcome: "empty", reason: undefined },
+  ])
+    await checkScenario(scenario);
+  await fc.assert(
+    fc.asyncProperty(
+      fc.string({ unit: "grapheme", minLength: 1501, maxLength: 3000 }),
+      async (generated) => {
+        await fs.rm(join(dir, "helpers.json"), { force: true });
+        await checkScenario({
+          text: generated,
+          outcome: "done",
+          reason: undefined,
+        });
+        assert.equal(
+          (await fs.stat(path.dirname(store.helperResultPath(id)))).mode &
+            0o777,
+          0o700,
+        );
+      },
+    ),
+    { seed: 20261013, numRuns: 20 },
+  );
   const a = await store.addHelper({ task: "no key", may: "", chat }, 1000);
   assert.ok(a.ok);
   id = a.row.id;
-  await store.claimHelper(
-    id,
-    { ownerPid: process.pid, ownerStartedAt: 1 },
-    2000,
-  );
+  await store.claimHelper(id, { ownerStartedAt: 1 }, 2000);
   delete process.env.ASSISTANT_BEARER;
   await runHelper(id);
   assert.equal((await store.getHelper(id))?.outcome, "failed");

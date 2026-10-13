@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns registration. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -41,7 +41,7 @@ async function setup(t: test.TestContext) {
   const fired = Date.now();
   await s.claimHelper(
     added.row.id,
-    { ownerPid: process.pid, ownerStartedAt: OWNER_STARTED_AT },
+    { ownerStartedAt: OWNER_STARTED_AT },
     fired,
   );
   return { dir, chat, id: added.row.id, fired };
@@ -51,18 +51,28 @@ test(
   "close through the real tick preserves text already consumed by the living client",
   { timeout: 10000 },
   async (t) => {
-    const { dir, chat, id, fired } = await setup(t);
+    const { dir, chat, id } = await setup(t);
     const fixture = join(dir, "child.ts");
     await writeFile(
       fixture,
       `
     import { runHelper } from ${JSON.stringify(new URL("./run.ts", import.meta.url).href)};
-    import { access } from "node:fs/promises";
+    import { access, writeFile } from "node:fs/promises";
     import { join } from "node:path";
     const gate = join(process.env.ASSISTANT_DATA_DIR, "allow-cancel");
+    let completed = false;
     const timeout = setTimeout, interval = setInterval;
     globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay === 15000 ? 20 : delay, ...args);
     globalThis.setInterval = (fn, delay, ...args) => interval(fn, delay === 15000 ? 20 : delay, ...args);
+    const parse = JSON.parse;
+    JSON.parse = (...args) => {
+      const e = parse(...args);
+      if (e?.type === "step.completed") Object.defineProperty(e.data, "usage", { get() {
+        if (!completed) { completed = true; void writeFile(join(process.env.ASSISTANT_DATA_DIR, "consumed"), "yes"); }
+        return { inputTokens: 10, outputTokens: 2 };
+      } });
+      return e;
+    };
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.endsWith("/session")) return Response.json({ sessionId: "fixture-server" });
@@ -101,21 +111,17 @@ test(
       }
     });
     await once(child, "spawn");
-    await s.recordHelperChild(id, fired, child.pid!);
     let consumed = false;
     for (let i = 0; i < 300 && !consumed; i++) {
-      const files = await readdir(join(dir, "trace")).catch(() => []);
-      for (const file of files) {
-        const data = await readFile(join(dir, "trace", file), "utf8").catch(
-          () => "",
-        );
-        if (data.includes("fixture-processed")) consumed = true;
-      }
+      consumed = await readFile(join(dir, "consumed"), "utf8").then(
+        () => true,
+        () => false,
+      );
       if (!consumed) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.ok(
       consumed,
-      "Trace confirms consumption of completed text before the next step",
+      "step dispatch confirms the preceding completed text was consumed",
     );
     await s.closeHelper(id, chat, Date.now());
     await runHelperTick({
