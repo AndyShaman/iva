@@ -95,10 +95,10 @@ function fakeSystemctl({ broken }: { broken?: string } = {}) {
   return { control, calls, enabled, active };
 }
 
-const NODE = "/home/iva/.nvm/versions/node/v24.5.0/bin/node";
-const NODE_BIN = "/home/iva/.nvm/versions/node/v24.5.0/bin";
-const ROOT = "/home/iva/iva/current";
-const DATA = "/home/iva/iva/data";
+const NODE = "/home/user/.nvm/versions/node/v24.5.0/bin/node";
+const NODE_BIN = "/home/user/.nvm/versions/node/v24.5.0/bin";
+const ROOT = "/home/user/iva/current";
+const DATA = "/home/user/iva/data";
 
 function source0(overrides: Partial<PluginUnitSource> = {}): PluginUnitSource {
   return {

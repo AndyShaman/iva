@@ -50,10 +50,10 @@ test("skill root falls back to /workspace/skills when the sandbox HOME is the fi
 });
 
 test("skill root keeps the HOME prefix when the sandbox HOME is usable", async () => {
-  const sandbox = sandboxWithHome("/home/iva");
+  const sandbox = sandboxWithHome("/home/user");
   assert.equal(
     await skillPaths.resolveSandboxSkillRoot({ sandbox }),
-    "/home/iva/.agents/skills",
+    "/home/user/.agents/skills",
   );
 });
 

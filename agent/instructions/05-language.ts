@@ -17,7 +17,7 @@ const DATA_DIR = resolveDataDir(process.cwd());
 
 // settings.language ("ru"|"en") → env AGENT_LANGUAGE → "ru". Путь относителен cwd
 // (readFileSync резолвит от process.cwd(); iva.service стартует с WorkingDirectory=
-// /home/shima/iva), как VAULT в 20-core.ts. Нет файла / битый JSON / чужое значение —
+// /home/user/iva), как VAULT в 20-core.ts. Нет файла / битый JSON / чужое значение —
 // молча падаем в env-фолбэк.
 function resolveLang(): string {
   try {

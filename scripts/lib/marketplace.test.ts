@@ -112,7 +112,7 @@ test("a local entry with no cached commit is refused, not silently unpinned", ()
 
 test("only https, ssh and git@host may be named: file, http and the rest are skipped", () => {
   for (const [url, kind] of [
-    ["file:///Users/shima/dev/my/assistant", "url"],
+    ["file:///srv/iva", "url"],
     ["file:///srv/mirror/plugin.git", "git-subdir"],
     ["http://plugins.example.test/x.git", "url"],
     ["http://plugins.example.test/x.git", "git-subdir"],

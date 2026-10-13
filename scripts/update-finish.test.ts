@@ -1084,7 +1084,7 @@ test("no reason the userbot went off reaches Telegram, whatever it carries (seed
     "proxy_unreachable",
     "probe_timeout",
     `ValueError: api_key=${"q".repeat(24)}`,
-    "/home/alice/iva/data/userbot/.venv/bin/python",
+    "/home/user/iva/data/userbot/.venv/bin/python",
     "зависимости не импортируются — ModuleNotFoundError: telegram_mcp",
   ];
   for (const language of ["ru", "en"]) {

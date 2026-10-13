@@ -12,6 +12,7 @@
 // each side is deliberately self-contained and a test pins the copies together, the way
 // `usage` shares only its log path (docs/tech-debt.md §3).
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import test from "node:test";
@@ -449,4 +450,27 @@ test("a missing @iva package is a named error, not a silent null", () => {
     () => targetOf("@iva/несуществующий", "agent/agent.ts"),
     /@iva\/несуществующий/u,
   );
+});
+
+// The literal username "user" is the portable fixture, never a machine identity.
+const MACHINE_HOME = /\/(?:home|Users)\/(?!user\/)[A-Za-z][A-Za-z0-9_-]*\//u;
+test("tracked product files use portable home paths", () => {
+  const tracked = execFileSync("git", ["ls-files", "-z"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean);
+  const offenders = tracked.filter(
+    (file) =>
+      !file.startsWith("eve/") &&
+      MACHINE_HOME.test(readFileSync(join(ROOT, file), "utf8")),
+  );
+  assert.deepEqual(offenders, [], "machine home path in tracked file");
+});
+test("home-path guard catches Linux and macOS names and allows portable fixtures", () => {
+  for (const prefix of ["/home/", "/Users/"]) {
+    assert.equal(MACHINE_HOME.test(`${prefix}fixture-owner/iva`), true);
+    assert.equal(MACHINE_HOME.test(`${prefix}user/iva`), false);
+  }
 });

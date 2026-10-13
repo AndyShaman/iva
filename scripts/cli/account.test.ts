@@ -163,7 +163,7 @@ test("uninstall preserves confirmation, removal, and purge ordering", async () =
       },
     }),
     {
-      homeDir: () => "/home/person",
+      homeDir: () => "/home/user",
       remove: (path, options) =>
         events.push(`remove:${path}:${JSON.stringify(options)}`),
       log: (...args) => events.push(`log:${args.join(" ")}`),
@@ -179,7 +179,7 @@ test("uninstall preserves confirmation, removal, and purge ordering", async () =
     "has-systemd",
     "remove-units",
     "ok:Removed systemd units: 2",
-    "remove:/home/person/.local/bin/iva:undefined",
+    "remove:/home/user/.local/bin/iva:undefined",
     "ok:iva command removed from ~/.local/bin",
     `confirm:Delete the ${ROOT} directory AND vault IRREVERSIBLY?:false`,
     "read-env",

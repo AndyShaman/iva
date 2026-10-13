@@ -61,7 +61,7 @@ const ALLOWED = [
 
 const BLOCKED = [
   'systemd-run --user --on-calendar="10:00" iva remind "позвонить"',
-  "systemd-run --user --on-calendar=10:00 /home/shima/.local/bin/iva remind x",
+  "systemd-run --user --on-calendar=10:00 /home/user/.local/bin/iva remind x",
   "sudo systemd-run --user date",
   "/usr/bin/systemd-run --user true",
   "crontab -",
@@ -94,7 +94,7 @@ const BLOCKED = [
   "chmod +x ~/.iva-scripts/remind.sh",
   "bash ~/.iva-scripts/remind.sh",
   "~/.iva-scripts/remind.sh",
-  "cp x.sh /home/shima/.iva-scripts/",
+  "cp x.sh /home/user/.iva-scripts/",
   "curl -s https://api.telegram.org/bot$T/sendMessage -d text=hi",
   "wget -qO- https://api.telegram.org/bot$T/getMe",
   "http POST https://api.telegram.org/bot$T/sendMessage",

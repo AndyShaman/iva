@@ -205,18 +205,18 @@ test("короткий секрет режется, а настройки окр
   // Проверка v6 (HIGH-4): фильтр «значение короче четырёх знаков — не секрет» обходил общее
   // правило, которое короткие формы режет по границе слова. И обратное: HOME/PWD/USER/PATH —
   // настройки самого процесса, а не секреты, иначе пути в стеке превращались в <redacted>.
-  const tail = jobTail("credential=abc for /Users/john/iva/vault", {
+  const tail = jobTail("credential=abc for /Users/user/iva/vault", {
     CUSTOM_SECRET: "abc",
-    HOME: "/Users/john",
-    USER: "john",
-    PWD: "/Users/john/iva",
+    HOME: "/Users/user",
+    USER: "user",
+    PWD: "/Users/user/iva",
     PATH: "/usr/bin:/bin",
     SHLVL: "1",
   });
   assert.ok(!/credential=abc/u.test(tail), `короткий секрет остался: ${tail}`);
   assert.match(
     tail,
-    /\/Users\/john\/iva\/vault/u,
+    /\/Users\/user\/iva\/vault/u,
     "путь вырезан вместе с настройками",
   );
 });

@@ -2406,7 +2406,7 @@ test("окружение CLI получает адрес реле и выклю�
   const env = claudeEnv(
     {
       PATH: "/usr/bin",
-      CLAUDE_CONFIG_DIR: "/home/iva/.claude",
+      CLAUDE_CONFIG_DIR: "/home/user/.claude",
       EMPTY: undefined,
     },
     "http://127.0.0.1:9999/admit/x",
@@ -2416,7 +2416,7 @@ test("окружение CLI получает адрес реле и выклю�
   assert.equal(env.CLAUDE_CODE_MAX_RETRIES, "0");
   assert.equal(env.DISABLE_AUTO_COMPACT, "1");
   // Чужой каталог настроек CLI не трогаем: там его логин.
-  assert.equal(env.CLAUDE_CONFIG_DIR, "/home/iva/.claude");
+  assert.equal(env.CLAUDE_CONFIG_DIR, "/home/user/.claude");
   assert.equal("EMPTY" in env, false);
   // Унаследованное тело запроса — чужие инструменты поверх наших; своё едет в settings.json.
   assert.equal(

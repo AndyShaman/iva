@@ -21,7 +21,7 @@ const allowed = (cmd: string) =>
 test("R1: systemd-run в командной позиции блокируется в любой форме", () => {
   for (const cmd of [
     'systemd-run --user --on-calendar="10:00" iva remind "позвонить"',
-    "systemd-run --user --on-calendar=10:00 /home/shima/.local/bin/iva remind x",
+    "systemd-run --user --on-calendar=10:00 /home/user/.local/bin/iva remind x",
     "sudo systemd-run --user date",
     "bash -c 'systemd-run --user --on-calendar=10:00 iva notify x'",
     "nohup systemd-run --user true",
@@ -94,7 +94,7 @@ test("R6: свой скрипт в ~/.iva-scripts блокируется", () =>
     "chmod +x ~/.iva-scripts/remind.sh",
     "bash ~/.iva-scripts/remind.sh",
     "~/.iva-scripts/remind.sh",
-    "cp x.sh /home/shima/.iva-scripts/",
+    "cp x.sh /home/user/.iva-scripts/",
     "sudo bash -c 'chmod +x ~/.iva-scripts/remind.sh'",
   ]) {
     blocked(cmd);

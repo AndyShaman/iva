@@ -21,7 +21,7 @@ test("a pid nobody runs has no command", () => {
 
 test("an Iva process is told from somebody else's", () => {
   assert.equal(
-    isIvaProcess("/usr/bin/node /home/iva/bin/iva.mjs update"),
+    isIvaProcess("/usr/bin/node /home/user/bin/iva.mjs update"),
     true,
   );
   assert.equal(isIvaProcess("/usr/bin/node update-finish.ts"), true);

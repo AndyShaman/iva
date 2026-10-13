@@ -24,7 +24,7 @@ test("летальные команды iva CLI блокируются во вс
   blocked("iva update");
   blocked("iva rollback"); // флип current + рестарт убивает ход ровно так же
   blocked("iva doctor"); // ремонтные ветки доктора сами рестартуют iva.service
-  blocked("cd /home/shima/iva && iva restart");
+  blocked("cd /home/user/iva && iva restart");
   blocked("node bin/iva.mjs restart");
   blocked("./bin/iva.mjs update");
   blocked("npm run iva -- restart");
