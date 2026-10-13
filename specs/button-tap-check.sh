@@ -19,6 +19,16 @@ check() { # config expected; expected: none | <Invariant>
   if [ -z "$got" ]; then
     echo "FAIL $cfg: tlc failed or gave no verdict"; sed -n '1,40p' "$log"; failed=$((failed+1)); return
   fi
+  # The first bad state must have exactly two admissions. Merely finding some violation
+  # also accepts a weakened <= 2 invariant, which fails only after a third admission.
+  if [ "$got" = OnePerProcess ]; then
+    last_admitted=$(sed -n 's/.*admitted = //p' "$log" | tail -1)
+    size=$(printf '%s\n' "$last_admitted" | awk '{gsub(/[{} ]/, ""); print length($0) ? split($0, a, ",") : 0}')
+    if [ "$size" -ne 2 ]; then
+      echo "FAIL $cfg: OnePerProcess first fails with $size admissions, expected 2"
+      failed=$((failed+1)); return
+    fi
+  fi
   if [ "$got" = "$expect" ]; then
     if [ "$got" = none ]; then
       echo "OK $cfg: no error ($(sed -n 's/.* \([0-9,]*\) distinct states found.*/\1/p' "$log" | tail -1) distinct states)"

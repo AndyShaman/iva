@@ -3252,15 +3252,15 @@ test("a stranger's tap and a group tap are neither marked nor remembered", async
   assert.equal(await handleControl(owner, deps), false);
 });
 
-test("tap memory keeps the first button after 256 and 300 other taps", async () => {
+test("tap memory keeps the first button after 256, 1000 and 3000 other taps", async () => {
   const { deps } = tapDeps();
   assert.equal(await handleControl(modelTap(10_000, 10_000, "x"), deps), false);
-  for (let i = 1; i <= 300; i += 1) {
+  for (let i = 1; i <= 3000; i += 1) {
     assert.equal(
       await handleControl(modelTap(10_000 + i, 10_000 + i, "x"), deps),
       false,
     );
-    if (i === 256 || i === 300) {
+    if (i === 256 || i === 300 || i === 1000 || i === 3000) {
       const again = modelTap(20_000 + i, 10_000, "x");
       assert.equal(
         await handleControl(again, deps),
