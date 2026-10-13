@@ -150,7 +150,7 @@ export async function usageProbe() {
 }
 
 /** Snapshot command, in a 21f447ed archive with iva.1 and these two current fixtures:
- * node --input-type=module -e "import './scripts/lib/ts-esm-hooks.ts'; const {existingUsageProbe}=await import('./scripts/fixtures/helper-usage-r2.ts'); console.log(JSON.stringify(await existingUsageProbe()));"
+ * node --input-type=module -e "import './scripts/lib/ts-esm-hooks.ts'; const {existingUsageProbe}=await import('./scripts/fixtures/helper-usage-r2.test-fixture.ts'); console.log(JSON.stringify(await existingUsageProbe()));"
  * Set each provider's fixture model and ASSISTANT_DATA_DIR to a temporary empty directory.
  */
 export async function existingUsageProbe() {

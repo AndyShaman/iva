@@ -36,7 +36,7 @@ test("N1 seven existing turn kinds retain base model on all six providers", asyn
         [
           "--input-type=module",
           "-e",
-          "import './scripts/lib/ts-esm-hooks.ts'; const {existingUsageProbe}=await import('./scripts/fixtures/helper-usage-r2.ts'); console.log(JSON.stringify(await existingUsageProbe()));",
+          "import './scripts/lib/ts-esm-hooks.ts'; const {existingUsageProbe}=await import('./scripts/fixtures/helper-usage-r2.test-fixture.ts'); console.log(JSON.stringify(await existingUsageProbe()));",
         ],
         process.cwd(),
         {
@@ -78,7 +78,7 @@ for (const [provider, chat, helper] of [
         [
           "--input-type=module",
           "-e",
-          "import './scripts/lib/ts-esm-hooks.ts'; const {usageProbe}=await import('./scripts/fixtures/helper-usage-r2.ts'); console.log(JSON.stringify(await usageProbe()));",
+          "import './scripts/lib/ts-esm-hooks.ts'; const {usageProbe}=await import('./scripts/fixtures/helper-usage-r2.test-fixture.ts'); console.log(JSON.stringify(await usageProbe()));",
         ],
         process.cwd(),
         {
