@@ -963,14 +963,12 @@ async function runPostHealthCleanup({
     !(await errand(run, log, {
       what: "the Google CLI update",
       failure: "cleanup remains pending",
-      command: "npm",
-      // Same user prefix as install.sh; never write the system npm prefix.
+      command: "bash",
+      // Reuse install.sh's pinned archive and SHA-256 check under the service user's prefix.
       args: [
-        "i",
-        "-g",
-        "--prefix",
+        join(store.layout.versions, name, "install.sh"),
+        "--update-gws",
         join(homedir(), ".local"),
-        "@googleworkspace/cli@latest",
       ],
       cwd: join(store.layout.versions, name),
     }))

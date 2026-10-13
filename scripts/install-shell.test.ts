@@ -380,6 +380,7 @@ if (args[0] === "_activate-units" && process.env.IVA_TEST_UNITS_FAIL) {
 `;
 
 type RunOptions = {
+  readonly args?: readonly string[];
   readonly calls?: string;
   readonly env?: Readonly<Record<string, string>>;
   /** The installer to run, when it must be one sitting inside the installation. */
@@ -626,7 +627,7 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
             installer,
             "--non-interactive",
           ]
-        : [installer, "--non-interactive"];
+        : [installer, ...(runOptions.args ?? ["--non-interactive"])];
       return spawnSync("bash", argv, {
         cwd: dir,
         encoding: "utf8",
@@ -2004,3 +2005,31 @@ for (const field of ["resolved", "integrity"] as const) {
     assert.match(world.calls(join(world.dir, "second.log")), /^npm ci$/mu);
   });
 }
+
+void test("updater GWS path checks the same pinned bytes and preserves credentials", (t) => {
+  const world = createWorld(t);
+  const prefix = join(world.home, "user with spaces", ".local");
+  const credentials = join(world.home, ".config/gws/credentials.json");
+  mkdirSync(join(world.home, ".config/gws"), { recursive: true });
+  writeFileSync(credentials, "fixture authorization");
+  const result = world.run({ args: ["--update-gws", prefix] });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const calls = world.calls();
+  assert.ok(calls.includes(PINNED_ARTIFACTS.gws.url));
+  assert.ok(calls.indexOf("sha256sum ") < calls.indexOf("npm i -g "));
+  assert.ok(calls.includes(`npm i -g --prefix ${prefix} `));
+  assert.doesNotMatch(calls, /latest|systemctl|git |iva |apt-get/u);
+  assert.equal(readFileSync(credentials, "utf8"), "fixture authorization");
+  assert.deepEqual(leftovers(world.tmp), []);
+});
+void test("updater GWS path rejects corrupt bytes before npm and removes its download", (t) => {
+  const world = createWorld(t);
+  const result = world.run({
+    args: ["--update-gws", join(world.home, ".local")],
+    env: { IVA_TEST_CORRUPT_ARTIFACT: "gws" },
+  });
+  assert.equal(result.status, 86, result.stdout + result.stderr);
+  assert.match(result.stdout + result.stderr, /SHA-256 mismatch/u);
+  assert.doesNotMatch(world.calls(), /npm i/u);
+  assert.deepEqual(leftovers(world.tmp), []);
+});

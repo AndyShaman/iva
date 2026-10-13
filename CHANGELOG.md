@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Google CLI обновляется проверенным архивом**: обновлятор использует ту же закреплённую версию и проверку SHA-256, что установщик; подключённый аккаунт сохраняется. Updates install Google CLI through the installer’s pinned archive and checksum verification.
+
 - 🐚 **Защита команд отвечает и на странные имена**: имена `constructor`, `toString` и `__proto__` проходят обычную проверку и больше вызывают понятный отказ вместо ошибки хода. Shell guards return a decision for prototype names instead of treating them as approved commands or throwing.
 
 - 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.

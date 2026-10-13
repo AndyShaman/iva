@@ -130,6 +130,14 @@ install_verified_npm_tarball() {
   return "$rc"
 }
 
+# Internal updater entry: exactly the same pins, download and checksum as installation.
+# Runs before setup, repository discovery, units or service changes.
+if [ "${1:-}" = --update-gws ]; then
+  [ "$#" -eq 2 ] || exit 2
+  install_verified_npm_tarball gws "$GWS_TARBALL_URL" "$GWS_TARBALL_SHA256" --prefix "$2"
+  exit "$?"
+fi
+
 # Compact progress for automatic work. Prompts, sudo and the setup wizard never
 # run behind a spinner, so they remain fully readable and interactive.
 INSTALL_LOG="${TMPDIR:-/tmp}/iva-install-$$.log"

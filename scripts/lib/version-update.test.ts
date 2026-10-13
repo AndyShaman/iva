@@ -1494,7 +1494,7 @@ test("the chores of the installation are run around the restart, out of the vers
         calls.push(`${command} ${args.join(" ")} @${cwd}`);
         // No registry here, which is the ordinary state of a box behind a proxy:
         // a chore that cannot run is not an update that failed.
-        return command === "npm" && args[0] === "i"
+        return command === "bash" && args[1] === "--update-gws"
           ? Promise.resolve({ code: 1, output: "no registry" })
           : build(command, args, cwd);
       },
@@ -1509,7 +1509,7 @@ test("the chores of the installation are run around the restart, out of the vers
   assert.deepEqual(calls.slice(-3), [
     `${process.execPath} ${join(dir, "scripts/vault-cleanup.ts")} . --apply @${layout.vault}`,
     `restart @${layout.current}`,
-    `npm i -g --prefix ${join(homedir(), ".local")} @googleworkspace/cli@latest @${dir}`,
+    `bash ${join(dir, "install.sh")} --update-gws ${join(homedir(), ".local")} @${dir}`,
   ]);
   assert.equal(createVersionStore(iva.home).settled(), outcome.version);
   assert.ok(
@@ -1536,10 +1536,7 @@ test("Google update uses the service user's prefix and preserves existing author
   updated(
     await iva.update({
       run: (command, args, cwd) => {
-        if (
-          command === "npm" &&
-          args.at(-1) === "@googleworkspace/cli@latest"
-        ) {
+        if (command === "bash" && args[1] === "--update-gws") {
           seen.push([...args]);
           return Promise.resolve({ code: 0, output: "" });
         }
@@ -1549,11 +1546,13 @@ test("Google update uses the service user's prefix and preserves existing author
   );
   assert.deepEqual(seen, [
     [
-      "i",
-      "-g",
-      "--prefix",
+      join(
+        layoutFor(iva.home).versions,
+        createVersionStore(iva.home).currentName()!,
+        "install.sh",
+      ),
+      "--update-gws",
       join(serviceHome, ".local"),
-      "@googleworkspace/cli@latest",
     ],
   ]);
   assert.equal(readFileSync(config, "utf8"), "synthetic-authorization\n");
@@ -1753,11 +1752,7 @@ test("old versions go before the Google CLI errand", async (t) => {
   await iva.update({
     probe: healthyProbe,
     run: (command, args, cwd) => {
-      if (
-        command === "npm" &&
-        args[0] === "i" &&
-        args.at(-1) === "@googleworkspace/cli@latest"
-      ) {
+      if (command === "bash" && args[1] === "--update-gws") {
         inspected = true;
         assert.ok(store.list().length <= 2, store.list().join(", "));
       }
@@ -1790,7 +1785,7 @@ test("a failing cleanup step does not skip version garbage collection", async (t
         throw new Error("adoption failed");
       },
       run: (command, args, cwd) =>
-        command === "npm" && args[0] === "i"
+        command === "bash" && args[1] === "--update-gws"
           ? Promise.resolve({ code: 1, output: "registry unavailable" })
           : base(command, args, cwd),
     }),
@@ -2769,4 +2764,35 @@ test("a marker this updater satisfies leaves the update alone", async (t) => {
   const outcome = updated(await iva.update());
 
   assert.equal(outcome.version.startsWith("0.3.15-"), true, outcome.version);
+});
+
+test("Google cleanup delegates to the installer's pinned checksum path", async (t) => {
+  const iva = world(t);
+  const calls: { command: string; args: readonly string[]; cwd: string }[] = [];
+  const build = fixtureRunner();
+  const outcome = updated(
+    await iva.update({
+      run: (command, args, cwd) => {
+        calls.push({ command, args, cwd });
+        return build(command, args, cwd);
+      },
+    }),
+  );
+  const directory = join(layoutFor(iva.home).versions, outcome.version);
+  assert.ok(
+    calls.some(
+      ({ command, args, cwd }) =>
+        command === "bash" &&
+        cwd === directory &&
+        JSON.stringify(args) ===
+          JSON.stringify([
+            join(directory, "install.sh"),
+            "--update-gws",
+            join(homedir(), ".local"),
+          ]),
+    ),
+  );
+  assert.ok(
+    calls.every(({ args }) => !args.includes("@googleworkspace/cli@latest")),
+  );
 });
