@@ -104,7 +104,6 @@ export async function runHelper(id: string): Promise<void> {
       Date.now(),
     );
   };
-  let created = false;
   try {
     const base = reminderClientOptions(process.env, "helper");
     const options = {
@@ -115,7 +114,6 @@ export async function runHelper(id: string): Promise<void> {
         "x-iva-helper-fired": String(run.firedAt),
       },
     };
-    created = true;
     const message = `Helper ${id}. Now: ${formatZoned(Date.now(), ownerTimeZone())}. Allowed: ${row.may || "nothing, look and draft only"}. Task: ${row.task}`;
     await runReminderTurn(message, options, {
       signal: controller.signal,
@@ -163,11 +161,13 @@ export async function runHelper(id: string): Promise<void> {
       },
     });
   } catch (error) {
-    if (created) throw error;
-    console.error("helper options:", error);
+    if (session) throw error;
+    console.error("helper start:", error);
     await completed({
       status: "failed",
-      message: "Для помощника не задан ключ Ивы; выполни iva doctor.",
+      message: /ASSISTANT_BEARER|401|Unauthorized/i.test(String(error))
+        ? "Для помощника нужен действующий ключ Ивы; выполни iva doctor."
+        : "Помощник потерял связь с Ивой; проверь сеть и iva doctor.",
       feedback: () => Promise.resolve(),
     });
   } finally {

@@ -91,6 +91,7 @@ check HelperRun-v6-may V6MayRequired || exit 2
 check HelperRun-v6-may-copy V6MayUnchanged || exit 2
 check HelperRun-v6-pid V6PidKnown || exit 2
 check HelperRun-v6-owner-kill V6OwnerKillSafe || exit 2
+check HelperRun-v6-stop-kill V6StopKillSafe || exit 2
 check HelperRun-v6-question-done V6QuestionFailed || exit 2
 check HelperRun-v6-early-free V6SlotFreedAfterEnd || exit 2
 check HelperRun-v6-partial V6PartialKept || exit 2
