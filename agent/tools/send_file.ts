@@ -1,4 +1,3 @@
-import { isUtf8 } from "node:buffer";
 import type { Stats } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +5,7 @@ import { basename, isAbsolute, relative, sep } from "node:path";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { notificationChat } from "../lib/notification-chat.ts";
-import { scanOutbound } from "../lib/security-gate.ts";
+import { secretEntriesFromEnv } from "../../packages/secret-redaction/index.ts";
 import { redactNotice } from "../lib/outbox.ts";
 import type { ReminderChat } from "../lib/reminder-store.ts";
 import { chatOfTurn } from "../lib/reminder-tool.ts";
@@ -31,7 +30,7 @@ export type SendFileSent = {
 };
 export type SendFileFailure = { readonly ok: false; readonly error: string };
 export type SendFileAnswer = SendFileSent | SendFileFailure;
-type Readable = { readonly name: string; readonly data: Buffer };
+type Readable = { readonly name: string; readonly data: Buffer<ArrayBuffer> };
 
 const fail = (error: string): SendFileFailure => ({ ok: false, error });
 
@@ -44,7 +43,36 @@ const OUTSIDE =
 const SECRET_PART = /^(?:\.env|iva-env|iva-config-|iva-claude-)/;
 
 function carriesSecret(file: string): boolean {
-  return file.split(sep).some((part) => SECRET_PART.test(part));
+  return file
+    .split(sep)
+    .some((part) => part !== ".env.example" && SECRET_PART.test(part));
+}
+
+// Exact installation values in either byte encoding, regardless of the file's encoding or suffix.
+// Overlap retains a value crossing a chunk boundary; each chunk yields to cancellation and the loop.
+async function secretInFile(
+  data: Buffer,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const needles = secretEntriesFromEnv(process.env).flatMap(({ name, value }) =>
+    ["utf8", "utf16le"].map((encoding) => ({
+      name,
+      bytes: Buffer.from(value, encoding as BufferEncoding),
+    })),
+  );
+  const overlap = Math.max(0, ...needles.map(({ bytes }) => bytes.length - 1));
+  const chunkBytes = 64 * 1024;
+  for (let start = 0; start < data.length; start += chunkBytes) {
+    if (signal?.aborted) throw new Error("отправка отменена");
+    const chunk = data.subarray(
+      Math.max(0, start - overlap),
+      start + chunkBytes,
+    );
+    for (const { name, bytes } of needles)
+      if (chunk.includes(bytes)) return name;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return null;
 }
 
 function inside(root: string, file: string): boolean {
@@ -141,7 +169,7 @@ function documentForm(
   if (threadId) form.append("message_thread_id", threadId);
   // Подпись - текст модели наружу: тот же гейт, что у Outbox.
   if (caption) form.append("caption", redactNotice(caption));
-  form.append("document", new File([new Uint8Array(file.data)], file.name));
+  form.append("document", new File([file.data], file.name));
   return form;
 }
 
@@ -195,13 +223,11 @@ export async function sendFile(
   if (!token) return fail("не задан TELEGRAM_BOT_TOKEN");
   const file = await readAllowed(path, maxBytes);
   if ("ok" in file) return file;
-  if (!file.data.includes(0) && isUtf8(file.data)) {
-    const checked = scanOutbound(file.data.toString("utf8"), false);
-    if (checked.findings.some((finding) => finding.type === "api_key"))
-      return fail(
-        "файл содержит секрет: удали ключи и токены из копии и вызови send_file ещё раз",
-      );
-  }
+  const name = await secretInFile(file.data, signal);
+  if (name !== null)
+    return fail(
+      `файл содержит секрет ${name}: удали значение из копии и вызови send_file ещё раз`,
+    );
   const form = documentForm(target.id, target.threadId, caption, file);
   return postDocument(token, form, file, signal);
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
+import secretKeyInventory from "../skills/security-defense/outbound-sensitive-keys.json" with { type: "json" };
 import { scanOutbound } from "./security-gate.ts";
 import {
   redact,
@@ -15,9 +16,11 @@ const env = {
   TELEGRAM_API_HASH: "fixtureTelegramHashWithoutPrefix",
 };
 function fixture(t: test.TestContext) {
-  for (const [name, value] of Object.entries(env)) {
+  for (const name of secretKeyInventory) {
     const before = process.env[name];
-    process.env[name] = value;
+    const value = env[name as keyof typeof env];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
     t.after(() => {
       if (before === undefined) delete process.env[name];
       else process.env[name] = before;
@@ -46,28 +49,68 @@ await test("installation secrets are gated bare, in code and Markdown tables", a
 });
 await test("ordinary replies survive installation-secret checks (seed 101301)", (t) => {
   fixture(t);
+  const before = process.env.IVA_QA_ORDINARY_OUTPUT;
+  process.env.IVA_QA_ORDINARY_OUTPUT =
+    "ordinaryOutputValueFromNonCredentialEnv";
+  t.after(() => {
+    if (before === undefined) delete process.env.IVA_QA_ORDINARY_OUTPUT;
+    else process.env.IVA_QA_ORDINARY_OUTPUT = before;
+  });
+  const ordinaryText = fc
+    .string({ unit: "grapheme", maxLength: 200 })
+    .map((text) => JSON.stringify({ text }));
   fc.assert(
     fc.property(
-      fc.array(
-        fc.constantFrom(
-          "Привет",
-          "готово",
-          "файл",
-          "123",
-          "a@b.example",
-          "https://example.com",
-          "модель",
-          "дата",
-          "🙂",
-        ),
-        { maxLength: 50 },
-      ),
-      (words) => {
-        const text = words.join(" ");
+      ordinaryText,
+      fc.uuid(),
+      fc.uint8Array({ minLength: 20, maxLength: 80 }),
+      (prose, uuid, bytes) => {
+        const text = `${prose}\nconst id = '${uuid}';\n${Buffer.from(bytes).toString("hex")}\ndata:image/png;base64,${Buffer.from(bytes).toString("base64")}\nhttps://example.com/${uuid}\nordinaryOutputValueFromNonCredentialEnv\n<redacted>`;
         assert.equal(scanOutbound(text).clean, true);
         assert.equal(scanOutbound(text).text, text);
       },
     ),
     { seed: 101301, numRuns: 300 },
   );
+});
+
+await test("installation placeholders leave ordinary words and numbers intact", (t) => {
+  fixture(t);
+  const before = process.env.CUSTOM_API_KEY;
+  t.after(() => {
+    if (before === undefined) delete process.env.CUSTOM_API_KEY;
+    else process.env.CUSTOM_API_KEY = before;
+  });
+  const text =
+    "EMPTY NONEMPTY none 1 файл, версия 1.2; npm test, latest; https://ollama.com/library " +
+    "x".repeat(20);
+  for (const value of [
+    "EMPTY",
+    "none",
+    "1",
+    "ollama",
+    "test",
+    "x".repeat(20),
+  ]) {
+    process.env.CUSTOM_API_KEY = value;
+    assert.equal(scanOutbound(text).text, text);
+  }
+});
+
+await test("full installation value is removed before partial shape matches", (t) => {
+  fixture(t);
+  const before = process.env.ASSISTANT_BEARER;
+  t.after(() => {
+    if (before === undefined) delete process.env.ASSISTANT_BEARER;
+    else process.env.ASSISTANT_BEARER = before;
+  });
+  for (const value of [
+    "fixture!en#with$chars%20long",
+    "sk-" + "a".repeat(24) + ".tail-part-of-key",
+  ]) {
+    process.env.ASSISTANT_BEARER = value;
+    const input = `Bearer ${value}`;
+    assert.equal(scanOutbound(input, false).text, input);
+    assert.equal(scanOutbound(input).text, "Bearer [REDACTED]");
+  }
 });

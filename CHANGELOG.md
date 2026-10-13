@@ -10,9 +10,9 @@
 
 - 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.
 
-- 🛡 **Текстовый файл с ключами остаётся на сервере**: перед отправкой файла Ива проверяет его содержимое и просит убрать секреты из копии. Text files containing credentials are refused before Telegram receives their bytes.
+- 🛡 **Файл со значением секрета остаётся на сервере**: перед отправкой Ива проверяет байты файла по значениям секретов установки, включая двоичные файлы; отказ называет ключ, а обычные документы уходят без изменений. Files containing installation credential values are refused with the variable name while ordinary documents retain their bytes.
 
-- 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix.
+- 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix; placeholder values stay intact and punctuated secrets are removed in full.
 
 - 🛠 **eve теперь собирается из исходников Ивы**: поведение осталось прежним; установка и обновление скачивают eve одним готовым архивом. В бете стоит проверить привычное: откат и обновление (`iva rollback`, затем `iva update`, чтобы в конце снова стояла бета), долгий ход с инструментами, напоминание, ночной отчёт, файл в чат и из чата. Любое отличие от 0.4.17 считается ошибкой. Iva now builds eve from its own sources; behavior stays the same and installations fetch one ready archive.
 

@@ -4,7 +4,7 @@
 import secretKeyInventory from "../skills/security-defense/outbound-sensitive-keys.json" with { type: "json" };
 import {
   redactSecretValues,
-  secretValuesFromEnv,
+  secretEntriesFromEnv,
 } from "../../packages/secret-redaction/index.ts";
 import { traceInboundGate } from "./trace.ts";
 
@@ -578,8 +578,27 @@ const INJECTION_ARTIFACTS: readonly Pattern[] = [
 const REDACTED = "[REDACTED]";
 
 export function scanOutbound(input: string, redact = true): OutboundResult {
-  let text = input;
   const findings: OutboundFinding[] = [];
+  const installationEnv = Object.fromEntries(
+    secretKeyInventory.flatMap((name) => {
+      const value = process.env[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+  const values = secretEntriesFromEnv(installationEnv).map(
+    ({ value }) => value,
+  );
+  // Values precede shapes: a shape can otherwise cut a prefix and leave the credential's tail.
+  const valueText = redactSecretValues(input, values);
+  const secretText =
+    valueText === input ? input : valueText.replaceAll("<redacted>", REDACTED);
+  let text = redact ? secretText : input;
+  if (secretText !== input)
+    findings.push({
+      type: "api_key",
+      name: "installation_secret",
+      preview: REDACTED,
+    });
   const groups: ReadonlyArray<
     readonly [type: string, patterns: readonly Pattern[]]
   > = [
@@ -589,7 +608,7 @@ export function scanOutbound(input: string, redact = true): OutboundResult {
   ];
   for (const [type, patterns] of groups) {
     for (const [name, re] of patterns) {
-      const matches = input.match(re);
+      const matches = secretText.match(re);
       if (!matches) continue;
       for (const match of matches) {
         findings.push({ type, name, preview: match.slice(0, 12) + "…" });
@@ -608,29 +627,6 @@ export function scanOutbound(input: string, redact = true): OutboundResult {
         });
       }
     }
-  }
-  // The shared value matcher also recognizes prefixless and encoded installation keys.
-  const installationEnv = Object.fromEntries(
-    secretKeyInventory.flatMap((name) => {
-      const value = process.env[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-  const secretText = redactSecretValues(
-    input,
-    secretValuesFromEnv(installationEnv),
-  );
-  if (secretText !== input) {
-    findings.push({
-      type: "api_key",
-      name: "installation_secret",
-      preview: "[REDACTED]",
-    });
-    if (redact)
-      text = redactSecretValues(
-        text,
-        secretValuesFromEnv(installationEnv),
-      ).replaceAll("<redacted>", REDACTED);
   }
   const clean = findings.every(
     (finding) => finding.type === "injection_artifact",

@@ -164,6 +164,7 @@ test("the authored tree has only its explicit shared-package edges", () => {
       "agent/lib/vault-file-search.ts -> @iva/vault-dir",
       "agent/provider.ts -> @iva/opencode-protocol",
       "agent/tools/memory_search.ts -> @iva/vault-dir",
+      "agent/tools/send_file.ts -> ../../packages/secret-redaction/index.ts",
       "agent/tools/write_card.ts -> @iva/vault-dir",
       "agent/tools/write_file.ts -> @iva/vault-dir",
     ],

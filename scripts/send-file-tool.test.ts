@@ -287,7 +287,6 @@ void test("текстовый файл с секретом получает от
     `ASSISTANT_BEARER=${secret}\n`,
     secret,
     `| ASSISTANT_BEARER | ${secret} |`,
-    `ключ sk-${"x".repeat(30)}`,
   ].entries()) {
     await t.test(`secret document carrier ${index}`, async (t) => {
       const calls = stubFetch(t);
