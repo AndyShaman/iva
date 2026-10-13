@@ -9,6 +9,9 @@ import {
   TRACE_CONTENT_LIMIT,
   TRACE_TRUNCATION_MARKER,
 } from "../lib/trace.js";
+import { isHelperTurn, helperFiredAt } from "../lib/eve-auth.js";
+import { recordHelperSession } from "../lib/helper-store.js";
+import { traceHelper } from "../lib/trace.js";
 import { parentTurnId, subagentTurnId } from "../lib/usage.js";
 
 // Журнал хода, часть eve: ОДИН хук на подстановочное событие `*` пишет каждый шаг модели,
@@ -516,6 +519,14 @@ export default defineHook({
     // здесь запрещена: она пришла бы вместе с подстановочной и удвоила строку.
     "*": (event, ctx) => {
       try {
+        if (event.type === "session.started" && isHelperTurn(ctx))
+          return helperSessionStarted(event, ctx).catch((error) =>
+            console.error("[trace] helper session:", error),
+          );
+      } catch (error) {
+        console.error("[trace] helper event:", error);
+      }
+      try {
         observeTelegramPendingInput(event, ctx);
       } catch (error) {
         console.error("[telegram] pending input state was not updated:", error);
@@ -544,3 +555,33 @@ export default defineHook({
     },
   },
 });
+
+async function helperSessionStarted(
+  event: StreamEvent,
+  ctx: HookContext,
+): Promise<void> {
+  const attributes = [
+    ctx.session.auth?.current,
+    ctx.session.auth?.initiator,
+  ].find(
+    (a) =>
+      a?.authenticator === "iva-bearer" && a.attributes?.iva_turn === "helper",
+  )?.attributes;
+  const id =
+    typeof attributes?.iva_helper === "string" ? attributes.iva_helper : null;
+  try {
+    const fired = helperFiredAt(attributes?.iva_helper_fired);
+    if (
+      !id ||
+      fired === null ||
+      !(await recordHelperSession(id, fired, ctx.session.id))
+    )
+      traceHelper("session_unrecorded", id, { session: ctx.session.id });
+  } catch (error) {
+    traceHelper("session_unrecorded", id, {
+      session: ctx.session.id,
+      data: { error: String(error) },
+    });
+  }
+  record(event, ctx);
+}

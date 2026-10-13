@@ -92,6 +92,9 @@ export type ReminderTurn = {
    */
   readonly sessionLimit?: boolean;
   readonly message?: string;
+  readonly reason?: string;
+  readonly partial?: string;
+  readonly serverEnded?: boolean;
   readonly feedback: (message: string) => Promise<unknown>;
 };
 
@@ -572,7 +575,17 @@ async function settleTurn(
   };
 }
 
+export type HelperStepUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  model?: string;
+};
+
 type TurnDeps = {
+  readonly onSession?: (sessionId: string) => Promise<boolean>;
+  readonly onStepUsage?: (usage: HelperStepUsage) => void;
+  readonly onCompleted?: (turn: ReminderTurn) => Promise<void>;
+  readonly helperCheckMs?: number;
   readonly createClient?: CreateClient;
   readonly inactivityMs?: number;
   /** Присмотр чата за ходом: без него ход идёт без записи (так его зовёт CLI). */
@@ -596,6 +609,8 @@ export async function runReminderTurn(
   options: ReminderClientOptions,
   deps: TurnDeps = {},
 ): Promise<ReminderTurn> {
+  if (options.headers?.["x-iva-turn"] === "helper")
+    return runHelperClient(prompt, options, deps);
   const { createClient, inactivityMs, log } = withDefaults(deps);
   const { signal, watch } = deps;
   if (isAborted(signal)) return deadlineTurn(noFeedback);
@@ -614,5 +629,148 @@ export async function runReminderTurn(
     return await settleTurn(state, created.session, log);
   } finally {
     if (session) await resetSession(session, aborted);
+  }
+}
+
+async function runHelperClient(
+  prompt: string,
+  options: ReminderClientOptions,
+  deps: TurnDeps,
+): Promise<ReminderTurn> {
+  const { createClient, inactivityMs, log } = withDefaults(deps);
+  if (deps.signal?.aborted) {
+    const turn: ReminderTurn = {
+      status: "failed",
+      message: "помощник остановлен до начала",
+      partial: "",
+      serverEnded: true,
+      feedback: noFeedback,
+    };
+    await deps.onCompleted?.(turn);
+    return turn;
+  }
+  const { response, session } = await (
+    await createClient(options)
+  ).sessions.create({ message: prompt });
+  let failure: string | undefined,
+    reason: string | undefined,
+    message: string | undefined;
+  let ended = false,
+    stopping = false,
+    parked = false,
+    lastEvent = Date.now();
+  const completed: string[] = [];
+  try {
+    if (deps.onSession && !(await deps.onSession(response.sessionId)))
+      failure = "ход не записан";
+  } catch (error) {
+    log("helper session was not recorded:", error);
+    failure = "ход не записан";
+  }
+  const stream = response[Symbol.asyncIterator]();
+  let pending = stream.next();
+  pending.catch(() => {});
+  while (!ended) {
+    stopping ||= !!failure || deps.signal?.aborted === true;
+    let timer: NodeJS.Timeout | undefined;
+    const poll = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), deps.helperCheckMs ?? 15000);
+    });
+    let next: IteratorResult<TurnStreamEvent> | null;
+    try {
+      next = await Promise.race([pending, poll]);
+    } catch (error) {
+      failure ??= String(error);
+      next = null;
+      pending = new Promise(() => {});
+    } finally {
+      clearTimeout(timer);
+    }
+    if (next === null) {
+      if (Date.now() - lastEvent >= inactivityMs)
+        failure ??= "помощник молчал слишком долго";
+      stopping ||= !!failure || deps.signal?.aborted === true;
+      if (stopping) {
+        try {
+          const result = await answeredInTimeValue(
+            session.cancel({ tasks: true }),
+          );
+          ended =
+            (result as { status?: string } | null)?.status === "no_active_turn";
+        } catch (error) {
+          log("helper cancel failed:", error);
+        }
+      }
+      continue;
+    }
+    if (next.done) {
+      if (!stopping) break;
+      pending = new Promise(() => {});
+      continue;
+    }
+    lastEvent = Date.now();
+    const event = next.value,
+      data = (event.data ?? {}) as Record<string, unknown>;
+    if (
+      event.type === "message.completed" &&
+      !stopping &&
+      typeof data.message === "string"
+    ) {
+      message = data.message;
+      completed.push(message);
+    }
+    if (event.type === "step.completed" && !stopping) {
+      const usage = (data.usage ?? {}) as HelperStepUsage;
+      deps.onStepUsage?.({
+        ...usage,
+        model:
+          typeof data.providerModelId === "string"
+            ? data.providerModelId
+            : undefined,
+      });
+    }
+    if (event.type === "input.requested") {
+      parked = true;
+      failure ??= "помощник ждал ответа";
+    }
+    if (event.type === "turn.failed" || event.type === "session.failed") {
+      failure ??= eventText(event) ?? "ход помощника упал";
+      ended = true;
+    }
+    if (
+      (event.type === "turn.completed" && !parked) ||
+      event.type === "turn.cancelled" ||
+      event.type === "session.completed"
+    ) {
+      ended = true;
+      reason = typeof data.reason === "string" ? data.reason : undefined;
+    }
+    pending = stream.next();
+    pending.catch(() => {});
+  }
+  const turn: ReminderTurn = {
+    status: failure || stopping || !ended ? "failed" : "completed",
+    message: failure ?? message,
+    partial: completed.join("\n\n"),
+    reason,
+    serverEnded: ended,
+    feedback: (text) => session.send(text),
+  };
+  if (ended) {
+    await deps.onCompleted?.(turn);
+    await answeredInTime(
+      session.reset({ reason: "Helper finished" }),
+      "helper reset",
+    );
+  }
+  stream.return?.().catch(() => {});
+  return turn;
+}
+async function answeredInTimeValue(work: Promise<unknown>): Promise<unknown> {
+  const cap = stallAfter(SESSION_LIMIT_CANCEL_MS, "helper cancel timed out");
+  try {
+    return await Promise.race([work, cap.stalled]);
+  } finally {
+    cap.stop();
   }
 }

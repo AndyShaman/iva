@@ -64,9 +64,16 @@ function serviceAuth(
   const id = request.headers.get("x-iva-helper");
   if (id === null || !/^h-[0-9a-f]{6}$/.test(id))
     throw new UnauthenticatedError();
+  const fired = request.headers.get("x-iva-helper-fired");
+  helperFiredAt(fired);
   return {
     ...SERVICE_AUTH,
-    attributes: { iva_turn: turn, iva_helper: id, iva_max_steps: "80" },
+    attributes: {
+      iva_turn: turn,
+      iva_helper: id,
+      iva_max_steps: "80",
+      ...(fired === null ? {} : { iva_helper_fired: fired }),
+    },
   };
 }
 
@@ -101,4 +108,15 @@ export function createEveAuth(env: EveAuthEnvironment = process.env) {
     ...(env.EVE_DEV === "1" ? [localDev()] : []),
     placeholderAuth(),
   ];
+}
+
+export function helperFiredAt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (
+    typeof value !== "string" ||
+    !/^\d+$/.test(value) ||
+    !Number.isSafeInteger(Number(value))
+  )
+    throw new UnauthenticatedError();
+  return Number(value);
 }
