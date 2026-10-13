@@ -283,11 +283,17 @@ Startup recovery uses the same chat-status lock with a two-second stale threshol
 
 A direct edit during the model's day response is kept by that night. A mismatching
 `body_hash` also keeps the edited summary on subsequent automatic and manual nights,
-including a cached open pass. If the edited summary has an absent or matching
-`body_hash`, the next night can overwrite it: the day cache retains the model answer
-and open pass, while the expected summary snapshot and detected conflict live only
-in the first process. Three-night process tests reproduce both cases. This data-loss
-finding remains a release blocker under ADR-0002.
+including a cached open pass. This N1 case is closed and covered by the single
+three-night process test in `scripts/memory/night-process.test.ts` ("mismatch summary
+survives three nights"). The two N1 cases with an absent or matching `body_hash`
+remain open: the next night can overwrite the edited summary. The day cache retains
+the model answer and open pass, while the expected summary snapshot and detected conflict live only
+in the first process. This is existing behavior in baseline `91dd9bb6` and release
+`0.4.17`. QA round 3 reproduced both open cases across three nights with a separate
+probe in `.scratch/work/fixes-1013/fixes2-qa3-probes`; the report is
+`.scratch/work/fixes-1013/fixes2-qa3-opus.md`. The repeated-night message
+"день ждёт владельца" has no test assertion. The two open data-loss cases remain
+release blockers under ADR-0002.
 
 Persisting a summary-conflict flag in the existing day pass would carry the decision
 across processes. That changes the stored cache format and needs a separate decision;
