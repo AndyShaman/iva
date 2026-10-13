@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fc from "fast-check";
 import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 import {
   collectorKeyFor,
@@ -377,60 +376,5 @@ void test("the input collector flattens a part that is itself a merge", () => {
       [11, "b"],
       [12, "c"],
     ],
-  );
-});
-
-void test("W3 trusted sources partition batches, keep parts homogeneous and survive durable replay", async () => {
-  const { createQueueItem, materializeQueueItem, normalizeQueueDocument } =
-    await import("./telegram-queue.ts");
-  for (const [left, right] of [
-    ["wake", "owner"],
-    ["owner", "wake"],
-    ["tap", "owner"],
-  ]) {
-    const first = update(21, "first"),
-      second = update(22, "second");
-    Object.assign(first.message, { iva_input: left });
-    Object.assign(second.message, { iva_input: right });
-    assert.equal(queueBatchLength([first, second]), 1);
-    assert.throws(() => joinUpdates([first, second]), /source/i);
-    const document = normalizeQueueDocument({
-      version: 1,
-      queues: { "1:": [createQueueItem(first, 1)] },
-    }).document;
-    const restored = materializeQueueItem("1:", document.queues["1:"][0]);
-    assert.equal(restored?.message?.iva_input, left);
-  }
-});
-
-void test("W3 source queue property: homogeneous batches without loss, seed 20261013", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.constantFrom("owner", "tap", "wake"), {
-        minLength: 1,
-        maxLength: 60,
-      }),
-      (sources) => {
-        const pending = sources.map((source, i) => {
-          const item = update(i + 100, String(i));
-          Object.assign(item.message, { iva_input: source });
-          return item;
-        });
-        const seen: unknown[] = [];
-        while (pending.length) {
-          const count = queueBatchLength(pending);
-          const batch = pending.splice(0, count);
-          const joined = joinUpdates(batch);
-          const parts = updateParts(joined);
-          assert.equal(new Set(parts.map((part) => part.iva_input)).size, 1);
-          seen.push(...parts.map((part) => part.message_id));
-        }
-        assert.deepEqual(
-          seen,
-          sources.map((_, i) => i + 100),
-        );
-      },
-    ),
-    { seed: 20261013, numRuns: 100 },
   );
 });

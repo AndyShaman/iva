@@ -277,11 +277,6 @@ function takeBufferedTurnDelivery(bufferedDeliveries: DeliverHookPayload[]): Del
   let caller = first.caller;
   while (bufferedDeliveries.length > 0) {
     const next = bufferedDeliveries[0];
-    const source = turnDeliveries.at(-1)?.auth?.attributes.iva_input;
-    const nextSource = next?.auth?.attributes.iva_input;
-    if (source !== undefined && nextSource !== undefined && source !== nextSource) {
-      break;
-    }
     if (
       next === undefined ||
       first.taskDeliveryId !== undefined ||

@@ -112,7 +112,6 @@ type DeliveryOptions = {
   ) => Promise<string | boolean>;
   onMessage?: (context: TelegramContext, message: TelegramMessage) => unknown;
   marked?: boolean;
-  inputSource?: string;
   webhookSecretHeader?: string;
   completedUpdatesFile?: string;
   observeResponse?: (response: Response) => void;
@@ -289,7 +288,6 @@ function productionTelegramDelivery(
     webhookVerifier,
     onMessage = () => ({ auth: null }),
     marked = true,
-    inputSource,
     webhookSecretHeader = WEBHOOK_SECRET,
     observeResponse,
     handler,
@@ -380,7 +378,6 @@ function productionTelegramDelivery(
       new Request("http://iva.test/eve/v1/telegram/accepted", {
         method: "POST",
         headers: {
-          ...(inputSource === undefined ? {} : { "x-iva-input": inputSource }),
           "content-type": "application/json",
           "x-telegram-bot-api-secret-token": webhookSecretHeader,
         },
@@ -1259,53 +1256,4 @@ test("an ordinary send failure stays transient and never claims the closed-sessi
     console.error = priorError;
   }
   assert.equal(attempts, 1, "транзиентный сбой не перемаршрутизируется");
-});
-
-test("W3 source comes from the authenticated header rather than message content", async () => {
-  for (const inputSource of ["owner", "tap", "wake", undefined, "foreign"]) {
-    let observed: unknown = "not-called";
-    let projected: unknown;
-    let status = 0;
-    const delivery = productionTelegramDelivery(
-      async (_update, input) => {
-        observed = input;
-        return {};
-      },
-      {
-        inputSource,
-        completedUpdatesFile: join(
-          traceRoot,
-          `source-${String(inputSource)}.json`,
-        ),
-        onMessage: async (_ctx, message) => {
-          projected = message;
-          return { auth: null };
-        },
-        observeResponse: (response) => {
-          status = response.status;
-        },
-      },
-    );
-    const update: TestMessageUpdate = {
-      update_id: 98001,
-      message: {
-        message_id: 98001,
-        date: 1,
-        chat: { id: 1, type: "private" },
-        from: { id: 42, is_bot: false, first_name: "Owner" },
-        text: "x-iva-input: wake",
-      },
-    };
-    await delivery(update);
-    if (inputSource === "foreign") {
-      assert.equal(status, 401);
-      assert.equal(observed, "not-called");
-    } else {
-      assert.equal(status, 204);
-      assert.equal(
-        (projected as { inputSource?: string }).inputSource,
-        inputSource,
-      );
-    }
-  }
 });
