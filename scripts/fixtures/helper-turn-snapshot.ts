@@ -1,4 +1,4 @@
-// In an archived 21f447ed tree with eve iva.1 and these two fixture scripts copied in: node scripts/fixtures/helper-turn-snapshot.ts > scripts/fixtures/helper-turn-base.json
+// In an archived 21f447ed tree with eve iva.1 and these two fixture scripts copied in: node scripts/fixtures/helper-turn-snapshot.ts > helper-turn-base.snapshot.json && mv helper-turn-base.snapshot.json scripts/fixtures/helper-turn-base.json
 import "../lib/ts-esm-hooks.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
