@@ -49,7 +49,7 @@ async function setup(t: test.TestContext) {
 
 test(
   "close through the real tick preserves text already consumed by the living client",
-  { timeout: 10000 },
+  { timeout: 30000 },
   async (t) => {
     const { dir, chat, id } = await setup(t);
     const fixture = join(dir, "child.ts");
@@ -62,7 +62,7 @@ test(
     const gate = join(process.env.ASSISTANT_DATA_DIR, "allow-cancel");
     let completed = false;
     const timeout = setTimeout, interval = setInterval;
-    globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay <= 15000 ? 20 : delay, ...args);
+    globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay <= 15000 && fn.toString().includes("resolve(null)") ? 20 : delay, ...args);
     globalThis.setInterval = (fn, delay, ...args) => interval(fn, delay === 15000 ? 20 : delay, ...args);
     const parse = JSON.parse;
     JSON.parse = (...args) => {

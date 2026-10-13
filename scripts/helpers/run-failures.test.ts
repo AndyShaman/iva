@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { runHelper } from "./run.ts";
 import * as s from "../../agent/lib/helper-store.ts";
 const chat = { id: "42", threadId: null };
-for (const scenario of [
+for (const { scenario, reason } of [
   "failed",
   "question",
   "session-limit",
@@ -16,8 +16,20 @@ for (const scenario of [
   "closed",
   "ceiling",
   "rename",
-]) {
-  test(`real client + process/store: ${scenario}, confirmed cancel, last completed partial and atomic result`, async (t) => {
+].flatMap((scenario) =>
+  scenario === "failed"
+    ? [
+        "model rejected",
+        "Модель не принята",
+        "unknown model",
+        "network unavailable",
+        "missing API key",
+        "provider failure",
+        "model rejected; /menu",
+      ].map((reason) => ({ scenario, reason }))
+    : [{ scenario, reason: "" }],
+)) {
+  test(`real client + process/store: ${scenario}${reason ? ": " + reason : ""}, confirmed cancel, last completed partial and atomic result`, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), "iva-helper-failure-"));
     const prev = { ...process.env };
     Object.assign(process.env, {
@@ -96,7 +108,7 @@ for (const scenario of [
       else if (scenario === "failed")
         events.push({
           type: "turn.failed",
-          data: { message: "model rejected" },
+          data: { message: reason },
         });
       else if (scenario !== "stream-error")
         events.push(
@@ -149,7 +161,7 @@ for (const scenario of [
     if (["question", "session-limit", "stream-error"].includes(scenario))
       assert.equal(cancels, 3);
     if (scenario === "closed") assert.equal(row.status, "closed");
-    if (scenario === "failed") assert.match(row.reason ?? "", /\/menu/);
+    if (scenario === "failed") assert.equal(row.reason, reason);
     else assert.doesNotMatch(row.reason ?? "", /\/menu/);
   });
 }

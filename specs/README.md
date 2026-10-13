@@ -330,4 +330,6 @@ Helpers v6.4: Usage и CeilingStop — отдельные операции. Ес
 | [HelperOutcome-foreign-read.cfg](HelperOutcome-foreign-read.cfg)   | RED: AuthorizedReads |
 | [HelperOutcome-offline-event.cfg](HelperOutcome-offline-event.cfg) | RED: OfflineEvent    |
 
-Bounds Usage: input 0..3 (effects 0..2), output 0..1. CeilingStop может проиграть естественному концу. Helper-check выполняет 43 ожидаемых проверки.
+Bounds Usage: input 0..3 (effects 0..2), output 0..1. CeilingStop может проиграть естественному концу. Helper-check выполняет 46 ожидаемых проверок.
+
+BridgeUp возвращает мост в online. HelperOutcome-bridge-recovery проходит сценарий: старый исход a заканчивается offline и остаётся без события, после подъёма новый исход b получает событие. bridge-stays-down — RED BridgeRecovered; recovery-complete — RED NoRecoveryComplete, свидетель достижения нового события при сохранённом старом исходе.

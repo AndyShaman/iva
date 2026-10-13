@@ -111,6 +111,9 @@ check HelperRun-v64-ceiling-race NoCeilingRace || exit 2
 check HelperRun-v64-tick-partial TickRetainsText || exit 2
 check HelperOutcome-foreign-read AuthorizedReads || exit 2
 check HelperOutcome-offline-event OfflineEvent || exit 2
+check HelperOutcome-bridge-recovery none || exit 2
+check HelperOutcome-bridge-stays-down BridgeRecovered || exit 2
+check HelperOutcome-recovery-complete NoRecoveryComplete || exit 2
 check HelperOutcome-safety none || exit 2
 check HelperOutcome-finish-twice OutcomeOnce || exit 2
 check HelperOutcome-before-reply DeliveredAfterReply || exit 2

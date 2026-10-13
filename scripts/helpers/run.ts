@@ -64,7 +64,7 @@ export async function runHelper(id: string): Promise<void> {
       usable = text.trim() && !isQuietReply(text);
     let reason =
       turn.status === "failed"
-        ? `${turn.message ?? "ход помощника упал"}${/(?:model.*(?:reject|not found|not available)|(?:unknown|unsupported|invalid) model|модель не принята)/iu.test(turn.message ?? "") ? "; /menu" : ""}`
+        ? (turn.message ?? "ход помощника упал")
         : turn.reason === "step-limit"
           ? "предел шагов"
           : null;

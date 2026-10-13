@@ -15,7 +15,7 @@ Init == s = [status |-> [h \in Helpers |-> "pending"],
   replied |-> FALSE, nonempty |-> FALSE, now |-> 0,
   proof |-> [h \in Helpers |-> TRUE], readDirty |-> FALSE,
   lostUnread |-> FALSE, sweptEarly |-> FALSE, readAuthorized |-> TRUE,
-  bridge |-> "online", events |-> {}, offlineFinished |-> {}]
+  bridge |-> "online", events |-> {}, offlineFinished |-> {}, bridgeReturned |-> FALSE]
 Finish(h) ==
   /\ s.status[h] = "pending" \/ (Mutant = "finish-twice" /\ s.finishes[h] = 1)
   /\ s' = [s EXCEPT !.status[h] = "finished", !.outcome[h] = TRUE,
@@ -30,7 +30,10 @@ Read(h,actor) ==
        !.readCounts[h] = @ + 1, !.readDirty = @ \/ Mutant = "read-write",
        !.readAuthorized = @ /\ actor = "owner"]
 BridgeDown == /\ s.bridge = "online" /\ s' = [s EXCEPT !.bridge = "offline"]
-BridgeUp == /\ s.bridge = "offline" /\ s' = [s EXCEPT !.bridge = "restarted", !.events = {}]
+BridgeUp ==
+  /\ s.bridge = "offline"
+  /\ s' = [s EXCEPT !.bridge = IF Mutant = "bridge-stays-down" THEN "offline" ELSE "online",
+       !.events = {}, !.bridgeReturned = TRUE]
 Reply(nonempty) ==
   /\ ~s.replied
   /\ s' = [s EXCEPT !.replied = TRUE, !.nonempty = nonempty]
@@ -64,6 +67,17 @@ Next == (\E h \in Helpers : Finish(h) \/ (\E actor \in {"owner","unknown","helpe
           \/ Mark(h) \/ Close(h) \/ Sweep(h))
         \/ (\E b \in BOOLEAN : Reply(b)) \/ Restart \/ Clock \/ BridgeDown \/ BridgeUp
 Spec == Init /\ [][Next]_vars
+\* A finished offline remains available to Read; only B, finished after recovery, emits an event.
+BridgeRecoveryNext ==
+  \/ (s.status["a"] = "pending" /\ ~s.bridgeReturned /\ BridgeDown)
+  \/ (s.bridge = "offline" /\ s.status["a"] = "pending" /\ Finish("a"))
+  \/ (s.status["a"] = "finished" /\ ~s.bridgeReturned /\ BridgeUp)
+  \/ (s.bridgeReturned /\ s.status["b"] = "pending" /\ Finish("b"))
+BridgeRecoverySpec == Init /\ [][BridgeRecoveryNext]_vars
+BridgeRecovered == s.bridgeReturned => s.bridge = "online"
+RecoveredDelivery == s.status["b"] = "finished" => "b" \in s.events
+OfflineNotReplayed == "a" \in s.offlineFinished => "a" \notin s.events
+NoRecoveryComplete == ~("a" \in s.offlineFinished /\ "b" \in s.events)
 TypeOK == /\ s.session \in {1,2} /\ s.now \in 0..2
           /\ s.retained \subseteq Helpers /\ s.reads \subseteq Helpers
           /\ \A h \in Helpers : s.status[h] \in {"pending","finished","closed"}
