@@ -31,6 +31,7 @@ import type { ProactiveState } from "./state.ts";
 const SEED = Number(process.env.FC_SEED ?? Date.now() % 2 ** 31);
 const MIN = 60_000;
 const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
 const START = Date.UTC(2026, 9, 5, 0, 0);
 const KEYS = ["tg:1", "tg:2", "tg:3"] as const;
 const URGENT = "tg:3";
@@ -207,8 +208,89 @@ class World {
   }
 }
 
-const dayOf = (at: number) => Math.floor((at - START) / (24 * HOUR));
+const dayOf = (at: number) => Math.floor((at - START) / DAY);
 const hourOf = (at: number) => new Date(at).getUTCHours();
+
+async function assertEventuallyReported(world: World): Promise<void> {
+  const cfg = world.cfg;
+  if (cfg.watchCapPerDay === 0 || cfg.modelWakesPerDay === 0) return;
+  world.error = false;
+  const pending = world.state()?.seen ?? {};
+  const waiting = KEYS.filter(
+    (key, i) => pending[key]?.reported === false && (world.unread[i] ?? 0) > 0,
+  );
+  if (waiting.length === 0) return;
+  const remaining = new Set<string>(waiting);
+  world.quietReply = false;
+  // state.ts:countToday и Proactive.tla:NewDay обновляют пределы по дням.
+  // После последнего прихода каждый ключ (Keys модели) требует максимум один ход.
+  // Сначала ждём staleMinutes и обновление уже потраченного дня; затем даём по
+  // суточной ёмкости min(Cap, modelWakesPerDay) на все непрочитанные ключи. Тихие
+  // часы берём из того же isQuietHour, что admit; в TLA+ это фильтр Precheck.
+  // Это конечная граница данной последовательности, а не срок доставки любой истории.
+  const dailyCapacity = Math.min(cfg.watchCapPerDay, cfg.modelWakesPerDay);
+  const deliveryDays = Math.ceil(world.items().length / dailyCapacity);
+  const quietHours = Array.from(
+    { length: DAY / HOUR },
+    (_, hour) => hour,
+  ).filter((hour) => isQuietHour(cfg, hour)).length;
+  const stopAt =
+    START +
+    world.hour * HOUR +
+    cfg.staleMinutes * MIN +
+    (1 + deliveryDays) * DAY +
+    quietHours * HOUR;
+  while (START + world.hour * HOUR <= stopAt) {
+    const from = world.turns.length;
+    await world.tick(0);
+    for (const turn of world.turns.slice(from))
+      for (const { key } of turn.keys) remaining.delete(key);
+    if (remaining.size === 0) break;
+  }
+  assert.equal(
+    remaining.size,
+    0,
+    `${[...remaining].join(", ")} was held back and never came`,
+  );
+}
+
+test("Watch delivers the held-back item from seed 890724119 (anchor)", async () => {
+  const world = new World({
+    ...PROACTIVE_DEFAULTS,
+    quietFromHour: 0,
+    quietToHour: 2,
+    staleMinutes: 0,
+    watchCapPerDay: 1,
+    modelWakesPerDay: 1,
+    urgentSenders: ["wife"],
+  });
+  const steps: readonly Step[] = [
+    { kind: "arrive", key: 2 },
+    { kind: "error", on: true },
+    { kind: "tick", jitterMs: 0, quiet: false },
+    { kind: "arrive", key: 1 },
+    { kind: "arrive", key: 0 },
+    { kind: "readAll", key: 0 },
+    { kind: "error", on: false },
+    { kind: "tick", jitterMs: 0, quiet: false },
+    { kind: "arrive", key: 2 },
+  ];
+  for (const step of steps) await world.apply(step);
+  assert.equal(world.state()?.seen["tg:2"]?.reported, false);
+  await assertEventuallyReported(world);
+  const ordinary = world.turns.filter((turn) =>
+    turn.keys.some(({ key }) => key === "tg:2"),
+  );
+  assert.equal(ordinary.length, 1);
+  const urgentDays = Math.ceil(
+    (world.gen[KEYS.indexOf(URGENT)] ?? 0) / world.cfg.modelWakesPerDay,
+  );
+  assert.equal(
+    ordinary[0]?.at,
+    START + urgentDays * DAY + world.cfg.quietToHour * HOUR,
+  );
+  assert.equal(ordinary[0]?.sent, true);
+});
 
 test(`Watch keeps its promises on any sequence of arrivals, reads, errors and ticks (seed ${SEED})`, async () => {
   await fc.assert(
@@ -253,26 +335,8 @@ test(`Watch keeps its promises on any sequence of arrivals, reads, errors and ti
           ); // (в)
         }
 
-        // (д), вторая половина: без новых приходов и ошибок каждый ещё не сообщённый пункт
-        // приходит за двое суток — если пределы вообще пускают обычный подъём.
-        if (cfg.watchCapPerDay === 0 || cfg.modelWakesPerDay === 0) return;
-        world.error = false;
-        const pending = world.state()?.seen ?? {};
-        const waiting = KEYS.filter(
-          (key, i) =>
-            pending[key]?.reported === false && (world.unread[i] ?? 0) > 0,
-        );
-        if (waiting.length === 0) return;
-        const from = world.turns.length;
-        world.quietReply = false;
-        for (let h = 0; h < 48; h++) await world.tick(0);
-        for (const key of waiting)
-          assert.ok(
-            world.turns
-              .slice(from)
-              .some((turn) => turn.keys.some((k) => k.key === key)),
-            `${key} was held back and never came`,
-          );
+        // (д), вторая половина: после прекращения приходов и ошибок пункт приходит позже.
+        await assertEventuallyReported(world);
       },
     ),
     { seed: SEED, numRuns: 100 },
