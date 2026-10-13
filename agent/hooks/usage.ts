@@ -1,5 +1,4 @@
 import { defineHook } from "eve/hooks";
-import { stepModelChoice } from "../agent.ts";
 import { TURN_KINDS, isHelperTurn } from "../lib/eve-auth.js";
 import { resolveModelProvider } from "../lib/model-provider.js";
 import {
@@ -30,8 +29,8 @@ import {
 // ВАЖНО: в отличие от transcript.ts НЕ фильтруем finishReason="tool-calls" — расход есть на
 // КАЖДОМ шаге модели, включая tool-call раунды.
 
-// Модель/провайдер не приходят в событие — используем тот же строгий выбор, что и runtime.
-const { name: PROVIDER } = resolveModelProvider();
+// Модель шага приходит в step.started; провайдер общий для всех узлов графа.
+const { name: PROVIDER, model: TEXT_MODEL } = resolveModelProvider();
 
 interface StepData {
   stepIndex: number;
@@ -70,7 +69,7 @@ function sourceOf(ctx: {
   readonly channel: { readonly kind?: string };
 }): string {
   if (isHelperTurn(ctx)) return "helper";
-  const initiator = ctx.session.auth?.current ?? ctx.session.auth?.initiator;
+  const initiator = ctx.session.auth?.initiator;
   const turn =
     initiator?.authenticator === "iva-bearer"
       ? initiator.attributes.iva_turn
@@ -113,8 +112,14 @@ function record(data: StepData, owner: StepOwner): void {
   if (row) appendUsage(row); // нет usage — не пишем нулевую строку
 }
 
+const stepModels = new Map<string, string>();
+const wireModel = (id: string) => id.slice(id.indexOf("/") + 1);
+
 export default defineHook({
   events: {
+    "step.started": (event, ctx) => {
+      stepModels.set(ctx.session.id, wireModel(event.data.modelId));
+    },
     "step.completed": (event, ctx) => {
       // Ребёнок встроенного `agent` пишет свои шаги сам (channel.kind = subagent) под своей
       // сессией; связь с ходом родителя eve отдаёт в ctx.session.parent.
@@ -123,11 +128,12 @@ export default defineHook({
       // ребёнок встроенного agent идёт под своей сессией.
       recordStepInput(ctx.session.id, stepInputTokens(event.data.usage));
       record(event.data, {
-        model: stepModelChoice(ctx).model,
+        model: stepModels.get(ctx.session.id) ?? TEXT_MODEL,
         sessionId: ctx.session.id,
         source: sourceOf(ctx),
         parent: ctx.session.parent,
       });
+      stepModels.delete(ctx.session.id);
     },
     // eve начал свёртку: между ходами чат на это время должен быть занят.
     "compaction.requested": (_event, ctx) =>
@@ -145,6 +151,9 @@ export default defineHook({
     // расход субагента продолжает попадать в «итого за ход» (отчёт: scripts/lib/usage.ts).
     "subagent.event": (event, ctx) => {
       const inner = event.data.event;
+      const key = `${ctx.session.id}:${event.data.subagentName}`;
+      if (inner.type === "step.started")
+        stepModels.set(key, wireModel(inner.data.modelId));
       if (inner.type === "step.completed") {
         record(
           {
@@ -156,12 +165,13 @@ export default defineHook({
             ),
           },
           {
-            model: stepModelChoice(ctx).model,
+            model: stepModels.get(key) ?? TEXT_MODEL,
             sessionId: ctx.session.id,
             source: sourceOf(ctx),
             subagent: event.data.subagentName,
           },
         );
+        stepModels.delete(key);
       }
     },
   },

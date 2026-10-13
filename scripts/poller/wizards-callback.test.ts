@@ -15,7 +15,7 @@ process.env.AGENT_LANGUAGE = "en";
 process.env.TELEGRAM_BOT_TOKEN = "token";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "42";
 
-const { flows, handleWizardCallback, handleModelCmd, getWizard } =
+const { flows, handleWizardCallback, handleModelCmd, getWizard, showSaved } =
   (await import(
     `./wizards.ts?wizards-callback=${Date.now()}`
   )) as typeof import("./wizards.ts");
@@ -192,7 +192,7 @@ test("m: выбирает модель и рисует уровни размыш
   }
 });
 
-test("helper model appears on the model screen and its catalog closes unknown windows", async () => {
+test("R8 helper model: full /model path, back button, saved clears helper flag", async () => {
   spy();
   try {
     const { chat, user } = seed("intro");
@@ -210,6 +210,22 @@ test("helper model appears on the model screen and its catalog closes unknown wi
       ["deepseek-v4-pro"],
     );
     assert.match(edits().at(-1)!.keyboard, /iva_model:helper-same/);
+    assert.match(edits().at(-1)!.keyboard, /iva_model:back/);
+    assert.equal(await tap(chat, user, "iva_model:back"), true);
+    assert.equal(st.helperModel, undefined);
+    assert.equal(
+      (getWizard(chat, user) as unknown as { step: string }).step,
+      "intro",
+    );
+    await tap(chat, user, "iva_model:helper");
+    const saving = getWizard(chat, user);
+    assert.ok(saving);
+    await showSaved(saving);
+    assert.equal((saving as unknown as { step: string }).step, "saved");
+    assert.equal(
+      (saving as unknown as { helperModel?: boolean }).helperModel,
+      undefined,
+    );
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
   }

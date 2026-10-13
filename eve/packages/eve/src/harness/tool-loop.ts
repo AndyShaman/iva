@@ -515,7 +515,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     ): readonly ModelMessage[] => prepareHistory(messages, state).messages;
 
     let emissionState = getHarnessEmissionState(session.state);
-    if (baseEmit === undefined && hasStepInput(input)) emissionState = { ...emissionState, stepIndex: 0 };
     const store = contextStorage.getStore();
     const parent = store?.get(ParentSessionKey);
     const callback = store?.get(SessionCallbackKey);
@@ -1178,10 +1177,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const attrs = auth?.attributes;
       if (!attrs || !Object.hasOwn(attrs, "iva_max_steps")) return [];
       const value = attrs.iva_max_steps;
-      return [typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 1];
+      return [typeof value === "string" && /^[1-9][0-9]{0,8}$/.test(value) && !value.endsWith("\n") ? Number(value) : 1];
     });
     const maxSteps = limits.length ? Math.min(...limits) : undefined;
-    const lastIvaStep = maxSteps !== undefined && emissionState.stepIndex + 1 >= maxSteps;
+    const modelCalls = input?.message !== undefined ? 0 : (session.state?.["eve.harness.modelCalls"] as number | undefined) ?? 0;
+    const lastIvaStep = maxSteps !== undefined && modelCalls + 1 >= maxSteps;
     let resolvedModel: Awaited<ReturnType<typeof resolveActiveRuntimeModel>>;
     try {
       if (ctx !== undefined && config.dispatchDynamicModelEvent !== undefined) {
@@ -1394,6 +1394,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             { role: "user" as const, content: opts.trailingUserNote },
           ]
         : [...modelMessages];
+      if (lastIvaStep) callMessages.push({ role: "user", content: "Step limit reached: no tools are available now. Write your final answer from what you already have." });
       const harnessTools = buildHarnessToolsWithDynamicSubagents(
         config.tools,
         ctx,
@@ -1749,8 +1750,16 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         // invisible to OTel providers.
         const finalError = recoveryResult.error;
         stepInstrumentation?.recordError(finalError);
+        const emptyStepFailure = lastIvaStep && finalError instanceof EmptyModelResponseError
+          ? session.outputSchema === undefined ? STEP_LIMIT_REACHED : OUTPUT_SCHEMA_NOT_FULFILLED : undefined;
+        if (emptyStepFailure) session = { ...session, outputSchema: undefined };
 
         if (!emit) {
+          if (emptyStepFailure) {
+            const output = emptyStepFailure.message;
+            return config.mode === "task" ? { next: { done: true, isError: true, output }, session }
+              : { next: null, settledTurn: { isError: true, output }, session };
+          }
           // Internal harness callers without an emit fn (tests, task-only
           // code paths) get the raw throw. Only runtime-connected harness
           // calls go through the structured failure path below.
@@ -1795,7 +1804,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             ? extractUpstreamRejectionMessage(finalError)
             : null;
         const errorMessage =
-          catalogSummary?.message ??
+          emptyStepFailure?.message ?? catalogSummary?.message ??
           upstreamRejection?.message ??
           toErrorMessage(finalError);
         // Task failures surface as the parent agent's tool-result text, so
@@ -1840,7 +1849,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             );
           }
           await emitFailedStep(emit, emissionState, {
-            code: "MODEL_CALL_FAILED",
+            code: emptyStepFailure?.code ?? "MODEL_CALL_FAILED",
             details,
             message: errorMessage,
             sessionId: session.sessionId,
@@ -1884,7 +1893,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             modelCallLogFields,
           );
           await emitFailedStep(emit, emissionState, {
-            code: "MODEL_CALL_FAILED",
+            code: emptyStepFailure?.code ?? "MODEL_CALL_FAILED",
             details,
             message: errorMessage,
             sessionId: session.sessionId,
@@ -1901,7 +1910,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           modelCallLogFields,
         );
         emissionState = await emitRecoverableFailedTurn(emit, emissionState, {
-          code: "MODEL_CALL_FAILED",
+          code: emptyStepFailure?.code ?? "MODEL_CALL_FAILED",
           continuationToken: session.continuationToken,
           details,
           message: errorMessage,
@@ -1964,17 +1973,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     // --- Handle result ------------------------------------------------------
 
-    if (lastIvaStep) {
-      const output = resolveAssistantStepText(result.response.messages, result.text) ?? "";
-      session = { ...session, history: [...messages, ...result.response.messages], outputSchema: undefined };
-      if (emit) session = setHarnessEmissionState(session,
-        await emitTurnEpilogue(emit, emissionState, config.mode, "step-limit"));
-      return config.mode === "task"
-        ? { next: { done: true, output }, session }
-        : { next: null, session, settledTurn: { output } };
-    }
+    session = { ...session, state: { ...session.state, "eve.harness.modelCalls": modelCalls + 1 } };
 
     return handleStepResult({
+      stepLimit: lastIvaStep,
       config,
       emit,
       emissionState,
@@ -2539,6 +2541,7 @@ async function attemptEmptyResponseRecovery(input: {
  * park, continue the tool loop, or terminate.
  */
 async function handleStepResult(input: {
+  readonly stepLimit?: boolean;
   readonly config: ToolLoopHarnessConfig;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
@@ -2609,6 +2612,12 @@ async function handleStepResult(input: {
       result,
     ),
   };
+
+  if (input.stepLimit) {
+    const finish = config.mode === "task" ? finishTaskTurn : finishConversationTurn;
+    return finish({ emissionState, emit, history: promptMessages, result, schema: session.outputSchema,
+      session: { ...baseSession, history: [...promptMessages, ...responseMessages] }, stepOutput, stepLimit: true });
+  }
 
   const workflowContinuationSecurity =
     config.workflow === true
@@ -2941,8 +2950,10 @@ async function handleStepResult(input: {
       normalizedProviderHistory.outcomeEndsResponse ||
       hasDeferredStepInput(nextSession));
   if (continueLoop) {
-    emissionState = advanceStep(emissionState);
-    nextSession = setHarnessEmissionState(nextSession, emissionState);
+    if (emit) {
+      emissionState = advanceStep(emissionState);
+      nextSession = setHarnessEmissionState(nextSession, emissionState);
+    }
 
     return { next: runStep, session: nextSession };
   }
@@ -2982,6 +2993,8 @@ function isDeferredHarnessTool(
     (tool?.workflowId !== undefined && tool.execution !== "background")
   );
 }
+
+const STEP_LIMIT_REACHED = { code: "STEP_LIMIT_REACHED", message: "Step limit reached without a usable final answer." } as const;
 
 const OUTPUT_SCHEMA_NOT_FULFILLED = {
   code: "OUTPUT_SCHEMA_NOT_FULFILLED",
@@ -3038,6 +3051,14 @@ async function emitStructuredResult(
   return emitTurnEpilogue(emit, emissionState, mode);
 }
 
+function terminalTurnFailure(schema: JsonObject | undefined, structured: JsonValue | undefined,
+  stepLimit: boolean | undefined, result: HarnessStepResult, stepOutput: string | null) {
+  if (schema !== undefined && structured === undefined) return OUTPUT_SCHEMA_NOT_FULFILLED;
+  if (stepLimit && (result.toolCalls.length > 0 || !stepOutput?.trim()))
+    return STEP_LIMIT_REACHED;
+  return undefined;
+}
+
 /**
  * Closes a terminal task turn. Task runs cannot park, so an unmet output
  * schema fails as an error a delegating parent can surface; otherwise the
@@ -3051,25 +3072,28 @@ async function finishTaskTurn(input: {
   readonly schema: JsonObject | undefined;
   readonly session: HarnessSession;
   readonly stepOutput: string | null;
+  readonly stepLimit?: boolean;
 }): Promise<StepResult> {
   const { emit, history, result, schema, stepOutput } = input;
   let { emissionState, session } = input;
 
-  if (schema === undefined) {
+  const structured = schema === undefined ? undefined : extractFinalOutput(result);
+  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput);
+
+  if (schema === undefined && failure === undefined) {
     if (emit) {
-      emissionState = await emitTurnEpilogue(emit, emissionState, "task");
+      emissionState = await emitTurnEpilogue(emit, emissionState, "task", input.stepLimit ? "step-limit" : undefined);
       session = setHarnessEmissionState(session, emissionState);
     }
     return { next: { done: true, output: stepOutput ?? "" }, session };
   }
 
-  const structured = extractFinalOutput(result);
-  if (structured === undefined) {
+  if (failure !== undefined) {
     // The schema belongs to the settled invocation.
     session = { ...session, outputSchema: undefined };
     if (emit) {
       await emitFailedStep(emit, emissionState, {
-        ...OUTPUT_SCHEMA_NOT_FULFILLED,
+        ...failure,
         sessionId: session.sessionId,
       });
     }
@@ -3077,18 +3101,18 @@ async function finishTaskTurn(input: {
       next: {
         done: true,
         isError: true,
-        output: OUTPUT_SCHEMA_NOT_FULFILLED.message,
+        output: failure.message,
       },
       session,
     };
   }
 
-  session = persistStructuredAssistantTurn(session, history, structured);
+  session = persistStructuredAssistantTurn(session, history, structured!);
   if (emit) {
     emissionState = await emitStructuredResult(
       emit,
       emissionState,
-      structured,
+      structured!,
       "task",
     );
     session = setHarnessEmissionState(session, emissionState);
@@ -3109,16 +3133,21 @@ async function finishConversationTurn(input: {
   readonly schema: JsonObject | undefined;
   readonly session: HarnessSession;
   readonly stepOutput: string | null;
+  readonly stepLimit?: boolean;
 }): Promise<StepResult> {
   const { emit, history, result, schema, stepOutput } = input;
   let { emissionState, session } = input;
 
-  if (schema === undefined) {
+  const structured = schema === undefined ? undefined : extractFinalOutput(result);
+  const failure = terminalTurnFailure(schema, structured, input.stepLimit, result, stepOutput);
+
+  if (schema === undefined && failure === undefined) {
     if (emit) {
       emissionState = await emitTurnEpilogue(
         emit,
         emissionState,
         "conversation",
+        input.stepLimit ? "step-limit" : undefined,
       );
       session = setHarnessEmissionState(session, emissionState);
     }
@@ -3126,31 +3155,30 @@ async function finishConversationTurn(input: {
     return { next: null, session, settledTurn };
   }
 
-  const structured = extractFinalOutput(result);
-  if (structured === undefined) {
+  if (failure !== undefined) {
     // The schema belongs to the settled turn. A later conversation turn that
     // omits outputSchema must not inherit a failed turn's contract.
     session = { ...session, outputSchema: undefined };
     if (emit) {
       emissionState = await emitRecoverableFailedTurn(emit, emissionState, {
-        ...OUTPUT_SCHEMA_NOT_FULFILLED,
+        ...failure,
         continuationToken: session.continuationToken,
       });
       session = setHarnessEmissionState(session, emissionState);
     }
     const settledTurn = {
       isError: true,
-      output: OUTPUT_SCHEMA_NOT_FULFILLED.message,
+      output: failure.message,
     } satisfies SettledTurn;
     return { next: null, session, settledTurn };
   }
 
-  session = persistStructuredAssistantTurn(session, history, structured);
+  session = persistStructuredAssistantTurn(session, history, structured!);
   if (emit) {
     emissionState = await emitStructuredResult(
       emit,
       emissionState,
-      structured,
+      structured!,
       "conversation",
     );
     session = setHarnessEmissionState(session, emissionState);

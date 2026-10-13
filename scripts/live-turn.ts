@@ -33,14 +33,6 @@ const TURN_TIMEOUT_MS = 240_000;
 
 export const liveTurnHeaders = (helper = false): Record<string, string> =>
   helper ? { "x-iva-turn": "helper", "x-iva-helper": `h-${MARK}` } : {};
-export function helperProbeCode(): string {
-  return `{ specificationVersion: "v4", transformParams: async ({params, type}) => {
-    if (type === "stream") console.log("LIVE_HELPER_WIRE " + JSON.stringify({
-      model: options.model ?? providerConfig.textModel, tools: params.tools ?? [],
-      helperBlock: params.prompt.some(m => m.role === "system" && m.content.includes("You are a background helper of Iva;"))
-    })); return params;
-  } },`;
-}
 export function helperWireResult(
   chat: readonly string[],
   helper: readonly string[],
@@ -50,19 +42,22 @@ export function helperWireResult(
     if (!line) throw new Error("provider wire missing");
     return JSON.parse(line.slice(17)) as {
       model: string;
-      tools: unknown[];
+      tools: number;
+      hash: string;
       helperBlock: boolean;
     };
   };
   const normal = first(chat),
     background = first(helper);
   if (
-    !normal.tools.length ||
+    !normal.tools ||
+    !background.tools ||
     !background.helperBlock ||
-    JSON.stringify(normal.tools) !== JSON.stringify(background.tools)
+    normal.tools !== background.tools ||
+    normal.hash !== background.hash
   )
     throw new Error("helper wire differs from chat or helper block is missing");
-  return { model: background.model, tools: background.tools.length };
+  return { model: background.model, tools: background.tools };
 }
 
 async function cardsWith(vault: string, needle: string): Promise<string[]> {
@@ -112,19 +107,15 @@ async function carryLogin(app: string): Promise<void> {
   if (missing !== null) throw new Error(missing);
 }
 
-async function startLiveApp(sandbox: string, note: (line: string) => void) {
+export async function prepareLiveApp(
+  sandbox: string,
+  note: (line: string) => void,
+) {
   const app = await prepareApp(sandbox);
-  if (process.env.LIVE_TURN_KIND === "helper") {
-    const file = join(app, "agent/provider.ts"),
-      source = await readFile(file, "utf8");
-    const marker = "repeatGuardMiddleware({ usage: options.usage })";
-    if (!source.includes(marker))
-      throw new Error("provider diagnostic seam missing");
-    await writeFile(file, source.replace(marker, helperProbeCode() + marker));
-  }
   const port = await freePort();
   const bearer = randomBytes(24).toString("hex");
   const env = liveEnv(app, port, bearer);
+  if (process.env.LIVE_TURN_KIND === "helper") env.IVA_LIVE_WIRE = "1";
   await carryLogin(app);
   await writeFile(join(app, ".env"), `ASSISTANT_BEARER=${bearer}\n`, {
     mode: 0o600,
@@ -136,6 +127,11 @@ async function startLiveApp(sandbox: string, note: (line: string) => void) {
     env,
     note,
   );
+  return { app, env, port, bearer };
+}
+
+async function startLiveApp(sandbox: string, note: (line: string) => void) {
+  const { app, env, port, bearer } = await prepareLiveApp(sandbox, note);
   const eve = startEve(app, env, port, note);
   return { eve, port, bearer, vault: join(app, "vault") };
 }

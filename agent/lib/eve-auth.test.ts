@@ -77,11 +77,11 @@ test(`a kind outside the list gets no attribute (PBT, seed ${SEED})`, async () =
         return; // строку, которая не годится в заголовок, Headers не пропустит и так
       }
       const sent = request.headers.get("x-iva-turn") ?? "";
-      const result = await auth(request);
       if (sent === "helper") {
-        assert.equal(result, null);
+        await assert.rejects(async () => auth(request));
         return;
       }
+      const result = await auth(request);
       assert.ok(result);
       if (TURN_KINDS.has(sent))
         assert.deepEqual(result.attributes, { iva_turn: sent });
@@ -141,13 +141,15 @@ test("our own gate drops localDev even on a dev-server process", async (t) => {
   assert.equal(result.status, 401);
 });
 
-test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`, async () => {
+test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`, async (t) => {
+  runningEveDev(t);
   const hex = fc.stringMatching(/^[0-9a-f]{6}$/);
   await fc.assert(
     fc.asyncProperty(hex, async (suffix) => {
       const good = "h-" + suffix;
       for (const value of [
         good,
+        null,
         "",
         "h-A" + suffix.slice(1),
         good.slice(0, -1),
@@ -159,30 +161,35 @@ test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`
           authorization: `Bearer ${TOKEN}`,
           "x-iva-turn": "helper",
         });
-        for (const id of Array.isArray(value) ? value : [value])
+        for (const id of value === null
+          ? []
+          : Array.isArray(value)
+            ? value
+            : [value])
           headers.append("x-iva-helper", id);
-        const req = new Request("http://fixture.invalid", { headers });
-        const result = await routeAuth(
-          req,
-          createEveAuth({ ASSISTANT_BEARER: TOKEN }),
-        );
-        if (value === good) {
-          assert.ok(!(result instanceof Response));
-          assert.deepEqual(result.attributes, {
-            iva_turn: "helper",
-            iva_helper: good,
-            iva_max_steps: 80,
-          });
-        } else {
-          assert.ok(result instanceof Response);
-          assert.equal(result.status, 401);
+        for (const dev of [undefined, "1"]) {
+          const req = new Request("http://127.0.0.1:8723", { headers });
+          const result = await routeAuth(
+            req,
+            createEveAuth({ ASSISTANT_BEARER: TOKEN, EVE_DEV: dev }),
+          );
+          if (value === good) {
+            assert.ok(!(result instanceof Response));
+            assert.deepEqual(result.attributes, {
+              iva_turn: "helper",
+              iva_helper: good,
+              iva_max_steps: "80",
+            });
+          } else {
+            assert.ok(result instanceof Response);
+            assert.equal(result.status, 401);
+          }
         }
       }
     }),
     { seed: SEED, numRuns: 150 },
   );
-  assert.equal(
-    await assistantBearerAuth(TOKEN)(turnRequest(TOKEN, "helper")),
-    null,
+  await assert.rejects(async () =>
+    assistantBearerAuth(TOKEN)(turnRequest(TOKEN, "helper")),
   );
 });

@@ -1,4 +1,4 @@
-import { helperModelWindow } from "./lib/context-window.ts";
+import { claudeContextWindow } from "./lib/claude-cli.ts";
 import { isHelperTurn } from "./lib/eve-auth.ts";
 import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
 import { defineAgent, defineDynamic } from "eve";
@@ -19,21 +19,16 @@ import { chatModelSeesImages } from "./vision.js";
 export function stepModelChoice(
   ctx: Parameters<typeof isHelperTurn>[0] & { session: { id: string } },
 ) {
-  const model = isHelperTurn(ctx)
+  const helper = isHelperTurn(ctx);
+  const model = helper
     ? process.env.HELPER_MODEL === undefined
       ? MODEL_PROVIDERS[providerName].defaultHelperModel || cfg.textModel
       : process.env.HELPER_MODEL.trim() || cfg.textModel
     : cfg.textModel;
-  const contextWindow = helperModelWindow(
-    providerName,
-    model,
-    cfg.textModel,
-    cfg.contextWindow,
-  );
-  if (contextWindow === null)
-    throw new Error(
-      "Unknown helper model context window — choose another model in /menu",
-    );
+  const contextWindow =
+    helper && providerName === "claude"
+      ? claudeContextWindow(model)
+      : cfg.contextWindow;
   return Object.freeze({
     provider: providerName,
     model,

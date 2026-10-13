@@ -718,8 +718,10 @@ test("helper model choice validates its known window and writes only HELPER_MODE
   };
   const options = {
     readEnv: async () => env,
-    validate: async () => {
+    validate: async (selection: { model?: string | null }) => {
       called++;
+      if (selection.model === "future-unknown")
+        throw new Error("unknown Claude model");
       return { id: "claude-sonnet-5-5", reasoningLevels: [] };
     },
     write: async (updates: Record<string, string | null>) => {
@@ -748,9 +750,9 @@ test("helper model choice validates its known window and writes only HELPER_MODE
       } as never,
       options,
     ),
-    /unknown helper context window/,
+    /Unknown Claude model|unknown Claude model|Unsupported Claude model|unsupported Claude model/,
   );
-  assert.equal(called, 1);
+  assert.equal(called, 2);
   const defaultConfig = await currentConfig({ readEnv: async () => env });
   assert.equal(defaultConfig.helperModel, "claude-sonnet-5-5");
   const same = await currentConfig({

@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   extractBearerToken,
+  UnauthenticatedError,
   localDev,
   placeholderAuth,
   vercelOidc,
@@ -32,29 +33,39 @@ export const TURN_KINDS: ReadonlySet<string> = new Set([
 export function isHelperTurn(ctx?: {
   session: {
     auth?: {
-      initiator?: { attributes: Readonly<Record<string, unknown>> } | null;
-      current?: { attributes: Readonly<Record<string, unknown>> } | null;
+      initiator?: {
+        authenticator: string;
+        attributes: Readonly<Record<string, unknown>>;
+      } | null;
+      current?: {
+        authenticator: string;
+        attributes: Readonly<Record<string, unknown>>;
+      } | null;
     };
   };
 }): boolean {
   return [ctx?.session.auth?.initiator, ctx?.session.auth?.current].some(
-    (auth) => auth?.attributes.iva_turn === "helper",
+    (auth) =>
+      auth?.authenticator === "iva-bearer" &&
+      auth.attributes.iva_turn === "helper",
   );
 }
 
 /** Service attributes are accepted only after bearer authentication. */
-function serviceAuth(request: Request) {
+function serviceAuth(
+  request: Request,
+): NonNullable<Awaited<ReturnType<AuthFn<Request>>>> {
   const turn = request.headers.get("x-iva-turn");
   if (turn === null || !TURN_KINDS.has(turn)) return SERVICE_AUTH;
   if (turn !== "helper")
     return { ...SERVICE_AUTH, attributes: { iva_turn: turn } };
   const id = request.headers.get("x-iva-helper");
-  return id !== null && /^h-[0-9a-f]{6}$/.test(id)
-    ? {
-        ...SERVICE_AUTH,
-        attributes: { iva_turn: turn, iva_helper: id, iva_max_steps: 80 },
-      }
-    : null;
+  if (id === null || !/^h-[0-9a-f]{6}$/.test(id))
+    throw new UnauthenticatedError();
+  return {
+    ...SERVICE_AUTH,
+    attributes: { iva_turn: turn, iva_helper: id, iva_max_steps: "80" },
+  };
 }
 
 function equalSecret(left: string, right: string): boolean {
@@ -66,6 +77,7 @@ function equalSecret(left: string, right: string): boolean {
 export function assistantBearerAuth(expectedToken?: string): AuthFn<Request> {
   const expected = expectedToken?.trim();
   return (request) => {
+    if (request.headers.get("x-iva-turn") === "helper") serviceAuth(request);
     if (!expected) return null;
     const received = extractBearerToken(request.headers.get("authorization"));
     return received && equalSecret(received, expected)

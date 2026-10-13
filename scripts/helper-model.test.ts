@@ -23,9 +23,8 @@ const { providerConfig } = await import("../agent/provider.ts");
 const { resolveRuntimeModelSelection } =
   await import("../node_modules/eve/dist/src/runtime/agent/resolve-model.js");
 const { MODEL_PROVIDERS } = await import("../agent/lib/model-provider.ts");
-const { helperModelWindow } =
-  await import("../packages/context-window/index.ts");
-test("F14: concurrent chat and helper use different wire models, windows, thresholds and image verdicts", async (t) => {
+
+test("F14: concurrent chat and helper use separate wire models and image verdicts with provider windows and thresholds", async (t) => {
   const previous = globalThis.fetch;
   t.after(() => {
     globalThis.fetch = previous;
@@ -118,10 +117,10 @@ test("F14: concurrent chat and helper use different wire models, windows, thresh
   );
   assert.equal(
     helper.result.session.agent.modelReference?.contextWindowTokens,
-    131072,
+    8000,
   );
   assert.equal(chat.result.session.compaction.threshold, 6000);
-  assert.equal(helper.result.session.compaction.threshold, 98303);
+  assert.equal(helper.result.session.compaction.threshold, 6000);
   const verdicts = new Map(
     await Promise.all(
       choices.map(async (c) => [c.model, await c.seesImages()] as const),
@@ -134,6 +133,12 @@ test("F14: concurrent chat and helper use different wire models, windows, thresh
   await writeFile(join(home, "usage.jsonl"), "");
   for (const turn of [chat, helper]) {
     const ctx = turn.authored.eve.buildResolveContext(turn.ctx, []);
+    await usageHook.events!["step.started"]!(
+      {
+        data: { modelId: turn.result.session.agent.modelReference!.id },
+      } as never,
+      ctx as never,
+    );
     await usageHook.events!["step.completed"]!(
       {
         data: {
@@ -163,36 +168,17 @@ test("helper defaults and unknown windows", () => {
       p.defaultHelperModel,
       name === "claude" ? "claude-sonnet-5-5" : null,
     );
-  assert.equal(
-    helperModelWindow(
-      "claude",
-      "claude-sonnet-5-5",
-      "claude-haiku-4-5-20251001",
-      200000,
-    ),
-    1000000,
-  );
-  assert.equal(
-    helperModelWindow("ollama", "unknown-future", "text-fixture", 8000),
-    null,
-  );
-  process.env.HELPER_MODEL = "unknown-future";
-  assert.throws(
-    () =>
-      stepModelChoice({
-        session: {
-          id: "helper",
-          auth: { initiator: { attributes: { iva_turn: "helper" } } },
-        },
-      }),
-    /Unknown helper model context/,
-  );
   process.env.HELPER_MODEL = "";
   assert.equal(
     stepModelChoice({
       session: {
         id: "helper",
-        auth: { initiator: { attributes: { iva_turn: "helper" } } },
+        auth: {
+          initiator: {
+            authenticator: "iva-bearer",
+            attributes: { iva_turn: "helper" },
+          },
+        },
       },
     }).model,
     "text-fixture",

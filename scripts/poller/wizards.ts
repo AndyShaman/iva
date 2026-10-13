@@ -1,4 +1,3 @@
-import { helperModelWindow } from "../../packages/context-window/index.ts";
 import { resolveOpenCodeProtocol } from "@iva/opencode-protocol";
 import {
   CATALOG,
@@ -186,7 +185,7 @@ const PLAIN_STEPS = new Map<string, readonly string[]>([
   // «Без ключа» — только там, где ключ на самом деле необязателен.
   ["nokey", ["awaiting_key"]],
   ["retry", ["model_error", "cli_status"]],
-  ["back", ["model_error"]],
+  ["back", ["model_error", "models"]],
 ]);
 
 export function wizardActionAllowed(
@@ -830,21 +829,9 @@ function turnModelOptions(
   const candidates = responses
     ? options.map((option) => ({ ...option, reasoningLevels: [] }))
     : options;
-  const summary = st.helperModel ? modelSummary(env) : null;
-  const selectable = summary
-    ? candidates.filter(
-        (option) =>
-          helperModelWindow(
-            st.provider,
-            option.id,
-            summary.model,
-            summary.contextWindow,
-          ) !== null,
-      )
-    : candidates;
   return wizardModelOptions(
     st.provider,
-    selectable,
+    candidates,
     env[CATALOG[st.provider].modelVar],
   );
 }
@@ -891,7 +878,10 @@ async function showModelScreen(st: WizardState) {
       : []),
   ];
   if (st.helperModel)
-    lines.push(button(tr("Same as Iva", "Как у Ивы"), "iva_model:helper-same"));
+    lines.push(
+      button(tr("Same as Iva", "Как у Ивы"), "iva_model:helper-same"),
+      button(tr("‹ Back", "‹ Назад"), "iva_model:back"),
+    );
   lines.push(modelPrompt());
   // Модели — равноправные варианты без пояснений, но id бывают длинными: по одной в строке.
   lines.push(
@@ -1214,19 +1204,6 @@ function assertHelperModelWindow(st: WizardState, env: Record<string, string>) {
       "invalid_selection",
       "helper provider changed",
     );
-
-  if (
-    helperModelWindow(
-      st.provider,
-      st.model,
-      catalogModel(st.provider, env) ?? "?",
-      modelSummary(env).contextWindow,
-    ) === null
-  )
-    throw new ModelValidationError(
-      "invalid_selection",
-      "unknown helper context window",
-    );
 }
 
 export async function validateAndSaveWizard(
@@ -1255,7 +1232,7 @@ export async function validateAndSaveWizard(
 
 const saveWizard = (st: WizardState) => validateAndSaveWizard(st);
 
-async function showSaved(st: WizardState) {
+export async function showSaved(st: WizardState) {
   const {
     provider,
     model: chatModel,

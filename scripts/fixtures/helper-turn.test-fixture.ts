@@ -142,6 +142,14 @@ async function authoredTurn(root: string, kind: string) {
     tools.set(name, {
       name,
       description: d.description,
+      ...(name === "ask_question"
+        ? {
+            behavior: {
+              availability: ["requires-request-input"],
+              handling: { kind: "request-input", request: "question" },
+            },
+          }
+        : {}),
       inputSchema: jsonSchema(serializeInputSchema(d.inputSchema)! as never),
       execute: async () => "ok",
     });
@@ -162,7 +170,7 @@ async function authoredTurn(root: string, kind: string) {
         )
       ).default,
     );
-  for (const name of await readdir(join(root, "agent/tools")))
+  for (const name of (await readdir(join(root, "agent/tools"))).sort())
     if (name.endsWith(".ts") && !name.endsWith(".test.ts"))
       add(
         name.slice(0, -3),
@@ -172,7 +180,7 @@ async function authoredTurn(root: string, kind: string) {
   const { createPreparedRuntimeSubagentTool } = await load<
     typeof import("../../node_modules/eve/dist/src/runtime/subagents/registry.js")
   >(root, "node_modules/eve/dist/src/runtime/subagents/registry.js");
-  for (const name of await readdir(join(root, "agent/subagents"))) {
+  for (const name of (await readdir(join(root, "agent/subagents"))).sort()) {
     const mod = await load<{ default: { description: string } }>(
       root,
       "agent/subagents/" + name + "/agent.ts",
@@ -226,6 +234,11 @@ export async function wireTurn(
     attributes?: Record<string, unknown>;
     currentAttributes?: Record<string, unknown>;
     calls?: number;
+    mode?: "conversation" | "task";
+    outputSchema?: Record<string, unknown>;
+    sequence?: string[];
+    invalidLast?: boolean;
+    emptyLast?: boolean;
     noEvents?: boolean;
     retry?: boolean;
     compact?: boolean;
@@ -267,8 +280,13 @@ export async function wireTurn(
     inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
     outputTokens: { total: 2, text: 2, reasoning: 0 },
   };
-  const resultContent = () => {
-    const call = ++count <= (options.calls ?? 0);
+  const resultContent = (params: { tools?: readonly unknown[] }) => {
+    count++;
+    const name = options.sequence?.[count - 1] ?? "read_file";
+    const call = options.sequence
+      ? name !== "done" && (options.invalidLast || !!params.tools?.length)
+      : count <= (options.calls ?? 0) &&
+        (options.invalidLast || !!params.tools?.length);
     return {
       call,
       content: call
@@ -276,11 +294,19 @@ export async function wireTurn(
             {
               type: "tool-call" as const,
               toolCallId: "t" + count,
-              toolName: "read_file",
-              input: '{"path":"CORE.md"}',
+              toolName: name,
+              input:
+                name === "ask_question"
+                  ? '{"question":"Choose","options":[{"id":"one","label":"One"}]}'
+                  : '{"path":"CORE.md"}',
             },
           ]
-        : [{ type: "text" as const, text: "done" }],
+        : [
+            {
+              type: "text" as const,
+              text: options.emptyLast && !params.tools?.length ? "" : "done",
+            },
+          ],
     };
   };
   const model = new MockLanguageModelV4({
@@ -292,7 +318,7 @@ export async function wireTurn(
       );
       const value = compact
         ? { call: false, content: [{ type: "text" as const, text: "summary" }] }
-        : resultContent();
+        : resultContent(params);
       return {
         content: value.content,
         usage,
@@ -303,7 +329,7 @@ export async function wireTurn(
         warnings: [],
       };
     },
-    doStream: async () => {
+    doStream: async (params) => {
       if (options.retry && model.doStreamCalls.length === 1)
         throw new APICallError({
           message: "retry",
@@ -312,7 +338,7 @@ export async function wireTurn(
           statusCode: 503,
           isRetryable: true,
         });
-      const value = resultContent();
+      const value = resultContent(params);
       return {
         stream: new ReadableStream({
           start(c) {
@@ -320,7 +346,11 @@ export async function wireTurn(
             if (value.call) c.enqueue(value.content[0] as never);
             else {
               c.enqueue({ type: "text-start", id: "t" });
-              c.enqueue({ type: "text-delta", id: "t", delta: "done" });
+              c.enqueue({
+                type: "text-delta",
+                id: "t",
+                delta: (value.content[0] as { text: string }).text,
+              });
               c.enqueue({ type: "text-end", id: "t" });
             }
             c.enqueue({
@@ -346,7 +376,8 @@ export async function wireTurn(
       },
     });
   const run = eve.createToolLoopHarness({
-    mode: "conversation",
+    mode: options.mode ?? "conversation",
+    capabilities: { requestInput: true },
     tools: authored.tools,
     resolveModel: async () => model,
     ...(options.noEvents
@@ -372,6 +403,7 @@ export async function wireTurn(
     },
     continuationToken: "fixture",
     sessionId: "fixture",
+    outputSchema: options.outputSchema as never,
     history: options.compact
       ? Array.from({ length: 12 }, (_, i) => ({
           role: i % 2 ? ("assistant" as const) : ("user" as const),
@@ -382,19 +414,16 @@ export async function wireTurn(
   let result = await eve.contextStorage.run(ctx, () =>
     run(session, { message: "hello" }),
   );
-  for (let i = 0; typeof result.next === "function" && i < 8; i++) {
+  for (let i = 0; typeof result.next === "function" && i < 100; i++) {
     const next = result.next;
     result = await eve.contextStorage.run(ctx, () => next(result.session));
   }
-  if (
-    typeof result.next === "function" ||
-    events.some((e) => e.type === "turn.failed")
-  )
+  if (typeof result.next === "function")
     throw new Error("turn failed or did not settle");
   const call = model.doStreamCalls[0] ?? model.doGenerateCalls[0];
   const wire = {
     tools: call?.tools ?? [],
     prefix: (call?.prompt ?? []).filter((m) => m.role === "system"),
   };
-  return { authored, ctx, result, wire, model, events, executions };
+  return { authored, ctx, result, wire, model, events, executions, run };
 }

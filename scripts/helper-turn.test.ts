@@ -87,7 +87,7 @@ for (const noEvents of [false, true])
     for (const calls of [0, max - 1, max, max + 1])
       test(`ceiling ${max}, calls ${calls}, observer ${!noEvents}`, async () => {
         const turn = await wireTurn({
-          attributes: { iva_max_steps: max },
+          attributes: { iva_max_steps: String(max) },
           calls,
           noEvents,
         });
@@ -107,7 +107,23 @@ for (const noEvents of [false, true])
             );
         }
       });
-for (const value of [0, -1, 1.5, "3", NaN, Infinity, [], 1e20])
+for (const value of [
+  0,
+  -1,
+  1.5,
+  "03",
+  "0",
+  "-1",
+  "1.5",
+  "1000000000",
+  "80\n",
+  " 80",
+  "80 ",
+  NaN,
+  Infinity,
+  [],
+  1e20,
+])
   test(`specified garbage ${String(value)} closes at one`, async () => {
     const turn = await wireTurn({
       attributes: { iva_max_steps: value },
@@ -123,21 +139,21 @@ test("minimum is symmetric and retry/compaction are outside the step count", asy
     [3, 1],
   ]) {
     const turn = await wireTurn({
-      attributes: { iva_max_steps: first },
-      currentAttributes: { iva_max_steps: current },
+      attributes: { iva_max_steps: String(first) },
+      currentAttributes: { iva_max_steps: String(current) },
       calls: 3,
     });
     assert.equal(turn.model.doStreamCalls.length, 1);
   }
   const retry = await wireTurn({
-    attributes: { iva_max_steps: 2 },
+    attributes: { iva_max_steps: "2" },
     calls: 4,
     retry: true,
   });
   assert.equal(retry.model.doStreamCalls.length, 3);
   assert.equal(retry.executions, 1);
   const compact = await wireTurn({
-    attributes: { iva_max_steps: 2 },
+    attributes: { iva_max_steps: "2" },
     calls: 4,
     compact: true,
   });
@@ -146,41 +162,34 @@ test("minimum is symmetric and retry/compaction are outside the step count", asy
   assert.equal(compact.executions, 1);
 });
 
-test("live helper probe uses full ordered definitions and fails closed", async () => {
-  const { helperProbeCode, helperWireResult, liveTurnHeaders } =
-    await import("./live-turn.ts");
-  const { runInNewContext } = await import("node:vm");
+test("live helper observations compare ordered hashes and fail closed", async () => {
+  const { helperWireResult, liveTurnHeaders } = await import("./live-turn.ts");
+  const { createHash } = await import("node:crypto");
   const chat = await wireTurn(),
     helper = await wireTurn({ kind: "helper" });
-  const logs: string[] = [];
-  const [probe] = runInNewContext("[" + helperProbeCode() + "]", {
-    options: { model: "helper-fixture" },
-    console: { log: (line: string) => logs.push(line) },
-  }) as { transformParams: (p: unknown) => Promise<unknown> }[];
-  for (const turn of [chat, helper])
-    await probe.transformParams({
-      type: "stream",
-      params: { tools: turn.wire.tools, prompt: turn.wire.prefix },
+  const observation = (tools: unknown[], helperBlock: boolean) =>
+    "LIVE_HELPER_WIRE " +
+    JSON.stringify({
+      model: "helper-fixture",
+      tools: tools.length,
+      hash: createHash("sha256").update(JSON.stringify(tools)).digest("hex"),
+      helperBlock,
     });
-  assert.deepEqual(helperWireResult([logs[0]], [logs[1]]), {
+  const normal = [observation(chat.wire.tools, false)],
+    background = [observation(helper.wire.tools, true)];
+  assert.deepEqual(helperWireResult(normal, background), {
     model: "helper-fixture",
-    tools: chat.wire.tools.length,
+    tools: 140,
   });
-  for (const bad of [
-    { tools: [] },
-    { tools: helper.wire.tools.slice(1) },
-    { tools: [...helper.wire.tools].reverse() },
-    { helperBlock: false },
+  for (const tools of [
+    [],
+    helper.wire.tools.slice(1),
+    [...helper.wire.tools].reverse(),
   ])
-    assert.throws(() =>
-      helperWireResult(
-        [logs[0]],
-        [
-          "LIVE_HELPER_WIRE " +
-            JSON.stringify({ ...JSON.parse(logs[1].slice(17)), ...bad }),
-        ],
-      ),
-    );
+    assert.throws(() => helperWireResult(normal, [observation(tools, true)]));
+  assert.throws(() =>
+    helperWireResult(normal, [observation(helper.wire.tools, false)]),
+  );
   assert.deepEqual(liveTurnHeaders(), {});
   assert.match(liveTurnHeaders(true)["x-iva-helper"], /^h-[0-9a-f]{6}$/);
 });

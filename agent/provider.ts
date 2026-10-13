@@ -2,7 +2,7 @@ import {
   resolveOpenCodeProtocol,
   type OpenCodeProtocol,
 } from "@iva/opencode-protocol";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -811,6 +811,13 @@ const adjacentUserMessagesMiddleware: LanguageModelMiddleware = {
   },
 };
 
+// prettier-ignore
+const liveWireObserver = (model: string): LanguageModelMiddleware => ({
+  specificationVersion: "v4", transformParams({ params, type }) {
+    if (type === "stream") console.log("LIVE_HELPER_WIRE " + JSON.stringify({ model, tools: params.tools?.length ?? 0, hash: createHash("sha256").update(JSON.stringify(params.tools ?? [])).digest("hex"), helperBlock: params.prompt.some(m => m.role === "system" && m.content.includes("You are a background helper of Iva;")) }));
+    return Promise.resolve(params);
+  },
+});
 /**
  * Текстовая модель активного провайдера. Общая для КАЖДОГО узла графа: корень и субагенты
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
@@ -839,6 +846,8 @@ export function makeTextModel(options: {
         options.usage,
         options.model ?? providerConfig.textModel,
       ),
+      // prettier-ignore
+      ...(process.env.IVA_LIVE_WIRE === "1" ? [liveWireObserver(options.model ?? providerConfig.textModel)] : []),
     ],
   });
 }
