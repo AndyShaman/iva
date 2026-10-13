@@ -13,8 +13,8 @@
 \* независимо пробуют T3, включая отказ записи и смерть клиента до onSession.
 \* При T9 с sessionId=null серверный ход может остаться жить: unrecordedRelease
 \* помечает ровно это исключение v4.4; ServerStep доводит его до предела ядра.
-\* §3.7: хвост без записанного id временно может превысить maxRunning;
-\* резерв памяти покрывает это исключение, предел шагов ограничивает его жизнь.
+\* §3.7: хвост без записанного id временно может превысить capacity;
+\* предел шагов ограничивает жизнь этого хвоста.
 \* §7: WF(ServerStep) — предпосылка среды, сервер завершает шаг или отмену.
 \* Вечное молчание удерживает известный слот и не входит в обещание NoSilentEnd.
 \* cancel=accepted сохраняет run. NoActiveTurn подтверждает конец отдельно.
@@ -39,7 +39,7 @@
 \*   OwnerClaimSafe
 \*                T2 считает собственный уже существующий захват занятым. Мутант
 \*                ClaimAgain трактует owner = me как разрешение повторного T2.
-\*   EnforceLimit T2 считает все durable run. Без проверки берутся три слота при MaxRunning=2.
+\*   EnforceLimit T2 считает все durable run. Без проверки берутся три слота при MaxRunning=1.
 \*   WaitForEnd    cancel=accepted сохраняет слот. Без ожидания T9 финализирует при ещё
 \*                живом canceling-ходе.
 
@@ -51,7 +51,7 @@ CONSTANTS
 
 ASSUME Cardinality(Helpers) \in {2, 3}
 ASSUME Cardinality(Servers) = 2
-ASSUME MaxRunning \in {1, 2}
+ASSUME MaxRunning = 1
 ASSUME DeadlineTicks \in Nat \ {0}
 ASSUME MaxClaims \in Nat \ {0}
 ASSUME MaxSteps \in Nat \ {0}
@@ -487,39 +487,6 @@ UnrecordedTailEnds ==
 NoSilentEnd ==
   \A h \in Helpers : (runToken[h] # 0) ~> (finalizeCount[h] > 0)
 
-\* Exact three-claim pressure replay. The first client dies after the server's
-\* T3 write failed; T9 frees its unknown-id slot while that remote turn remains.
-\* The second known reservation and the third create then coexist with the tail.
-\* The replay ends at three live remote turns, with two durable slots. It checks
-\* the third-claim boundary separately from the main two-claim safety graph.
-PressureFirst == CHOOSE h \in Helpers : TRUE
-PressureSecond == CHOOSE h \in Helpers \ {PressureFirst} : TRUE
-PressureThird == CHOOSE h \in Helpers \ {PressureFirst, PressureSecond} : TRUE
-BasePressureNext ==
-  \/ Add
-  \/ /\ nextToken = 1 /\ Claim(PressureFirst)
-  \/ /\ nextToken = 2
-     /\ (ChildStarted(PressureFirst) \/ CreateSession(PressureFirst)
-         \/ /\ ServerRecordSession(PressureFirst)
-            /\ serverWriter'[PressureFirst] = "failed"
-         \/ /\ phase[PressureFirst] = "sent"
-            /\ serverWriter[PressureFirst] = "failed"
-            /\ Claim(PressureSecond))
-  \/ /\ nextToken = 3
-     /\ (ChildStarted(PressureSecond) \/ CreateSession(PressureSecond)
-         \/ /\ phase[PressureSecond] = "sent"
-            /\ (CrashProcess(PressureFirst)
-                \/ /\ child[PressureFirst] = "dead" /\ Tick(PressureFirst))
-         \/ /\ unrecordedRelease[PressureFirst] /\ runToken[PressureFirst] = 0
-            /\ Claim(PressureThird))
-  \/ /\ nextToken = 4
-     /\ (ChildStarted(PressureThird) \/ CreateSession(PressureThird))
-
-PressureNext == BasePressureNext /\ UNCHANGED v6
-
-NoThreeRemoteTurns ==
-  Cardinality({h \in Helpers : phase[h] \in {"sent", "canceling"}}) <= MaxRunning
-
 \* Helpers have no priority; permute only their identities in safety BFS.
 HelperSymmetry == Permutations(Helpers)
 
@@ -551,9 +518,8 @@ View == <<added, serverV,
 \* Each case selects an initial condition and relevant interference, not a new
 \* product mechanism. May is opaque: no interpretation of its words here.
 V6Actors == {"owner", "helper", "service", "group", "unknown"}
-V6Sources == {"owner", "tap", "wake", "unknown", "missing"}
 V6Mays == {"missing", "wrong-type", "oversize", "empty", "opaque"}
-V6Allowed(a, s) == a = "owner" /\ s \in {"owner", "tap"}
+V6Allowed(a) == a = "owner"
 V6ValidMay(m) == m \in {"empty", "opaque"}
 V6RVars == <<vars, v6>>
 V6Init ==
@@ -573,14 +539,13 @@ V6Init ==
        effect |-> "none", attempts |-> 0, accepted |-> 0,
        lostResponse |-> FALSE, lateEffect |-> FALSE, tailEffect |-> FALSE]
 
-V6Add(a, s, m) ==
+V6Add(a, m) ==
   /\ v6.row = "absent"
-  /\ (V6Allowed(a, s) /\ V6ValidMay(m))
+  /\ (V6Allowed(a) /\ V6ValidMay(m))
       \/ (V6Mutant = "helper-start" /\ a = "helper")
-      \/ (V6Mutant = "wake-start" /\ s = "wake")
-      \/ (V6Mutant = "may" /\ ~V6ValidMay(m) /\ V6Allowed(a, s))
+      \/ (V6Mutant = "may" /\ ~V6ValidMay(m) /\ V6Allowed(a))
   /\ v6' = [v6 EXCEPT !.row = "pending", !.may = m,
-       !.rejectedChanged = ~V6Allowed(a, s), !.invalidMay = ~V6ValidMay(m)]
+       !.rejectedChanged = ~V6Allowed(a), !.invalidMay = ~V6ValidMay(m)]
 
 V6Claim ==
   /\ v6.row = "pending" /\ ~v6.slot /\ v6.outcome = "none"
@@ -599,11 +564,11 @@ V6Create ==
 V6RecordSession ==
   /\ v6.slot /\ v6.remote = "live" /\ ~v6.durableId
   /\ v6' = [v6 EXCEPT !.durableId = TRUE]
-V6Close(a, s) ==
+V6Close(a) ==
   /\ v6.row \in {"pending", "finished"} /\ v6.stop = "none"
-  /\ V6Allowed(a, s) \/ (V6Mutant = "wake-close" /\ s = "wake")
+  /\ V6Allowed(a)
   /\ v6' = [v6 EXCEPT !.stop = "closed", !.stopCount = @ + 1,
-       !.rejectedChanged = ~V6Allowed(a, s),
+       !.rejectedChanged = ~V6Allowed(a),
        !.row = IF v6.outcome # "none" THEN "closed" ELSE @,
        !.outcome = IF v6.outcome # "none" /\ V6Mutant = "close-outcome" THEN "stopped" ELSE @,
        !.changedClosedOutcome = v6.outcome # "none" /\ V6Mutant = "close-outcome"]
@@ -670,7 +635,7 @@ V6ReadClosed ==
   /\ v6.row = "closed" /\ v6.outcome # "none"
   /\ V6Mutant # "read"
   /\ v6' = [v6 EXCEPT !.read = TRUE]
-\* Ordinary helper effects are permitted; wake effects belong in Outcome.
+\* Ordinary helper effects are permitted; effects follow the instruction.
 V6Attempt ==
   /\ v6.remote \in {"live", "canceling"} /\ v6.attempts < 2
   /\ v6.effect \in {"none", "unknown"}
@@ -688,14 +653,14 @@ V6Lifecycle ==
   \/ V6Claim \/ V6Spawn \/ V6RecordPid \/ V6Create \/ V6RecordSession
   \/ V6ServerEnd \/ V6Finalize \/ V6Crash
   \/ /\ V6Case = "owner" /\ (V6OwnerRestart \/ V6PidReused)
-  \/ V6Close("owner", "owner") \/ V6CancelAccepted \/ V6KillKnownChild
+  \/ V6Close("owner") \/ V6CancelAccepted \/ V6KillKnownChild
   \/ V6Write \/ V6Clock \/ V6Sweep \/ V6ReadClosed
   \/ /\ V6Case = "question" /\ V6Question
   \/ /\ V6Case = "effects" /\ (V6Attempt \/ V6EffectEnd)
 V6Next ==
   /\ IF V6Case = "auth" THEN
-       \E a \in V6Actors, s \in V6Sources :
-         (\E m \in V6Mays : V6Add(a, s, m)) \/ V6Close(a, s)
+       \E a \in V6Actors :
+         (\E m \in V6Mays : V6Add(a, m)) \/ V6Close(a)
      ELSE V6Lifecycle
   /\ UNCHANGED vars
 V6Spec == V6Init /\ [][V6Next]_V6RVars

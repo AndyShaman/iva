@@ -137,147 +137,86 @@ specs/queue-drain-check.sh
 
 ## Helpers
 
-Модели HelperRun.tla и HelperOutcome.tla проверяют контракт помощников v6.1 до продуктового кода. Два набора графов выполняются вместе: прежний Spec проверяет CAS/capacity, два независимых писателя T3, конечные отказы, restart, receipt и multipart Outbox; новые V6Spec/V6OSpec проверяют изменённые гарантии. Это отдельные ограниченные графы внутри тех же модулей. Старые переменные в новых графах и v6 в старых графах явно заморожены; расширение не подменяет регрессионную полосу.
+HelperRun.tla и HelperOutcome.tla проверяют v6.2. Run сохраняет CAS/первый stop,
+один durable слот, dual T3, physical spawn отдельно от durable pid, accepted cancel
+до подтверждённого конца, ограниченный lost-id tail, owner-life для SIGKILL,
+partial/close/KEEP и запрет helper-start из самого helper. May — непрозрачное значение:
+missing/type/oversize отказаны, empty валиден.
 
-В новой полосе **полный BFS без VIEW и symmetry**. В регрессионной полосе прежние View/LiveView и safety symmetry сохранены. Три legacy replay получили явный UNCHANGED v6; PressureNext также сохраняет новую переменную. OneOutcomePerTurn остаётся только историческим диагностическим свидетелем. Действующая гарантия — одна delivered finished строка на полный ключ хода; closed и already delivered читаются без новой отметки.
+Outcome: finish-once, чистое чтение нескольких исходов, volatile read marker полной
+пары session/turn, delivered после непустого ответа, retention/visibility, close/KEEP.
+Две сессии имеют turn_0; Restart стирает read marker. NoTwoReads и NoRepeatedRead —
+ожидаемые красные witnesses принятых последствий; остальные Outcome red — мутанты.
 
-В Run физический spawn отдельно от durable pid. Create возможен до записи pid; запись может отказать. Живой клиент без durable session id удерживает слот до server end. Только мёртвый клиент без id допускает именованный lost-id хвост после finalize. Accepted cancel сохраняет слот. SIGKILL по pid допустим лишь живому совпавшему владельцу; после restart сохранённый номер не даёт права убить чужой процесс. Question/parked helper получает failed после отмены и конца, обычный completed→waiting получает done. Завершённый текст сохраняется при stop, ручной outcome доступен до sweep; поздний close сохраняет прежний outcome и finishedAt.
-
-В Outcome ключ <<chat, session, localTurn>> явно разделяет две сессии с одинаковым turn_0 и чужие чаты. Chat — partition стора; sessionId представлен парой (chat, session). Продуктовый mark остаётся {sessionId, turnId, at}. Shown/delivered сохраняют время, /new сбрасывает localTurn=0. T14 проверяет chat, T15 требует прочитанный полный ключ и подтверждённый Outbox. Доставленное читается без записи. KEEP для closed считается от finishAt, для delivered — от delivered.at. Следующая tool-фаза после начала финального Outbox в том же ответе не моделируется: финальный текст уже подготовлен; multipart и T15 проверяются прежним replay.
-
-Источник сохраняется как metadata через Bridge batch, очередь, kernel buffer, restart и current. Проверены owner→wake, wake→owner, tap/wake, homogeneous owner, legacy/legacy, legacy↔wake, оба Queue/Steer и active input. Отдельный race graph делает действия idle check → owner arrived → stale wake admission. В Bridge wake отдельный, iva_parts однородны. Kernel разделяет только две заданные разные iva_input; отсутствие хотя бы у одной сохраняет legacy-склейку и current последней доставки. Новое правило не обещает однородность legacy-смешанного хода. Queue/source observers сравнивают реальные последовательности, не только флаг.
-
-Wake start/close и самостоятельный effect от имени владельца запрещены моделью wake-хода. Read/full-text/Outbox разрешены. Это модель инструкции доставки и start/close guards; нового permission-механизма для всего набора инструментов она не вводит. Helper effects остаются разрешёнными. Я4 меняет registrations вне модели этих переходов; Я5 вынесено, удаление ядровых каталогов не моделируется.
-
-V6WakeAllocate пишет lastAt на **каждую** попытку до ответа, включая busy/reject/terminal-drop. Pause=2^acceptedWakes с минимумом одного тика, отдельный due каждой строки; за pass выбирается один минимальный наступивший срок. Не принятая попытка не пишет sent и не порождает owner notice. Busy/reset/compaction и оба owner-накопителя закрывают wake admission.
-
-T17 разделён на attempt, внешнее confirmation и durable mark. Failure до confirmation оставляет escalated=false. Один crash между confirmation/mark допускает повторный Alert, wakes продолжаются. Отдельной Alert очереди нет. Модель абстрагирует существующий транспорт как попытку/подтверждение; точный throttle alertOnce и открытый факт кратности в спеке проверяются на кодовой границе, не скрываются bounded PASS.
-
-| Новая гарантия / инварианты | Мутант-свидетель |
-|---|---|
-| Actor/source Add/Close: V6Authorized | helper-start, wake-start, wake-close |
-| May presence/type/size и точное opaque значение: V6MayRequired, V6MayUnchanged | may, may-copy |
-| Реальный pid/owner life: V6PidKnown, V6OwnerKillSafe | pid, owner-kill |
-| Accepted не освобождает run: V6SlotFreedAfterEnd | early-free |
-| Question — failed, normal waiting отдельно: V6QuestionFailed | question-done; normal-waiting — reachability |
-| Сохранённый completed partial, доступность и KEEP: V6PartialKept, V6ClosedReadable, V6KeepClosed, V6CloseKeepsOutcome | partial, read, sweep, close-outcome |
-| Полный ключ/read+Outbox: V6DeliveryProven, V6OneDeliveredPerTurn | session, chat, second-finished |
-| Closed/already delivered чтение без записи: V6ManualNoShown, V6DeliveredReadNoWrite | closed-mark, delivered-mark |
-| Два clock KEEP: V6Retention | sweep, delivered-clock |
-| Confirmed Alert до mark: V6AlertConfirmed | alert-order; alert-duplicate — reachability |
-| Один durable wake stamp: V6WakeCounting | stamp |
-| Wake busy и операции: V6NoWakeWhileBusy, V6WakeReadOnly | wake-guard, wake-action |
-| Однородные source/current и сохранённый порядок: V6BridgeHomogeneous, V6KernelHomogeneous, V6CurrentSource, V6SourceKept, V6NoDeliveryLost | bridge-mixed, kernel-mixed, source-loss |
-| Legacy граница прежняя: V6LegacySame | legacy (реально разделяет совместимую пару) |
-| Каждая попытка ждёт pause, минимальный due, нет failure notice: V6WakePause, V6WakeEarliest, V6WakeNoOwnerMessage | wake-pause, wake-order, terminal-message |
-
-Run extensions исследуют один взятый run, два конечных owner состояния, pid write success/failure, две попытки effect и три clock значения 0..2. Все Actor/Source/May классы конечны; missing/type/oversize May различны, empty валиден. Эффект имеет none/inflight/accepted/unknown/partial и внешнее accepted count, переживающее stop/finalize. Outcome extensions имеют две строки, до двух chat partitions и двух session, local turn 0..2, clock 0..2 (wake scheduling 0..4), не более двух attempts на строку и трёх passes; pipeline содержит две доставки. У Alert максимум два confirmations, один failure и один crash; wake ids 1..2. Legacy constants записаны в каждом cfg: main Run три helpers, два servers, capacity два, claims два (pressure три); main Outcome две строки, один failure/owner message/new, MaxWake=5, MaxTurns=6.
-
-Liveness: legacy NoSilentEnd/UnrecordedTailEnds и EventuallyDelivered сохраняют fair Tick/ServerStep/Bridge и конечные failures. Новый Run live требует слабой справедливости spawn/create/server end/finalize; бесконечная серверная тишина находится вне обещания и держит слот. Pair-key delivery live имеет fair DeliveryProgress, один T15 failure и один /new; fresh local turns дают ресурс для двух результатов и одного отказа. Pipeline live требует fair collect/accept/start/active-end/execute. Alert live требует возможной успешной отправки и fair attempt/confirmation/mark при конечных failure/crash. Один только accepted Alert не является доставкой Outcome.
-
-Отдельные reachability cfg **обязаны падать**: accepted effect после close; повтор после accepted с потерянным ответом; эффект lost-id хвоста после finalize; close между inflight effect/result; create до durable pid; обычный waiting; duplicate Alert; close первого исхода → чтение второго и multipart Outbox. Это именованные риски/допустимые пути, а не мутанты действующих гарантий. ExactlyOnce и rollback внешнего эффекта не заявляются.
-
-Запуск на машине автора:
+V6Spec и Outcome — полные графы без VIEW. Legacy Run Spec/VIEW сохраняет CAS/slot/T3
+и liveness; FullView — мутанты. Bounds в cfg: два/три helper id, два server owner,
+MaxRunning=1, MaxClaims/MaxSteps из cfg; v6 Run один lifecycle, clock 0..2, две effect
+попытки. Outcome две строки, две сессии, clock 0..2, KEEP=1, максимум два чтения строки.
+Fair Tick/ServerStep/eventual server end — предпосылки liveness; вечная тишина держит
+слот. Качество пересказа и словесные инструкции — суждение модели, не инварианты.
 
 ```sh
 PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/helper-check.sh
 ```
 
-Скрипт выполняет конфигурации последовательно, перед каждым TLC на macOS ждёт vm.loadavg<20; WORKERS по умолчанию 4 и принимается только 1..4, ожидаемые красные идут с одним worker. Timeout каждого TLC 600 секунд. BFS использует fp=1 и seed=20261013 (BFS_SEED переопределяет только seed), liveness проверяется после полного графа (-lncheck final). Simulation — диагностический режим CHECK_MODE=simulate, seed=20261011, 1000 трасс/depth 100; он не заменяет BFS приёмку. Точный каталог cfg ниже. LOG_DIR сохраняет log и results.tsv (ожидание, факт, exit, distinct, время, load). metadir каждого процесса в одном временном каталоге, trap удаляет его со states. Persistent states/ не остаются.
+Load <20 перед каждым cfg, workers 1..4, BFS seed 20261013/fingerprint 1;
+simulation seed 20261011 отделён от BFS. Trap очищает temp metadir/states.
+Ожидаемая invariant ошибка — exit12 и точное имя; temporal witness — exit13.
+Ошибка инфраструктуры не считается red. LOG_DIR сохраняет результат каждого cfg.
+TLC пока локально; Node проверки/typecheck/lint/build — mini-run с Node24.
 
-Для каждой новой temporal гарантии отдельный nofair cfg снимает WF предпосылку и обязан нарушить соответствующее свойство (exit 13). Это свидетель необходимости fair среды, а не утверждение о runtime fault.
+| Конфигурация | Ожидаемый результат |
+|---|---|
+| [HelperRun-v6-auth.cfg](HelperRun-v6-auth.cfg) | PASS |
+| [HelperRun-v6-spawn.cfg](HelperRun-v6-spawn.cfg) | PASS |
+| [HelperRun-v6-question.cfg](HelperRun-v6-question.cfg) | PASS |
+| [HelperRun-v6-owner.cfg](HelperRun-v6-owner.cfg) | PASS |
+| [HelperRun-v6-effects.cfg](HelperRun-v6-effects.cfg) | PASS |
+| [HelperRun-v6-live.cfg](HelperRun-v6-live.cfg) | PASS |
+| [HelperRun-v6-helper-start.cfg](HelperRun-v6-helper-start.cfg) | RED: V6Authorized |
+| [HelperRun-v6-may.cfg](HelperRun-v6-may.cfg) | RED: V6MayRequired |
+| [HelperRun-v6-may-copy.cfg](HelperRun-v6-may-copy.cfg) | RED: V6MayUnchanged |
+| [HelperRun-v6-pid.cfg](HelperRun-v6-pid.cfg) | RED: V6PidKnown |
+| [HelperRun-v6-owner-kill.cfg](HelperRun-v6-owner-kill.cfg) | RED: V6OwnerKillSafe |
+| [HelperRun-v6-question-done.cfg](HelperRun-v6-question-done.cfg) | RED: V6QuestionFailed |
+| [HelperRun-v6-early-free.cfg](HelperRun-v6-early-free.cfg) | RED: V6SlotFreedAfterEnd |
+| [HelperRun-v6-partial.cfg](HelperRun-v6-partial.cfg) | RED: V6PartialKept |
+| [HelperRun-v6-sweep.cfg](HelperRun-v6-sweep.cfg) | RED: V6KeepClosed |
+| [HelperRun-v6-read.cfg](HelperRun-v6-read.cfg) | RED: V6ClosedReadable |
+| [HelperRun-v6-late-effect.cfg](HelperRun-v6-late-effect.cfg) | RED: V6NoLateEffect |
+| [HelperRun-v6-duplicate-effect.cfg](HelperRun-v6-duplicate-effect.cfg) | RED: V6NoDuplicateEffect |
+| [HelperRun-v6-tail-effect.cfg](HelperRun-v6-tail-effect.cfg) | RED: V6NoTailEffect |
+| [HelperRun-v6-normal-waiting.cfg](HelperRun-v6-normal-waiting.cfg) | RED: V6NoNormalWaiting |
+| [HelperRun-v6-before-pid.cfg](HelperRun-v6-before-pid.cfg) | RED: V6NoUnrecordedCreate |
+| [HelperRun-v6-close-outcome.cfg](HelperRun-v6-close-outcome.cfg) | RED: V6CloseKeepsOutcome |
+| [HelperRun-v6-close-inflight.cfg](HelperRun-v6-close-inflight.cfg) | RED: V6NoCloseInFlight |
+| [HelperRun-v6-live-nofair.cfg](HelperRun-v6-live-nofair.cfg) | RED: V6NoSilentEnd |
+| [HelperRun-live.cfg](HelperRun-live.cfg) | PASS |
+| [HelperRun.cfg](HelperRun.cfg) | PASS |
+| [HelperRun-nofinalize.cfg](HelperRun-nofinalize.cfg) | RED: OutcomeOnce |
+| [HelperRun-noreap.cfg](HelperRun-noreap.cfg) | RED: NoSilentEnd |
+| [HelperRun-ownerme.cfg](HelperRun-ownerme.cfg) | RED: OneRun |
+| [HelperRun-nolimit.cfg](HelperRun-nolimit.cfg) | RED: WithinLimits |
+| [HelperRun-earlyfree.cfg](HelperRun-earlyfree.cfg) | RED: SlotFreedAfterEnd |
+| [HelperRun-spec-v43.cfg](HelperRun-spec-v43.cfg) | RED: SlotFreedAfterEnd |
+| [HelperRun-unrecorded.cfg](HelperRun-unrecorded.cfg) | RED: NoUnrecordedTail |
+| [HelperRun-bothwriters.cfg](HelperRun-bothwriters.cfg) | RED: NoBothWriters |
+| [HelperRun-serveronly.cfg](HelperRun-serveronly.cfg) | RED: NoServerOnly |
+| [HelperOutcome-safety.cfg](HelperOutcome-safety.cfg) | PASS |
+| [HelperOutcome-finish-twice.cfg](HelperOutcome-finish-twice.cfg) | RED: OutcomeOnce |
+| [HelperOutcome-before-reply.cfg](HelperOutcome-before-reply.cfg) | RED: DeliveredAfterReply |
+| [HelperOutcome-empty-reply.cfg](HelperOutcome-empty-reply.cfg) | RED: DeliveredAfterReply |
+| [HelperOutcome-without-read.cfg](HelperOutcome-without-read.cfg) | RED: DeliveredAfterReply |
+| [HelperOutcome-turn-only.cfg](HelperOutcome-turn-only.cfg) | RED: DeliveredAfterReply |
+| [HelperOutcome-lose-unread.cfg](HelperOutcome-lose-unread.cfg) | RED: UndeliveredKept |
+| [HelperOutcome-hide-unread.cfg](HelperOutcome-hide-unread.cfg) | RED: Visible |
+| [HelperOutcome-early-close.cfg](HelperOutcome-early-close.cfg) | RED: ClosedKept |
+| [HelperOutcome-read-write.cfg](HelperOutcome-read-write.cfg) | RED: ReadPure |
+| [HelperOutcome-multiple.cfg](HelperOutcome-multiple.cfg) | RED: NoTwoReads |
+| [HelperOutcome-restart.cfg](HelperOutcome-restart.cfg) | RED: NoRepeatedRead |
 
-Ожидаемый exit: PASS=0, invariant witness=12, temporal witness=13. Любой иной exit, неверный invariant или неожиданно зелёный мутант — FAIL. Модель проверяет ограниченную явно описанную среду, не абсолютную гарантию ОС/сети или качество текста модели. Runtime код, фактическая wire auth, Trace/transcript и библиотечный шов cancel проверяются будущими harness/с1 пробами отдельно.
-
-| Конфигурация | Назначение | Ожидаемый результат |
-|---|---|---|
-| [HelperRun-v6-auth.cfg](HelperRun-v6-auth.cfg) | BFS PASS | none |
-| [HelperRun-v6-spawn.cfg](HelperRun-v6-spawn.cfg) | BFS PASS | none |
-| [HelperRun-v6-question.cfg](HelperRun-v6-question.cfg) | BFS PASS | none |
-| [HelperRun-v6-owner.cfg](HelperRun-v6-owner.cfg) | BFS PASS | none |
-| [HelperRun-v6-effects.cfg](HelperRun-v6-effects.cfg) | BFS PASS | none |
-| [HelperRun-v6-live.cfg](HelperRun-v6-live.cfg) | BFS PASS | none |
-| [HelperRun-v6-helper-start.cfg](HelperRun-v6-helper-start.cfg) | мутант (ожидаемый красный) | V6Authorized |
-| [HelperRun-v6-wake-start.cfg](HelperRun-v6-wake-start.cfg) | мутант (ожидаемый красный) | V6Authorized |
-| [HelperRun-v6-wake-close.cfg](HelperRun-v6-wake-close.cfg) | мутант (ожидаемый красный) | V6Authorized |
-| [HelperRun-v6-may.cfg](HelperRun-v6-may.cfg) | мутант (ожидаемый красный) | V6MayRequired |
-| [HelperRun-v6-may-copy.cfg](HelperRun-v6-may-copy.cfg) | мутант (ожидаемый красный) | V6MayUnchanged |
-| [HelperRun-v6-pid.cfg](HelperRun-v6-pid.cfg) | мутант (ожидаемый красный) | V6PidKnown |
-| [HelperRun-v6-owner-kill.cfg](HelperRun-v6-owner-kill.cfg) | мутант (ожидаемый красный) | V6OwnerKillSafe |
-| [HelperRun-v6-question-done.cfg](HelperRun-v6-question-done.cfg) | мутант (ожидаемый красный) | V6QuestionFailed |
-| [HelperRun-v6-early-free.cfg](HelperRun-v6-early-free.cfg) | мутант (ожидаемый красный) | V6SlotFreedAfterEnd |
-| [HelperRun-v6-partial.cfg](HelperRun-v6-partial.cfg) | мутант (ожидаемый красный) | V6PartialKept |
-| [HelperRun-v6-sweep.cfg](HelperRun-v6-sweep.cfg) | мутант (ожидаемый красный) | V6KeepClosed |
-| [HelperRun-v6-read.cfg](HelperRun-v6-read.cfg) | мутант (ожидаемый красный) | V6ClosedReadable |
-| [HelperRun-v6-late-effect.cfg](HelperRun-v6-late-effect.cfg) | reachability (ожидаемый красный) | V6NoLateEffect |
-| [HelperRun-v6-duplicate-effect.cfg](HelperRun-v6-duplicate-effect.cfg) | reachability (ожидаемый красный) | V6NoDuplicateEffect |
-| [HelperRun-v6-tail-effect.cfg](HelperRun-v6-tail-effect.cfg) | reachability (ожидаемый красный) | V6NoTailEffect |
-| [HelperRun-v6-normal-waiting.cfg](HelperRun-v6-normal-waiting.cfg) | reachability (ожидаемый красный) | V6NoNormalWaiting |
-| [HelperRun-v6-before-pid.cfg](HelperRun-v6-before-pid.cfg) | reachability (ожидаемый красный) | V6NoUnrecordedCreate |
-| [HelperOutcome-v6-delivery.cfg](HelperOutcome-v6-delivery.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-alert.cfg](HelperOutcome-v6-alert.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-pipeline.cfg](HelperOutcome-v6-pipeline.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-wake.cfg](HelperOutcome-v6-wake.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-wakes.cfg](HelperOutcome-v6-wakes.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-alert-live.cfg](HelperOutcome-v6-alert-live.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-pipeline-live.cfg](HelperOutcome-v6-pipeline-live.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-session.cfg](HelperOutcome-v6-session.cfg) | мутант (ожидаемый красный) | V6DeliveryProven |
-| [HelperOutcome-v6-chat.cfg](HelperOutcome-v6-chat.cfg) | мутант (ожидаемый красный) | V6DeliveryProven |
-| [HelperOutcome-v6-closed-mark.cfg](HelperOutcome-v6-closed-mark.cfg) | мутант (ожидаемый красный) | V6ManualNoShown |
-| [HelperOutcome-v6-delivered-mark.cfg](HelperOutcome-v6-delivered-mark.cfg) | мутант (ожидаемый красный) | V6DeliveredReadNoWrite |
-| [HelperOutcome-v6-sweep.cfg](HelperOutcome-v6-sweep.cfg) | мутант (ожидаемый красный) | V6Retention |
-| [HelperOutcome-v6-alert-order.cfg](HelperOutcome-v6-alert-order.cfg) | мутант (ожидаемый красный) | V6AlertConfirmed |
-| [HelperOutcome-v6-stamp.cfg](HelperOutcome-v6-stamp.cfg) | мутант (ожидаемый красный) | V6WakeCounting |
-| [HelperOutcome-v6-wake-guard.cfg](HelperOutcome-v6-wake-guard.cfg) | мутант (ожидаемый красный) | V6NoWakeWhileBusy |
-| [HelperOutcome-v6-wake-action.cfg](HelperOutcome-v6-wake-action.cfg) | мутант (ожидаемый красный) | V6WakeReadOnly |
-| [HelperOutcome-v6-bridge-mixed.cfg](HelperOutcome-v6-bridge-mixed.cfg) | мутант (ожидаемый красный) | V6BridgeHomogeneous |
-| [HelperOutcome-v6-kernel-mixed.cfg](HelperOutcome-v6-kernel-mixed.cfg) | мутант (ожидаемый красный) | V6KernelHomogeneous |
-| [HelperOutcome-v6-source-loss.cfg](HelperOutcome-v6-source-loss.cfg) | мутант (ожидаемый красный) | V6SourceKept |
-| [HelperOutcome-v6-legacy.cfg](HelperOutcome-v6-legacy.cfg) | мутант (ожидаемый красный) | V6LegacySame |
-| [HelperOutcome-v6-wake-pause.cfg](HelperOutcome-v6-wake-pause.cfg) | мутант (ожидаемый красный) | V6WakePause |
-| [HelperOutcome-v6-wake-order.cfg](HelperOutcome-v6-wake-order.cfg) | мутант (ожидаемый красный) | V6WakeEarliest |
-| [HelperOutcome-v6-terminal-message.cfg](HelperOutcome-v6-terminal-message.cfg) | мутант (ожидаемый красный) | V6WakeNoOwnerMessage |
-| [HelperOutcome-v6-alert-duplicate.cfg](HelperOutcome-v6-alert-duplicate.cfg) | reachability (ожидаемый красный) | V6NoDuplicateAlert |
-| [HelperOutcome-v6-close-read-second.cfg](HelperOutcome-v6-close-read-second.cfg) | reachability (ожидаемый красный) | V6NoTwoReads |
-| [HelperRun-v6-close-outcome.cfg](HelperRun-v6-close-outcome.cfg) | мутант (ожидаемый красный) | V6CloseKeepsOutcome |
-| [HelperRun-v6-close-inflight.cfg](HelperRun-v6-close-inflight.cfg) | reachability (ожидаемый красный) | V6NoCloseInFlight |
-| [HelperOutcome-v6-second-finished.cfg](HelperOutcome-v6-second-finished.cfg) | мутант (ожидаемый красный) | V6OneDeliveredPerTurn |
-| [HelperOutcome-v6-delivered-clock.cfg](HelperOutcome-v6-delivered-clock.cfg) | мутант (ожидаемый красный) | V6Retention |
-| [HelperOutcome-v6-pipeline-race.cfg](HelperOutcome-v6-pipeline-race.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-pipeline-race-live.cfg](HelperOutcome-v6-pipeline-race-live.cfg) | BFS PASS | none |
-| [HelperOutcome-v6-delivery-live.cfg](HelperOutcome-v6-delivery-live.cfg) | BFS PASS | none |
-| [HelperRun-live.cfg](HelperRun-live.cfg) | BFS PASS | none |
-| [HelperOutcome-live.cfg](HelperOutcome-live.cfg) | BFS PASS | none |
-| [HelperOutcome-live-new.cfg](HelperOutcome-live-new.cfg) | BFS PASS | none |
-| [HelperRun.cfg](HelperRun.cfg) | BFS PASS | none |
-| [HelperOutcome.cfg](HelperOutcome.cfg) | BFS PASS | none |
-| [HelperRun-pressure.cfg](HelperRun-pressure.cfg) | BFS PASS | none |
-| [HelperRun-pressure-reach.cfg](HelperRun-pressure-reach.cfg) | reachability (ожидаемый красный) | NoThreeRemoteTurns |
-| [HelperOutcome-oldcounter.cfg](HelperOutcome-oldcounter.cfg) | BFS PASS | none |
-| [HelperOutcome-close-sweep.cfg](HelperOutcome-close-sweep.cfg) | BFS PASS | none |
-| [HelperOutcome-multipart.cfg](HelperOutcome-multipart.cfg) | BFS PASS | none |
-| [HelperOutcome-multipart-reach.cfg](HelperOutcome-multipart-reach.cfg) | reachability (ожидаемый красный) | NoMultipartCompletion |
-| [HelperRun-nofinalize.cfg](HelperRun-nofinalize.cfg) | мутант (ожидаемый красный) | OutcomeOnce |
-| [HelperRun-noreap.cfg](HelperRun-noreap.cfg) | мутант (ожидаемый красный) | NoSilentEnd |
-| [HelperRun-ownerme.cfg](HelperRun-ownerme.cfg) | мутант (ожидаемый красный) | OneRun |
-| [HelperRun-nolimit.cfg](HelperRun-nolimit.cfg) | мутант (ожидаемый красный) | WithinLimits |
-| [HelperRun-earlyfree.cfg](HelperRun-earlyfree.cfg) | мутант (ожидаемый красный) | SlotFreedAfterEnd |
-| [HelperOutcome-busy.cfg](HelperOutcome-busy.cfg) | мутант (ожидаемый красный) | NoWakeWhileBusy |
-| [HelperOutcome-arithmetic.cfg](HelperOutcome-arithmetic.cfg) | мутант (ожидаемый красный) | WakeIdUnique |
-| [HelperOutcome-noshown.cfg](HelperOutcome-noshown.cfg) | мутант (ожидаемый красный) | DeliveredOnlyAfterShownAndOutbox |
-| [HelperOutcome-nostampcas.cfg](HelperOutcome-nostampcas.cfg) | мутант (ожидаемый красный) | WakesCountedOnce |
-| [HelperOutcome-dropundelivered.cfg](HelperOutcome-dropundelivered.cfg) | мутант (ожидаемый красный) | UndeliveredKept |
-| [HelperRun-spec-v43.cfg](HelperRun-spec-v43.cfg) | мутант (ожидаемый красный) | SlotFreedAfterEnd |
-| [HelperOutcome-spec-v43.cfg](HelperOutcome-spec-v43.cfg) | reachability (ожидаемый красный) | OneOutcomePerTurn |
-| [HelperOutcome-spec-v44.cfg](HelperOutcome-spec-v44.cfg) | reachability (ожидаемый красный) | OneOutcomePerTurn |
-| [HelperRun-unrecorded.cfg](HelperRun-unrecorded.cfg) | reachability (ожидаемый красный) | NoUnrecordedTail |
-| [HelperRun-bothwriters.cfg](HelperRun-bothwriters.cfg) | reachability (ожидаемый красный) | NoBothWriters |
-| [HelperRun-serveronly.cfg](HelperRun-serveronly.cfg) | reachability (ожидаемый красный) | NoServerOnly |
-| [HelperRun-v6-live-nofair.cfg](HelperRun-v6-live-nofair.cfg) | fairness mutant (ожидаемый temporal красный) | V6NoSilentEnd |
-| [HelperOutcome-v6-delivery-live-nofair.cfg](HelperOutcome-v6-delivery-live-nofair.cfg) | fairness mutant (ожидаемый temporal красный) | V6EventuallyDelivered |
-| [HelperOutcome-v6-alert-live-nofair.cfg](HelperOutcome-v6-alert-live-nofair.cfg) | fairness mutant (ожидаемый temporal красный) | V6AlertEventually |
-| [HelperOutcome-v6-pipeline-live-nofair.cfg](HelperOutcome-v6-pipeline-live-nofair.cfg) | fairness mutant (ожидаемый temporal красный) | V6PipelineEventually |
-
+Bounded PASS относится к описанной среде. Late/duplicate effect, lost-id tail и
+restart до тика — принятые риски с reachability witnesses. Я5 вынесено.
 
 ## GoalCheck
 
