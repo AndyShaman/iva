@@ -89,7 +89,7 @@ TerminalOutcome(h, fallback) ==
 
 TerminalStatus(h) == IF stop[h] = "closed" THEN "closed" ELSE "finished"
 
-Init ==
+BaseInit ==
   /\ added = FALSE
   /\ status = [h \in Helpers |-> "absent"]
   /\ runToken = [h \in Helpers |-> 0]
@@ -401,7 +401,7 @@ Sweep(h) ==
   /\ UNCHANGED <<added, runToken, runOwner, child, phase, stop, outcome, age,
                   serverV, ghostV, sessionV>>
 
-Next ==
+BaseNext ==
   \/ Add \/ Restart
   \/ \E h \in Helpers :
        \/ Claim(h) \/ ClaimAgain(h) \/ ChildStarted(h) \/ ChildFailedToStart(h)
@@ -409,6 +409,11 @@ Next ==
        \/ TurnEnds(h) \/ Stop(h) \/ PrepareFinish(h) \/ CrashProcess(h)
        \/ ClosePending(h) \/ CloseRunning(h) \/ CloseFinished(h) \/ Tick(h) \/ Sweep(h)
        \/ \E t \in Tokens : CommitFinish(h, t)
+
+VARIABLE v6
+CONSTANTS V6Case, V6Mutant
+Init == BaseInit /\ v6 = "legacy"
+Next == BaseNext /\ UNCHANGED v6
 
 Spec == Init /\ [][Next]_vars /\ \A h \in Helpers :
   (WF_vars(Tick(h)) /\ WF_vars(ServerStep(h)))
@@ -490,7 +495,7 @@ NoSilentEnd ==
 PressureFirst == CHOOSE h \in Helpers : TRUE
 PressureSecond == CHOOSE h \in Helpers \ {PressureFirst} : TRUE
 PressureThird == CHOOSE h \in Helpers \ {PressureFirst, PressureSecond} : TRUE
-PressureNext ==
+BasePressureNext ==
   \/ Add
   \/ /\ nextToken = 1 /\ Claim(PressureFirst)
   \/ /\ nextToken = 2
@@ -509,6 +514,8 @@ PressureNext ==
             /\ Claim(PressureThird))
   \/ /\ nextToken = 4
      /\ (ChildStarted(PressureThird) \/ CreateSession(PressureThird))
+
+PressureNext == BasePressureNext /\ UNCHANGED v6
 
 NoThreeRemoteTurns ==
   Cardinality({h \in Helpers : phase[h] \in {"sent", "canceling"}}) <= MaxRunning
@@ -538,4 +545,194 @@ View == <<added, serverV,
       finishTickets[h], recorded[h], serverWriter[h] = "pending", clientWriter[h] = "pending",
       sessionServer[h], remoteSteps[h]>> >>] >>
 
+\* v6.0: bounded extension of the lifecycle. Legacy Spec remains a regression
+\* graph; V6Spec uses the same module with an explicit physical/durable split.
+\* Old variables are initialized and frozen, not projected into the new graph.
+\* Each case selects an initial condition and relevant interference, not a new
+\* product mechanism. May is opaque: no interpretation of its words here.
+V6Actors == {"owner", "helper", "service", "group", "unknown"}
+V6Sources == {"owner", "tap", "wake", "unknown", "missing"}
+V6Mays == {"missing", "wrong-type", "oversize", "empty", "opaque"}
+V6Allowed(a, s) == a = "owner" /\ s \in {"owner", "tap"}
+V6ValidMay(m) == m \in {"empty", "opaque"}
+V6RVars == <<vars, v6>>
+V6Init ==
+  /\ BaseInit
+  /\ v6 = [row |-> IF V6Case = "auth" THEN "absent" ELSE "pending",
+       slot |-> FALSE, token |-> 0, physical |-> "none", pid |-> FALSE,
+       clientKnows |-> FALSE, durableId |-> FALSE, writerTried |-> FALSE,
+       remote |-> "none", question |-> FALSE, waiting |-> FALSE,
+       stop |-> "none", outcome |-> "none", finalized |-> 0,
+       stopCount |-> 0, lostId |-> FALSE, may |-> "opaque", taskMay |-> "none",
+       written |-> FALSE, summary |-> FALSE, read |-> FALSE,
+       now |-> 0, finishedAt |-> 0, sweptEarly |-> FALSE,
+       rejectedChanged |-> FALSE, invalidMay |-> FALSE,
+       ownerAlive |-> TRUE, ownerIdentitySame |-> TRUE,
+       killedUnknown |-> FALSE, killedStale |-> FALSE, pidReused |-> FALSE,
+       changedClosedOutcome |-> FALSE,
+       effect |-> "none", attempts |-> 0, accepted |-> 0,
+       lostResponse |-> FALSE, lateEffect |-> FALSE, tailEffect |-> FALSE]
+
+V6Add(a, s, m) ==
+  /\ v6.row = "absent"
+  /\ (V6Allowed(a, s) /\ V6ValidMay(m))
+      \/ (V6Mutant = "helper-start" /\ a = "helper")
+      \/ (V6Mutant = "wake-start" /\ s = "wake")
+      \/ (V6Mutant = "may" /\ ~V6ValidMay(m) /\ V6Allowed(a, s))
+  /\ v6' = [v6 EXCEPT !.row = "pending", !.may = m,
+       !.rejectedChanged = ~V6Allowed(a, s), !.invalidMay = ~V6ValidMay(m)]
+
+V6Claim ==
+  /\ v6.row = "pending" /\ ~v6.slot /\ v6.outcome = "none"
+  /\ v6' = [v6 EXCEPT !.slot = TRUE, !.token = 1]
+V6Spawn ==
+  /\ v6.slot /\ v6.physical = "none"
+  /\ v6' = [v6 EXCEPT !.physical = "live"]
+V6RecordPid ==
+  /\ v6.slot /\ v6.physical = "live" /\ ~v6.writerTried
+  /\ \E ok \in BOOLEAN :
+       v6' = [v6 EXCEPT !.writerTried = TRUE, !.pid = ok]
+V6Create ==
+  /\ v6.physical = "live" /\ v6.remote = "none" /\ v6.slot
+  /\ v6' = [v6 EXCEPT !.remote = "live", !.clientKnows = TRUE,
+       !.taskMay = IF V6Mutant = "may-copy" THEN "changed" ELSE v6.may]
+V6RecordSession ==
+  /\ v6.slot /\ v6.remote = "live" /\ ~v6.durableId
+  /\ v6' = [v6 EXCEPT !.durableId = TRUE]
+V6Close(a, s) ==
+  /\ v6.row \in {"pending", "finished"} /\ v6.stop = "none"
+  /\ V6Allowed(a, s) \/ (V6Mutant = "wake-close" /\ s = "wake")
+  /\ v6' = [v6 EXCEPT !.stop = "closed", !.stopCount = @ + 1,
+       !.rejectedChanged = ~V6Allowed(a, s),
+       !.row = IF v6.outcome # "none" THEN "closed" ELSE @,
+       !.outcome = IF v6.outcome # "none" /\ V6Mutant = "close-outcome" THEN "stopped" ELSE @,
+       !.changedClosedOutcome = v6.outcome # "none" /\ V6Mutant = "close-outcome"]
+V6Question ==
+  /\ v6.slot /\ v6.remote = "live" /\ ~v6.question
+  /\ v6' = [v6 EXCEPT !.question = TRUE, !.remote = "canceling"]
+V6Write ==
+  /\ v6.physical = "live" /\ v6.remote \in {"live", "canceling"}
+  /\ v6.stop = "none" /\ ~v6.question
+  /\ ~v6.written
+  /\ v6' = [v6 EXCEPT !.written = TRUE]
+V6Crash ==
+  /\ v6.physical = "live"
+  /\ v6' = [v6 EXCEPT !.physical = "dead"]
+V6CancelAccepted ==
+  /\ v6.slot /\ (v6.stop = "closed" \/ v6.question)
+  /\ v6.remote = "live" /\ (v6.clientKnows \/ v6.durableId)
+  /\ v6' = [v6 EXCEPT !.remote = "canceling",
+       !.slot = IF V6Mutant = "early-free" THEN FALSE ELSE @]
+\* Without durable pid the tick cannot pretend the physical child is dead.
+\* A live onSession client knows its id and must wait even when both T3 fail.
+V6KillKnownChild ==
+  /\ v6.slot /\ v6.stop = "closed" /\ (v6.physical = "live" \/ v6.pidReused)
+  /\ v6.pid \/ V6Mutant = "pid"
+  /\ (v6.ownerAlive /\ v6.ownerIdentitySame) \/ V6Mutant = "owner-kill"
+  /\ v6' = [v6 EXCEPT !.physical = "dead",
+       !.killedUnknown = ~v6.pid,
+       !.killedStale = ~(v6.ownerAlive /\ v6.ownerIdentitySame)]
+V6OwnerRestart ==
+  /\ v6.ownerAlive /\ v6.slot
+  /\ v6' = [v6 EXCEPT !.ownerAlive = FALSE, !.ownerIdentitySame = FALSE,
+       !.physical = "dead"]
+\* The persisted number may now refer to an unrelated process. It is never
+\* a target of SIGKILL; remote cancellation still works through durableId.
+V6PidReused ==
+  /\ ~v6.ownerAlive /\ v6.physical = "dead" /\ v6.pid /\ ~v6.pidReused
+  /\ v6' = [v6 EXCEPT !.pidReused = TRUE]
+V6ServerEnd ==
+  /\ v6.remote \in {"live", "canceling"}
+  /\ v6' = [v6 EXCEPT !.remote = "ended", !.waiting = ~v6.question]
+V6Terminal ==
+  CASE v6.stop = "closed" -> "stopped"
+    [] v6.question /\ V6Mutant # "question" -> "failed"
+    [] v6.remote = "ended" -> "done"
+    [] OTHER -> "interrupted"
+V6Finalize ==
+  /\ v6.slot /\ v6.outcome = "none"
+  /\ v6.remote = "ended"
+      \/ (v6.physical = "dead" /\ ~v6.durableId)
+  /\ v6' = [v6 EXCEPT !.slot = FALSE, !.outcome = V6Terminal,
+       !.row = IF v6.stop = "closed" THEN "closed" ELSE "finished",
+       !.finishedAt = v6.now, !.finalized = @ + 1,
+       !.lostId = v6.remote \in {"live", "canceling"},
+       !.summary = IF V6Mutant = "partial" THEN FALSE ELSE v6.written]
+V6Clock ==
+  /\ v6.now < 2
+  /\ v6' = [v6 EXCEPT !.now = @ + 1]
+V6Sweep ==
+  /\ v6.row = "closed" /\ ~v6.slot
+  /\ v6.now >= v6.finishedAt + 1 \/ V6Mutant = "sweep"
+  /\ v6' = [v6 EXCEPT !.row = "absent",
+       !.sweptEarly = v6.now < v6.finishedAt + 1]
+V6ReadClosed ==
+  /\ v6.row = "closed" /\ v6.outcome # "none"
+  /\ V6Mutant # "read"
+  /\ v6' = [v6 EXCEPT !.read = TRUE]
+\* Ordinary helper effects are permitted; wake effects belong in Outcome.
+V6Attempt ==
+  /\ v6.remote \in {"live", "canceling"} /\ v6.attempts < 2
+  /\ v6.effect \in {"none", "unknown"}
+  /\ v6' = [v6 EXCEPT !.effect = "inflight", !.attempts = @ + 1]
+V6EffectEnd ==
+  /\ v6.effect = "inflight"
+  /\ \E result \in {"accepted", "unknown", "partial"} :
+       v6' = [v6 EXCEPT !.effect = result,
+         !.accepted = IF result \in {"accepted", "unknown"} THEN @ + 1 ELSE @,
+         !.lostResponse = @ \/ result = "unknown",
+         !.lateEffect = @ \/ v6.stop = "closed",
+         !.tailEffect = @ \/ v6.lostId]
+
+V6Lifecycle ==
+  \/ V6Claim \/ V6Spawn \/ V6RecordPid \/ V6Create \/ V6RecordSession
+  \/ V6ServerEnd \/ V6Finalize \/ V6Crash
+  \/ /\ V6Case = "owner" /\ (V6OwnerRestart \/ V6PidReused)
+  \/ V6Close("owner", "owner") \/ V6CancelAccepted \/ V6KillKnownChild
+  \/ V6Write \/ V6Clock \/ V6Sweep \/ V6ReadClosed
+  \/ /\ V6Case = "question" /\ V6Question
+  \/ /\ V6Case = "effects" /\ (V6Attempt \/ V6EffectEnd)
+V6Next ==
+  /\ IF V6Case = "auth" THEN
+       \E a \in V6Actors, s \in V6Sources :
+         (\E m \in V6Mays : V6Add(a, s, m)) \/ V6Close(a, s)
+     ELSE V6Lifecycle
+  /\ UNCHANGED vars
+V6Spec == V6Init /\ [][V6Next]_V6RVars
+             /\ WF_V6RVars(V6Spawn /\ UNCHANGED vars)
+             /\ WF_V6RVars(V6Create /\ UNCHANGED vars)
+             /\ WF_V6RVars(V6ServerEnd /\ UNCHANGED vars)
+             /\ WF_V6RVars(V6Finalize /\ UNCHANGED vars)
+V6TypeOK ==
+  /\ v6.row \in {"absent", "pending", "finished", "closed"}
+  /\ v6.physical \in {"none", "live", "dead"}
+  /\ v6.remote \in {"none", "live", "canceling", "ended"}
+  /\ v6.outcome \in {"none", "done", "failed", "stopped", "interrupted"}
+  /\ v6.now \in 0..2 /\ v6.finishedAt \in 0..2
+  /\ v6.attempts \in 0..2 /\ v6.accepted <= v6.attempts
+V6Authorized == ~v6.rejectedChanged
+V6PidKnown == ~v6.killedUnknown
+V6OwnerKillSafe == ~v6.killedStale
+V6MayRequired == ~v6.invalidMay
+V6MayUnchanged == v6.taskMay = "none" \/ v6.taskMay = v6.may
+V6OutcomeOnce == v6.finalized <= 1
+V6StopOnce == v6.stopCount <= 1
+V6ClosedFinal == v6.row = "closed" => ~v6.slot /\ v6.outcome # "none"
+V6SlotFreedAfterEnd == ~v6.slot =>
+  v6.remote \notin {"live", "canceling"} \/ (v6.lostId /\ v6.physical = "dead" /\ ~v6.durableId)
+V6QuestionFailed == v6.question /\ v6.outcome # "none" /\ v6.stop = "none" => v6.outcome = "failed"
+V6PartialKept == v6.written /\ v6.outcome # "none" => v6.summary
+V6KeepClosed == ~v6.sweptEarly
+V6CloseKeepsOutcome == ~v6.changedClosedOutcome
+V6ClosedReadable == v6.row = "closed" /\ v6.outcome # "none" =>
+  ENABLED (V6ReadClosed /\ UNCHANGED vars)
+V6NoSilentEnd == v6.slot ~> v6.outcome # "none"
+V6TailEnds == v6.lostId ~> v6.remote = "ended"
+\* Reachability witnesses below MUST fail: these are accepted risks, not safety.
+V6NoLateEffect == ~v6.lateEffect
+V6NoDuplicateEffect == v6.accepted <= 1
+V6NoTailEffect == ~v6.tailEffect
+V6NoNormalWaiting == ~v6.waiting
+V6NoUnrecordedCreate == v6.remote # "live" \/ v6.pid
+V6NoCloseInFlight == ~(v6.stop = "closed" /\ v6.effect = "inflight")
 ====

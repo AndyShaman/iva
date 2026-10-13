@@ -49,7 +49,7 @@
 \*   KeepUndelivered   T12 хранит finished без delivered до явного Close.
 \*   RecordClosed      TRUE возвращает запись shown у closed из v4.3.
 
-EXTENDS Naturals, FiniteSets
+EXTENDS Integers, FiniteSets, Sequences
 
 CONSTANTS
   N, MaxWake, MaxTurns, MaxFailures, MaxOwnerMessages, MaxNews, EscalateWakes,
@@ -97,7 +97,7 @@ ReadyRows == {r \in Rows : rowState[r] = "finished" /\ deliveredTurn[r] = 0}
 OldestReady == CHOOSE r \in ReadyRows : \A q \in ReadyRows : r <= q
 ShownRows == {r \in Rows : rowState[r] = "finished" /\ deliveredTurn[r] = 0 /\ shown[r] = turnId}
 
-Init ==
+BaseInit ==
   /\ rowState \in [Rows -> {"running", "finished"}]
   /\ deliveredTurn = [r \in Rows |-> 0]
   /\ shown = [r \in Rows |-> 0]
@@ -478,13 +478,18 @@ BridgeStep ==
      /\ LET r == OldestReady IN
           IF wakeId[r] = 0 \/ wakeSent[r] THEN AllocWake(r) ELSE SendWake(r)
 
-Next ==
+BaseNext ==
   \/ BridgeStep \/ LoseBridgeReply \/ BridgeCrash \/ ResponseWithoutRead
   \/ OutboxFailure \/ PartialSend \/ T15WriteFailure \/ SecondOutbox
   \/ OwnerMessage \/ CancelTurn \/ FailTurn \/ ServerCrash \/ NewConversation
   \/ \E r \in Rows :
        HelperFinished(r) \/ ReadOutcome(r) \/ ReadSecondOutcome(r)
        \/ Close(r) \/ Sweep(r) \/ SendWake(r) \/ Escalate(r) \/ ReplayReceipt(r)
+
+VARIABLE v6
+CONSTANTS V6Case, V6Mutant
+Init == BaseInit /\ v6 = "legacy"
+Next == BaseNext /\ UNCHANGED v6
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(BridgeStep)
 
@@ -558,13 +563,13 @@ EventuallyDelivered ==
 
 \* Точные replay: ровно шесть состояний; в конце stutter разрешён TLC -deadlock.
 ReplayInit == Init /\ rowState = [r \in Rows |-> "finished"] /\ policy = "queue"
-OldCounterNext ==
+BaseOldCounterNext ==
   \/ /\ chat = "free" /\ nextTurn = 1 /\ OwnerMessage
   \/ /\ chat = "owner" /\ envelopes = {} /\ rowState[2] = "finished" /\ Close(2)
   \/ /\ chat = "owner" /\ envelopes = {} /\ rowState[2] = "closed" /\ ReadOutcome(2)
   \/ /\ envelopes = {2} /\ rowState[2] = "closed" /\ Sweep(2)
   \/ /\ envelopes = {2} /\ rowState[2] = "deleted" /\ shown[1] = 0 /\ ReadOutcome(1)
-Fix3Next ==
+BaseFix3Next ==
   \/ /\ chat = "free" /\ nextTurn = 1 /\ OwnerMessage
   \/ /\ chat = "owner" /\ envelopes = {} /\ rowState[2] = "finished" /\ ReadOutcome(2)
   \/ /\ envelopes = {2} /\ rowState[2] = "finished" /\ Close(2)
@@ -573,7 +578,7 @@ Fix3Next ==
 
 
 \* Достижимый multipart replay: два Outbox и два T15, T12 между ними.
-MultipartNext ==
+BaseMultipartNext ==
   \/ /\ chat = "free" /\ nextTurn = 1 /\ OwnerMessage
   \/ /\ chat = "owner" /\ turnPhase = "active" /\ envelopes = {} /\ ReadOutcome(1)
   \/ /\ turnPhase = "active" /\ envelopes = {1} /\ OutboxFull
@@ -581,6 +586,12 @@ MultipartNext ==
   \/ /\ turnPhase = "between" /\ rowState[1] = "finished" /\ Sweep(1)
   \/ /\ turnPhase = "between" /\ rowState[1] = "deleted" /\ SecondOutbox
   \/ /\ turnPhase = "between" /\ outboxParts[turnId] = 2 /\ EndTurn
+
+OldCounterNext == BaseOldCounterNext /\ UNCHANGED v6
+
+Fix3Next == BaseFix3Next /\ UNCHANGED v6
+
+MultipartNext == BaseMultipartNext /\ UNCHANGED v6
 
 \* VIEW убирает только независимые диагностические измерения. Их значения не
 \* влияют на BridgeStep, ReadyRows, safety и обещание доставки; Escalate и отказ
@@ -609,4 +620,325 @@ LiveView == <<rowState, deliveredTurn, shown, wakeId, wakeSent, wakes, stamped, 
               IF turnId = 0 THEN <<>>
               ELSE <<shownByTurn[turnId], outboxParts[turnId], markedParts[turnId]>>>>
 
+\* v6.0 delivery/source extension. The old Spec is retained only as a
+\* regression graph. V6Spec preserves complete evidence and uses no VIEW.
+\* Clock ticks are abstract KEEP units; finish and delivery clocks are separate.
+\* Sources are trusted metadata, not words in a message. "legacy" is absence.
+V6OVars == <<vars, v6>>
+\* First component is the chat partition; session identity includes that
+\* partition. The persisted turn mark itself remains (sessionId, turnId, at).
+V6Keys == (1..2) \X (0..1) \X (0..2)
+V6Inputs == {"owner", "tap", "wake", "legacy"}
+V6SameKey(a, b) ==
+  IF a = <<>> \/ b = <<>> THEN FALSE
+  ELSE IF V6Mutant = "session" THEN a[3] = b[3]
+  ELSE IF V6Mutant = "chat" THEN a[2] = b[2] /\ a[3] = b[3]
+  ELSE a = b
+V6Homogeneous(xs) == Cardinality({xs[i] : i \in 1..Len(xs)}) <= 1
+V6Compatible(a, b) == a = b \/ a = "legacy" \/ b = "legacy"
+V6LegacyMix == \E i \in 1..Len(v6.current) : v6.current[i] = "legacy"
+V6OInit ==
+  /\ BaseInit
+  /\ rowState = [r \in Rows |-> "running"] /\ policy = "queue"
+  /\ \E chats \in {[r \in 1..2 |-> 1], [r \in 1..2 |-> r]} :
+     /\ V6Case # "delivery-live" \/ chats = [r \in 1..2 |-> 1]
+     /\ v6 = [state |-> [r \in 1..2 |-> "finished"], rowChat |-> chats,
+       shown |-> [r \in 1..2 |-> [key |-> <<>>, at |-> 0]],
+       delivered |-> [r \in 1..2 |-> [key |-> <<>>, at |-> 0]],
+       finishAt |-> [r \in 1..2 |-> 0], partial |-> [r \in 1..2 |-> TRUE],
+       key |-> <<1, 0, 0>>, newCount |-> 0, envelopes |-> {},
+       shownHistory |-> {}, outboxHistory |-> {}, deliveryHistory |-> {},
+       now |-> 0, sweptEarly |-> FALSE, manualRead |-> {},
+       alert |-> "idle", escalated |-> FALSE, confirms |-> 0,
+       alertCrashes |-> 0, alertFailures |-> 0, wakeCount |-> 1,
+       wakeId |-> 1, stamped |-> {}, wakeAttempts |-> 0,
+       pendingBridge |-> FALSE, pendingKernel |-> FALSE,
+       busy |-> FALSE, reset |-> FALSE, compacting |-> FALSE,
+       busyWake |-> FALSE, forbidden |-> FALSE, effects |-> 0,
+       queue |-> <<>>, bridge |-> <<>>, kernel |-> <<>>, current |-> <<>>,
+       admitted |-> <<>>, completed |-> <<>>, source |-> "none",
+       policy |-> "queue", race |-> "none", restarts |-> 0,
+       sourceLost |-> FALSE, legacyChanged |-> FALSE, lostMark |-> FALSE,
+       manualWrote |-> FALSE, deliveredReadWrote |-> FALSE,
+       lastAt |-> [r \in 1..2 |-> 0], rowWakes |-> [r \in 1..2 |-> 0],
+       rowAttempts |-> [r \in 1..2 |-> 0], rowSent |-> [r \in 1..2 |-> FALSE],
+       attemptTimeline |-> {}, wakeRow |-> 0, wrongOrder |-> FALSE,
+       ownerLeak |-> FALSE, pass |-> 0, allocatedPass |-> -1,
+       failures |-> 0, failedKeys |-> {}]
+
+V6Read(r) ==
+  /\ v6.state[r] \in {"finished", "closed"}
+  /\ v6.rowChat[r] = v6.key[1]
+  /\ v6.key \notin v6.outboxHistory
+  /\ v6.state[r] = "closed"
+      \/ v6.delivered[r].key # <<>>
+      \/ V6Mutant = "second-finished"
+      \/ ~\E q \in (1..2) \ {r} : v6.state[q] = "finished"
+            /\ v6.rowChat[q] = v6.key[1] /\ v6.delivered[q].key = <<>>
+            /\ V6SameKey(v6.shown[q].key, v6.key)
+  /\ v6' = [v6 EXCEPT
+       !.shown[r] = IF (v6.state[r] = "finished" /\ v6.delivered[r].key = <<>>)
+                      \/ V6Mutant \in {"closed-mark", "delivered-mark"}
+                   THEN [key |-> v6.key, at |-> v6.now] ELSE @,
+       !.manualWrote = @ \/ (v6.state[r] = "closed" /\ V6Mutant = "closed-mark"),
+       !.deliveredReadWrote = @ \/ (v6.delivered[r].key # <<>> /\ V6Mutant = "delivered-mark"),
+       !.envelopes = @ \cup {r},
+       !.manualRead = IF v6.state[r] = "closed" THEN @ \cup {r} ELSE @,
+       !.shownHistory = IF v6.state[r] = "finished" /\ v6.delivered[r].key = <<>>
+                        THEN @ \cup {<<v6.key, r>>} ELSE @]
+V6Outbox ==
+  /\ v6.envelopes # {}
+  /\ v6' = [v6 EXCEPT !.outboxHistory = @ \cup {v6.key}]
+V6Mark ==
+  /\ v6.key \in v6.outboxHistory
+  /\ v6.key \notin v6.failedKeys
+  /\ LET rs == {r \in 1..2 : v6.state[r] = "finished" /\ v6.delivered[r].key = <<>>
+                              /\ (v6.rowChat[r] = v6.key[1] \/ V6Mutant = "chat")
+                              /\ V6SameKey(v6.shown[r].key, v6.key)} IN
+       /\ rs # {}
+       /\ v6' = [v6 EXCEPT
+            !.delivered = [r \in 1..2 |-> IF r \in rs THEN [key |-> v6.key, at |-> v6.now] ELSE v6.delivered[r]],
+            !.deliveryHistory = @ \cup {<<v6.key, r>> : r \in rs}]
+V6New ==
+  /\ v6.newCount = 0
+  /\ \E k \in {<<1, 1, 0>>, <<2, 0, 0>>} :
+       /\ V6Case # "delivery-live" \/ k[1] = 1
+       /\ v6' = [v6 EXCEPT !.key = k, !.newCount = 1, !.envelopes = {}]
+\* /new reuses local turn_0; different chats also reuse the same local id.
+V6CloseRow(r) ==
+  /\ v6.state[r] = "finished" /\ v6.delivered[r].key = <<>>
+  /\ v6.rowChat[r] = v6.key[1]
+  /\ v6' = [v6 EXCEPT !.state[r] = "closed"]
+V6Time ==
+  /\ v6.now < (IF V6Case = "wakes" THEN 4 ELSE 2)
+  /\ v6' = [v6 EXCEPT !.now = @ + 1]
+V6OSweep(r) ==
+  /\ v6.state[r] # "deleted"
+  /\ v6.state[r] = "closed" \/ v6.delivered[r].key # <<>>
+  /\ LET at == IF v6.state[r] = "closed" THEN v6.finishAt[r] ELSE v6.delivered[r].at
+         checkedAt == IF V6Mutant = "delivered-clock" THEN v6.finishAt[r] ELSE at IN
+       /\ v6.now >= checkedAt + 1 \/ V6Mutant = "sweep"
+       /\ v6' = [v6 EXCEPT !.state[r] = "deleted", !.sweptEarly = v6.now < at + 1]
+
+\* T17 has no separate queue. Attempt/confirmation are observations of the
+\* existing Alert seam. A crash loses only volatile phase, not an accepted Alert.
+V6AlertAttempt ==
+  /\ ~v6.escalated /\ v6.alert = "idle" /\ v6.wakeCount >= 1
+  /\ v6' = [v6 EXCEPT !.alert = "attempt",
+       !.escalated = IF V6Mutant = "alert-order" THEN TRUE ELSE @]
+V6AlertConfirm ==
+  /\ v6.alert = "attempt" /\ v6.confirms < 2
+  /\ v6' = [v6 EXCEPT !.alert = "confirmed", !.confirms = @ + 1]
+V6AlertMark ==
+  /\ v6.alert = "confirmed" /\ ~v6.escalated
+  /\ v6' = [v6 EXCEPT !.escalated = TRUE]
+V6AlertFailure ==
+  /\ v6.alert = "attempt" /\ v6.alertFailures < 1
+  /\ v6' = [v6 EXCEPT !.alert = "idle", !.alertFailures = @ + 1]
+V6AlertCrash ==
+  /\ v6.alert = "confirmed" /\ ~v6.escalated /\ v6.alertCrashes < 1
+  /\ v6' = [v6 EXCEPT !.alert = "idle", !.alertCrashes = @ + 1]
+V6WakeAgain ==
+  /\ v6.wakeId < 2
+  /\ v6' = [v6 EXCEPT !.wakeId = @ + 1]
+V6Stamp ==
+  /\ (v6.wakeId \notin v6.stamped \/ V6Mutant = "stamp")
+  /\ v6.wakeAttempts < 2
+  /\ v6' = [v6 EXCEPT !.stamped = @ \cup {v6.wakeId},
+       !.wakeCount = @ + 1, !.wakeAttempts = @ + 1]
+
+\* Busy/reset/compaction and both owner input accumulators precede admission.
+V6PrepareWake ==
+  /\ v6.race = "none"
+  /\ \E b, k, active, resetting, compact \in BOOLEAN :
+       v6' = [v6 EXCEPT !.pendingBridge = b, !.pendingKernel = k,
+         !.busy = active, !.reset = resetting, !.compacting = compact,
+         !.race = "checked"]
+V6WakeAllowed == ~(v6.pendingBridge \/ v6.pendingKernel \/ v6.busy \/ v6.reset \/ v6.compacting)
+V6WakeStart ==
+  /\ v6.race = "checked" /\ (V6WakeAllowed \/ V6Mutant = "wake-guard")
+  /\ v6' = [v6 EXCEPT !.race = "started", !.source = "wake",
+       !.busyWake = ~V6WakeAllowed]
+V6WakeOperation(op) ==
+  /\ v6.source = "wake"
+  /\ op \in {"read", "outbox"} \/ (V6Mutant = "wake-action" /\ op \in {"start", "close", "effect"})
+  /\ v6' = [v6 EXCEPT !.forbidden = op \in {"start", "close", "effect"},
+       !.effects = IF op = "effect" THEN @ + 1 ELSE @]
+
+\* Full two-delivery pipeline; next different input remains queued. Both
+\* arrival orders, queue/steer, active step and idle-check race are explored.
+V6Admission ==
+  /\ v6.admitted = <<>> /\ v6.race = "none"
+  /\ \E xs \in {<<"wake", "owner">>, <<"owner", "wake">>,
+                 <<"owner", "owner">>, <<"tap", "wake">>, <<"legacy", "legacy">>,
+                 <<"legacy", "wake">>, <<"wake", "legacy">>},
+          p \in {"queue", "steer"}, timing \in {"idle", "active", "idle-race"} :
+       v6' = [v6 EXCEPT !.queue = xs, !.admitted = xs, !.policy = p,
+         !.busy = timing = "active", !.race = timing,
+         !.pendingBridge = timing = "idle-race"]
+V6BridgeCollect ==
+  /\ v6.bridge = <<>> /\ v6.queue # <<>>
+  /\ LET count == IF Len(v6.queue) = 2 /\
+           (v6.queue[1] = v6.queue[2] \/ V6Mutant = "bridge-mixed") THEN 2 ELSE 1 IN
+       v6' = [v6 EXCEPT !.bridge = SubSeq(v6.queue, 1, count),
+         !.queue = SubSeq(v6.queue, count + 1, Len(v6.queue))]
+V6KernelAccept ==
+  /\ v6.bridge # <<>>
+  /\ v6' = [v6 EXCEPT !.kernel = v6.kernel \o v6.bridge, !.bridge = <<>>]
+V6KernelStart ==
+  /\ v6.kernel # <<>> /\ v6.current = <<>>
+  /\ ~v6.busy \/ v6.policy = "steer"
+  /\ LET count == IF Len(v6.kernel) = 2 /\ V6Mutant = "legacy"
+                        /\ (v6.kernel[1] = "legacy" \/ v6.kernel[2] = "legacy") THEN 1
+           ELSE IF Len(v6.kernel) = 2 /\
+           (V6Compatible(v6.kernel[1], v6.kernel[2]) \/ V6Mutant = "kernel-mixed") THEN 2 ELSE 1 IN
+       v6' = [v6 EXCEPT !.current = SubSeq(v6.kernel, 1, count),
+         !.source = v6.kernel[count], !.kernel = SubSeq(v6.kernel, count + 1, Len(v6.kernel)),
+         !.legacyChanged = V6Mutant = "legacy" /\ Len(v6.kernel) = 2
+                                 /\ (v6.kernel[1] = "legacy" \/ v6.kernel[2] = "legacy"),
+         !.busy = FALSE, !.pendingBridge = FALSE]
+V6ActiveEnd ==
+  /\ v6.busy
+  /\ v6' = [v6 EXCEPT !.busy = FALSE]
+V6Execute ==
+  /\ v6.current # <<>>
+  /\ v6' = [v6 EXCEPT !.completed = @ \o v6.current, !.current = <<>>, !.source = "none"]
+V6QueueRestart ==
+  /\ v6.restarts = 0 /\ v6.admitted # <<>>
+  /\ v6' = [v6 EXCEPT !.restarts = 1,
+       !.sourceLost = V6Mutant = "source-loss",
+       !.queue = IF V6Mutant = "source-loss" THEN <<>> ELSE @]
+
+\* An actual ordering witness: Bridge observes idle; owner arrives; the
+\* already prepared wake reaches admission. The two requests stay distinct.
+V6IdleCheck ==
+  /\ v6.race = "none" /\ v6.admitted = <<>>
+  /\ v6' = [v6 EXCEPT !.race = "checked"]
+V6OwnerBetween ==
+  /\ v6.race = "checked"
+  /\ v6' = [v6 EXCEPT !.queue = <<"owner">>, !.admitted = <<"owner">>,
+       !.pendingBridge = TRUE, !.race = "owner-arrived"]
+V6StaleWakeAdmission ==
+  /\ v6.race = "owner-arrived"
+  /\ \E p \in {"queue", "steer"} :
+       v6' = [v6 EXCEPT !.queue = @ \o <<"wake">>, !.admitted = @ \o <<"wake">>,
+         !.policy = p, !.race = "admitted-after-owner"]
+
+\* V1/C3: every attempt (including terminal-drop) stamps lastWakeAt at T13.
+\* The nonzero minimum applies even when wakes is still zero. Accepted count
+\* controls the growing pause; each row has its own due time.
+V6Pause(r) == 2 ^ v6.rowWakes[r]
+V6Due(r) == IF v6.rowAttempts[r] = 0 THEN 0 ELSE v6.lastAt[r] + V6Pause(r)
+V6DueRows == {r \in 1..2 : v6.rowAttempts[r] < 2 /\ v6.now >= V6Due(r)}
+V6WakeAllocate ==
+  /\ v6.wakeRow = 0 /\ v6.pass < 3 /\ v6.allocatedPass # v6.pass
+  /\ \E r \in 1..2 :
+       /\ v6.rowAttempts[r] < 2
+       /\ (r \in V6DueRows) \/ V6Mutant = "wake-pause"
+       /\ (\A q \in V6DueRows : V6Due(r) <= V6Due(q)) \/ V6Mutant = "wake-order"
+       /\ v6' = [v6 EXCEPT !.wakeRow = r, !.allocatedPass = v6.pass,
+            !.attemptTimeline = @ \cup {<<r, v6.now, V6Due(r)>>},
+            !.lastAt[r] = v6.now, !.rowAttempts[r] = @ + 1, !.rowSent[r] = FALSE,
+            !.wrongOrder = ~ (\A q \in V6DueRows : V6Due(r) <= V6Due(q))]
+V6WakeResult ==
+  /\ v6.wakeRow # 0
+  /\ \E result \in {"accepted", "busy", "reject", "terminal-drop"} :
+       v6' = [v6 EXCEPT !.rowSent[v6.wakeRow] = result = "accepted",
+         !.rowWakes[v6.wakeRow] = IF result = "accepted" THEN @ + 1 ELSE @,
+         !.ownerLeak = @ \/ (result = "terminal-drop" /\ V6Mutant = "terminal-message"),
+         !.wakeRow = 0]
+V6Pass ==
+  /\ v6.wakeRow = 0 /\ v6.pass < 3
+  /\ v6' = [v6 EXCEPT !.pass = @ + 1]
+
+V6DeliveryNext ==
+  \/ \E r \in 1..2 : V6Read(r) \/ V6CloseRow(r) \/ V6OSweep(r)
+  \/ V6Outbox \/ V6Mark \/ V6New \/ V6Time
+V6Ready == {r \in 1..2 : v6.state[r] = "finished" /\ v6.delivered[r].key = <<>>
+                          /\ v6.rowChat[r] = v6.key[1]}
+V6NextTurn ==
+  /\ v6.key \in v6.outboxHistory /\ v6.key[3] < 2
+  /\ v6.key \in v6.failedKeys \/ ~ENABLED V6Mark
+  /\ v6' = [v6 EXCEPT !.key = <<v6.key[1], v6.key[2], v6.key[3] + 1>>, !.envelopes = {}]
+V6DeliveryFailure ==
+  /\ v6.key \in v6.outboxHistory /\ v6.failures < 1
+  /\ ENABLED V6Mark
+  /\ v6' = [v6 EXCEPT !.failedKeys = @ \cup {v6.key}, !.failures = @ + 1,
+       !.lostMark = TRUE, !.envelopes = {}]
+V6DeliveryProgress ==
+  \/ /\ v6.envelopes = {} /\ v6.key \notin v6.outboxHistory /\ V6Ready # {}
+     /\ V6Read(CHOOSE r \in V6Ready : \A q \in V6Ready : r <= q)
+  \/ /\ v6.envelopes # {} /\ v6.key \notin v6.outboxHistory /\ V6Outbox
+  \/ V6Mark
+  \/ /\ V6Ready # {} /\ V6NextTurn
+V6AlertNext ==
+  \/ V6AlertAttempt \/ V6AlertConfirm \/ V6AlertMark
+  \/ V6AlertFailure \/ V6AlertCrash \/ V6WakeAgain \/ V6Stamp
+V6PipelineNext ==
+  \/ /\ V6Case = "pipeline" /\ V6Admission
+  \/ /\ V6Case = "pipeline-race" /\ (V6IdleCheck \/ V6OwnerBetween \/ V6StaleWakeAdmission)
+  \/ V6BridgeCollect \/ V6KernelAccept \/ V6KernelStart
+  \/ V6ActiveEnd \/ V6Execute \/ V6QueueRestart
+V6ONext ==
+  /\ CASE V6Case = "delivery" -> V6DeliveryNext
+       [] V6Case = "delivery-live" -> V6DeliveryProgress \/ V6New
+          \/ V6DeliveryFailure \/ (\E r \in 1..2 : V6CloseRow(r))
+       [] V6Case = "alert" -> V6AlertNext
+       [] V6Case \in {"pipeline", "pipeline-race"} -> V6PipelineNext
+       [] V6Case = "wakes" -> V6WakeAllocate \/ V6WakeResult \/ V6Pass \/ V6Time
+       [] V6Case = "wake" -> V6PrepareWake \/ V6WakeStart
+            \/ (\E op \in {"read", "outbox", "start", "close", "effect"} : V6WakeOperation(op))
+       [] OTHER -> FALSE
+  /\ UNCHANGED vars
+V6OSpec == V6OInit /\ [][V6ONext]_V6OVars
+V6DeliverySpec == V6OSpec /\ WF_V6OVars(V6DeliveryProgress /\ UNCHANGED vars)
+V6EventuallyDelivered == \A r \in 1..2 :
+  v6.state[r] = "finished" ~> (v6.delivered[r].key # <<>> \/ v6.state[r] \in {"closed", "deleted"})
+V6AlertSpec == V6OSpec
+  /\ WF_V6OVars(V6AlertAttempt /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6AlertConfirm /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6AlertMark /\ UNCHANGED vars)
+V6PipelineSpec == V6OSpec
+  /\ WF_V6OVars(V6BridgeCollect /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6KernelAccept /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6KernelStart /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6ActiveEnd /\ UNCHANGED vars)
+  /\ WF_V6OVars(V6Execute /\ UNCHANGED vars)
+
+V6OTypeOK ==
+  /\ v6.key \in V6Keys /\ v6.now \in 0..4
+  /\ v6.state \in [1..2 -> {"finished", "closed", "deleted"}]
+  /\ \A r \in 1..2 : v6.shown[r].key \in V6Keys \cup {<<>>}
+                       /\ v6.delivered[r].key \in V6Keys \cup {<<>>}
+  /\ v6.source \in V6Inputs \cup {"none"}
+V6DeliveryProven == \A item \in v6.deliveryHistory :
+  item \in v6.shownHistory /\ item[1] \in v6.outboxHistory
+V6OneDeliveredPerTurn == \A k \in V6Keys :
+  Cardinality({r \in 1..2 : <<k, r>> \in v6.deliveryHistory}) <= 1
+V6ClosedHasNoDelivery == \A r \in 1..2 :
+  v6.state[r] = "closed" => v6.delivered[r].key = <<>>
+V6ManualNoShown == ~v6.manualWrote
+V6DeliveredReadNoWrite == ~v6.deliveredReadWrote
+V6WakePause == \A t \in v6.attemptTimeline : t[2] >= t[3]
+V6WakeEarliest == ~v6.wrongOrder
+V6WakeNoOwnerMessage == ~v6.ownerLeak
+V6Retention == ~v6.sweptEarly
+V6AlertConfirmed == v6.escalated => v6.confirms > 0
+V6AlertEventually == <>v6.escalated
+V6WakeCounting == v6.wakeCount = 1 + Cardinality(v6.stamped)
+V6NoWakeWhileBusy == ~v6.busyWake
+V6WakeReadOnly == ~v6.forbidden /\ v6.effects = 0
+V6BridgeHomogeneous == (\E i \in 1..Len(v6.bridge) : v6.bridge[i] = "legacy") \/ V6Homogeneous(v6.bridge)
+V6KernelHomogeneous == V6LegacyMix \/ V6Homogeneous(v6.current)
+V6CurrentSource == V6LegacyMix \/ v6.current = <<>> \/ (\A i \in 1..Len(v6.current) : v6.current[i] = v6.source)
+V6SourceKept == v6.completed \o v6.current \o v6.kernel \o v6.bridge \o v6.queue = v6.admitted
+V6LegacySame == ~v6.legacyChanged
+V6NoDeliveryLost == Len(v6.queue) + Len(v6.bridge) + Len(v6.kernel)
+                          + Len(v6.current) + Len(v6.completed) = Len(v6.admitted)
+V6PipelineEventually == v6.admitted # <<>> ~> v6.completed = v6.admitted
+\* Must fail: confirmation/crash before mark permits a duplicate Alert.
+V6NoDuplicateAlert == v6.confirms <= 1
+\* Historical read-count guarantee is intentionally absent. Close then read
+\* another outcome is allowed; only finished deliveries are restricted.
+V6NoTwoReads == Cardinality(v6.envelopes) <= 1
 ====
