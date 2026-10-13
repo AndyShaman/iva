@@ -662,6 +662,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // Resolve deferred input, task/control coordination, then HITL input; each stage
     // may park when its resume payload has not arrived.
 
+    const continuingDeferredInput = input === undefined && hasDeferredStepInput(session);
     const stepInput = consumeDeferredStepInput({
       input,
       preferCurrentInput:
@@ -869,8 +870,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       session,
       stepInput: coordinated.stepInput,
     });
-    const resetsModelCallCount = (hasStepInput(effectiveStepInput) || (effectiveStepInput?.context?.length ?? 0) > 0) &&
-      !effectiveStepInput?.inputResponses?.some(response => pendingRequestIds.has(response.requestId)) &&
+    const resetsModelCallCount = !continuingDeferredInput && (hasStepInput(effectiveStepInput) || (effectiveStepInput?.context?.length ?? 0) > 0) &&
+      ![...(effectiveStepInput?.inputResponses ?? []),
+        ...(effectiveStepInput?.attributedInputResponses ?? []).map(({ response }) => response)]
+        .some(response => pendingRequestIds.has(response.requestId)) &&
       (pending.outcome !== "unresolved" || (config.mode === "conversation" && pending.deferredMessage === true));
     if (resetsModelCallCount) pending = { ...pending, session: { ...pending.session,
       state: { ...pending.session.state, "eve.harness.modelCalls": 0 } } };
