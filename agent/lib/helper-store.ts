@@ -13,17 +13,10 @@ export const HELPER_DEADLINE_MS = 2700000,
   HELPER_GRACE_MS = 120000;
 export const HELPER_MAX_STEPS = 80,
   HELPER_CEILING_TOKENS = 1000000;
-export const HELPER_MIN_FREE_MB = 600,
-  HELPER_SECOND_FREE_MB = 3000;
-export const HELPER_START_WAIT_MS = 600000,
-  HELPER_CHECK_MS = 15000;
+export const HELPER_MAX_RUNNING = 1;
+export const HELPER_CHECK_MS = 15000;
 export const HELPER_SUMMARY_MAX = 1500,
   HELPER_KEEP_MS = 86400000;
-export const HELPER_WAKE_PAUSE_MS = 180000,
-  HELPER_WAKE_PAUSE_MAX_MS = 3600000;
-export const HELPER_ESCALATE_WAKES = 6,
-  HELPER_POLL_WAIT_S = 5;
-export const HELPER_UPDATE_BASE = 2 ** 52;
 const integer = z.number().int().nonnegative();
 const text = z.string().min(1);
 const chatSchema = z.strictObject({ id: text, threadId: text.nullable() });
@@ -67,12 +60,7 @@ const rowSchema = z
     steps: integer,
     tokens: integer,
     finishedAt: integer.nullable(),
-    wake: z.strictObject({ updateId: integer, sent: z.boolean() }).nullable(),
-    wakes: integer,
-    lastWakeAt: integer.nullable(),
-    shown: markSchema.nullable(),
     delivered: markSchema.nullable(),
-    escalated: z.boolean(),
   })
   .refine(
     (r) =>
@@ -80,29 +68,18 @@ const rowSchema = z
         ? r.outcome === null && r.finishedAt === null
         : r.outcome !== null && r.finishedAt !== null && r.run === null) &&
       (r.stop === null || r.run !== null || r.outcome !== null) &&
-      (!r.delivered ||
-        (r.status === "finished" &&
-          r.shown &&
-          sameKey(r.shown, r.delivered))) &&
-      (!r.wake ||
-        (r.wake.updateId > HELPER_UPDATE_BASE && r.lastWakeAt !== null)),
+      (!r.delivered || r.status === "finished"),
     "inconsistent helper row",
   );
 const stateSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    wakeSeq: integer,
     rows: z.array(rowSchema).max(HELPER_MAX_ROWS),
   })
   .refine(
     (s) =>
       new Set(s.rows.map((r) => r.id)).size === s.rows.length &&
-      s.rows.filter((r) => r.status === "pending").length <= HELPER_MAX_OPEN &&
-      new Set(s.rows.flatMap((r) => (r.wake ? [r.wake.updateId] : []))).size ===
-        s.rows.filter((r) => r.wake).length &&
-      s.rows.every(
-        (r) => !r.wake || r.wake.updateId <= HELPER_UPDATE_BASE + s.wakeSeq,
-      ),
+      s.rows.filter((r) => r.status === "pending").length <= HELPER_MAX_OPEN,
     "duplicate id or pending capacity",
   );
 export type HelperRow = z.infer<typeof rowSchema>;
@@ -114,7 +91,6 @@ export type HelperTurnMark = z.infer<typeof markSchema>;
 export type HelperStatus = HelperRow["status"];
 export type HelperStop = NonNullable<HelperRow["stop"]>;
 export type HelperOutcome = NonNullable<HelperRow["outcome"]>;
-export type HelperInputSource = "owner" | "tap" | "wake";
 export type HelperExpected =
   { kind: "pending"; createdAt: number } | { kind: "running"; firedAt: number };
 export type HelperFinish = Pick<
@@ -133,7 +109,6 @@ export type HelperRefusal =
   | "not-found"
   | "foreign-chat"
   | "no-outcome"
-  | "second-finished"
   | "already-delivered";
 export type HelperResult<T extends object> =
   ({ ok: true } & T) | { ok: false; reason: HelperRefusal; text: string };
@@ -143,8 +118,6 @@ const file = () => join(dataDir(), "helpers.json");
 const root = () => join(dataDir(), "helpers");
 const sameChat = (a: HelperChat, b: HelperChat) =>
   a.id === b.id && a.threadId === b.threadId;
-const sameKey = (a: HelperTurnKey, b: HelperTurnKey) =>
-  a.sessionId === b.sessionId && a.turnId === b.turnId;
 const ready = (r: HelperRow) => r.status === "finished" && r.delivered === null;
 const running = (r: HelperRow, firedAt: number) =>
   r.run?.firedAt === firedAt && r.outcome === null;
@@ -164,7 +137,7 @@ export async function readHelpers(): Promise<HelpersState> {
     raw = await readFile(file(), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { schemaVersion: 1, wakeSeq: 0, rows: [] };
+      return { schemaVersion: 1, rows: [] };
     throw new HelperStoreError(`${file()}: ${String(error)}`);
   }
   try {
@@ -203,7 +176,16 @@ async function change(
     }
     await save(s);
     traceHelper(event, id, {
-      data: { outcome: r.outcome, stop: r.stop, firedAt: r.run?.firedAt },
+      data: {
+        outcome: r.outcome,
+        stop: r.stop,
+        firedAt: r.run?.firedAt,
+        sessionId: r.run?.sessionId,
+        reason: r.reason ?? r.stop,
+        steps: r.steps,
+        tokens: r.tokens,
+        model: r.model,
+      },
     });
     return r;
   });
@@ -254,12 +236,7 @@ export async function addHelper(
           steps: 0,
           tokens: 0,
           finishedAt: null,
-          wake: null,
-          wakes: 0,
-          lastWakeAt: null,
-          shown: null,
           delivered: null,
-          escalated: false,
         };
         s.rows.push(row);
         await save(s);
@@ -275,7 +252,7 @@ export async function addHelper(
 }
 export const claimHelper = (
   id: string,
-  owner: { ownerPid: number; ownerStartedAt: number; maxRunning: number },
+  owner: { ownerPid: number; ownerStartedAt: number },
   now: number,
 ) =>
   change(id, "claimed", (r, s) => {
@@ -283,7 +260,7 @@ export const claimHelper = (
       r.status !== "pending" ||
       r.run ||
       r.stop ||
-      s.rows.filter((r) => r.run).length >= owner.maxRunning
+      s.rows.filter((r) => r.run).length >= HELPER_MAX_RUNNING
     )
       return false;
     r.run = {
@@ -311,18 +288,17 @@ export async function recordHelperSession(
   firedAt: number,
   sessionId: string,
 ): Promise<boolean> {
-  return (
-    (await change(id, "started", (r) => {
-      if (
-        !running(r, firedAt) ||
-        !r.run ||
-        (r.run.sessionId !== null && r.run.sessionId !== sessionId)
-      )
-        return false;
-      r.run.sessionId = sessionId;
-      return true;
-    })) !== null
-  );
+  const result = await change(id, "started", (r) => {
+    if (
+      !running(r, firedAt) ||
+      !r.run ||
+      (r.run.sessionId !== null && r.run.sessionId !== sessionId)
+    )
+      return false;
+    r.run.sessionId = sessionId;
+    return true;
+  });
+  return result !== null;
 }
 export const stopHelper = (id: string, firedAt: number, stop: HelperStop) =>
   change(id, "stopping", (r) => {
@@ -386,86 +362,47 @@ export async function closeHelper(
       );
     } else row.status = "closed";
     await save(s);
+    if (branch === "pending")
+      traceHelper("finished", id, {
+        data: {
+          outcome: row.outcome,
+          steps: row.steps,
+          tokens: row.tokens,
+          reason: row.reason,
+        },
+      });
     traceHelper("closed", id, {});
     return { ok: true, row, branch };
   });
 }
-export function helperNextWakeAt(row: HelperRow): number {
-  return row.lastWakeAt === null
-    ? (row.finishedAt ?? Infinity)
-    : Math.max(
-        row.finishedAt ?? Infinity,
-        row.lastWakeAt +
-          Math.min(
-            HELPER_WAKE_PAUSE_MS * 2 ** row.wakes,
-            HELPER_WAKE_PAUSE_MAX_MS,
-          ),
-      );
-}
-export const allocateHelperWake = (id: string, now: number) =>
-  change(id, "wake", (r, s) => {
-    if (!ready(r) || helperNextWakeAt(r) > now) return false;
-    if (!r.wake || r.wake.sent) {
-      const seq = s.wakeSeq + 1,
-        updateId = HELPER_UPDATE_BASE + seq;
-      if (!Number.isSafeInteger(updateId))
-        throw new HelperStoreError("wake id overflow");
-      s.wakeSeq = seq;
-      r.wake = { updateId, sent: false };
-    }
-    r.lastWakeAt = now;
-    return true;
-  });
 export async function showHelper(
   id: string,
   chat: HelperChat,
-  key: HelperTurnKey,
-  now: number,
 ): Promise<HelperResult<HelperShow>> {
-  return locked(async (s) => {
-    const row = s.rows.find((r) => r.id === id);
-    if (!row) return refuse("not-found", "Helper not found.");
-    if (!sameChat(row.chat, chat))
-      return refuse("foreign-chat", "Helper belongs to another chat.");
-    if (row.outcome === null && row.stop !== "closed")
-      return refuse("no-outcome", "Helper has not finished.");
-    if (ready(row)) {
-      const first = s.rows.find(
-        (r) =>
-          ready(r) &&
-          sameChat(r.chat, chat) &&
-          r.shown &&
-          sameKey(r.shown, key),
-      );
-      if (first && first.id !== id)
-        return refuse(
-          "second-finished",
-          `Read ${first.id} in this turn; read the next outcome in another turn.`,
-        );
-      if (!row.shown || !sameKey(row.shown, key)) {
-        row.shown = { ...key, at: now };
-        await save(s);
-        traceHelper("shown", id, { data: key });
-      }
-    }
-    return {
-      ok: true,
-      row,
-      moreReady: s.rows.filter(
-        (r) => r.id !== id && sameChat(r.chat, chat) && ready(r),
-      ).length,
-    };
-  });
+  const s = await readHelpers();
+  const row = s.rows.find((r) => r.id === id);
+  if (!row) return refuse("not-found", "Helper not found.");
+  if (!sameChat(row.chat, chat))
+    return refuse("foreign-chat", "Helper belongs to another chat.");
+  if (row.outcome === null && row.stop !== "closed")
+    return refuse("no-outcome", "Helper has not finished.");
+  return {
+    ok: true,
+    row,
+    moreReady: s.rows.filter(
+      (r) => r.id !== id && sameChat(r.chat, chat) && ready(r),
+    ).length,
+  };
 }
 export async function markHelperDelivered(
+  id: string,
   chat: HelperChat,
   key: HelperTurnKey,
   now: number,
 ): Promise<HelperRow | null> {
   return locked(async (s) => {
     const row = s.rows.find(
-      (r) =>
-        ready(r) && sameChat(r.chat, chat) && r.shown && sameKey(r.shown, key),
+      (r) => r.id === id && ready(r) && sameChat(r.chat, chat),
     );
     if (!row) return null;
     row.delivered = { ...key, at: now };
@@ -474,22 +411,6 @@ export async function markHelperDelivered(
     return row;
   });
 }
-export const stampHelperWake = (id: string, updateId: number, now: number) =>
-  change(id, "wake", (r) => {
-    integer.parse(now);
-    if (!ready(r) || r.wake?.updateId !== updateId || r.wake.sent) return false;
-    r.wake.sent = true;
-    r.wakes++;
-    return true;
-  });
-export const markHelperEscalated = (id: string, now: number) =>
-  change(id, "escalated", (r) => {
-    integer.parse(now);
-    if (!ready(r) || r.escalated || r.wakes < HELPER_ESCALATE_WAKES)
-      return false;
-    r.escalated = true;
-    return true;
-  });
 export async function sweepHelpers(now: number): Promise<string[]> {
   return locked(async (s) => {
     const removed = s.rows
