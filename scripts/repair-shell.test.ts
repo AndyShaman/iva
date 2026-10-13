@@ -24,6 +24,7 @@ function git(cwd: string, ...args: string[]): string {
     encoding: "utf8",
     env: {
       ...process.env,
+      GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "iva",
       GIT_AUTHOR_EMAIL: "iva@example.invalid",
       GIT_COMMITTER_NAME: "iva",
@@ -82,6 +83,7 @@ function checkout(t: TestContext): {
         encoding: "utf8",
         env: {
           ...process.env,
+          GIT_CONFIG_GLOBAL: "/dev/null",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           IVA_INSTALL_DIR: install,
           IVA_TEST_HANDOFF: handoff,
