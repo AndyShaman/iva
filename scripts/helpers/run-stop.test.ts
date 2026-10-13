@@ -62,7 +62,7 @@ test(
     const gate = join(process.env.ASSISTANT_DATA_DIR, "allow-cancel");
     let completed = false;
     const timeout = setTimeout, interval = setInterval;
-    globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay === 15000 ? 20 : delay, ...args);
+    globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay <= 15000 ? 20 : delay, ...args);
     globalThis.setInterval = (fn, delay, ...args) => interval(fn, delay === 15000 ? 20 : delay, ...args);
     const parse = JSON.parse;
     JSON.parse = (...args) => {
@@ -162,6 +162,7 @@ for (const failure of ["network", "missing-key", "rejected-key"]) {
     assert.ok(row);
     assert.equal(row?.outcome, "failed");
     assert.match(row?.reason ?? "", failure === "network" ? /сеть/ : /ключ/);
+    assert.doesNotMatch(row.reason ?? "", /\/menu/);
     assert.equal(row.run, null);
   });
 }

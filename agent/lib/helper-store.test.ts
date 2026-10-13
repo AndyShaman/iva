@@ -178,16 +178,7 @@ test("claim/fired CAS, repeated client T3, first stop and finalize cannot resurr
     null,
   );
   assert.equal((await s.getHelper(row.id))?.summary, "result");
-  const logs = await Promise.all(
-    (await readdir(join(dir, "trace"))).map((f) =>
-      readFile(join(dir, "trace", f), "utf8"),
-    ),
-  );
-  assert.match(logs.join(""), /"name":"race_lost"/);
-  assert.doesNotMatch(
-    logs.join(""),
-    /"name":"(?:added|claimed|started|finished|delivered|closed|stopping)"/,
-  );
+  assert.deepEqual(await readdir(join(dir, "trace")).catch(() => []), []);
 });
 test("pure read of multiple outcomes; delivery timestamp once by id/chat, sweep clocks", async (t) => {
   const dir = await data(t);

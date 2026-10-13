@@ -14,16 +14,23 @@ Init == s = [status |-> [h \in Helpers |-> "pending"],
   session |-> 1, reads |-> {}, previousReads |-> {}, readCounts |-> [h \in Helpers |-> 0],
   replied |-> FALSE, nonempty |-> FALSE, now |-> 0,
   proof |-> [h \in Helpers |-> TRUE], readDirty |-> FALSE,
-  lostUnread |-> FALSE, sweptEarly |-> FALSE]
+  lostUnread |-> FALSE, sweptEarly |-> FALSE, readAuthorized |-> TRUE,
+  bridge |-> "online", events |-> {}, offlineFinished |-> {}]
 Finish(h) ==
   /\ s.status[h] = "pending" \/ (Mutant = "finish-twice" /\ s.finishes[h] = 1)
   /\ s' = [s EXCEPT !.status[h] = "finished", !.outcome[h] = TRUE,
-       !.finishes[h] = @ + 1, !.finished[h] = s.now]
-Read(h) ==
+       !.finishes[h] = @ + 1, !.finished[h] = s.now,
+       !.events = IF s.bridge = "online" THEN @ \cup {h} ELSE @,
+       !.offlineFinished = IF s.bridge = "offline" THEN @ \cup {h} ELSE @]
+Read(h,actor) ==
+  /\ actor = "owner" \/ Mutant = "foreign-read"
   /\ h \in s.retained /\ s.outcome[h] /\ ~s.replied /\ h \notin s.reads
   /\ s.readCounts[h] < 2
   /\ s' = [s EXCEPT !.reads = @ \cup {h}, !.previousReads = @ \cup {h},
-       !.readCounts[h] = @ + 1, !.readDirty = @ \/ Mutant = "read-write"]
+       !.readCounts[h] = @ + 1, !.readDirty = @ \/ Mutant = "read-write",
+       !.readAuthorized = @ /\ actor = "owner"]
+BridgeDown == /\ s.bridge = "online" /\ s' = [s EXCEPT !.bridge = "offline"]
+BridgeUp == /\ s.bridge = "offline" /\ s' = [s EXCEPT !.bridge = "restarted", !.events = {}]
 Reply(nonempty) ==
   /\ ~s.replied
   /\ s' = [s EXCEPT !.replied = TRUE, !.nonempty = nonempty]
@@ -53,8 +60,9 @@ Sweep(h) ==
   /\ s' = [s EXCEPT !.retained = @ \ {h},
        !.lostUnread = @ \/ Ready(h),
        !.sweptEarly = @ \/ (s.status[h] = "closed" /\ s.now < s.finished[h] + Keep)]
-Next == (\E h \in Helpers : Finish(h) \/ Read(h) \/ Mark(h) \/ Close(h) \/ Sweep(h))
-        \/ (\E b \in BOOLEAN : Reply(b)) \/ Restart \/ Clock
+Next == (\E h \in Helpers : Finish(h) \/ (\E actor \in {"owner","unknown","helper"} : Read(h,actor))
+          \/ Mark(h) \/ Close(h) \/ Sweep(h))
+        \/ (\E b \in BOOLEAN : Reply(b)) \/ Restart \/ Clock \/ BridgeDown \/ BridgeUp
 Spec == Init /\ [][Next]_vars
 TypeOK == /\ s.session \in {1,2} /\ s.now \in 0..2
           /\ s.retained \subseteq Helpers /\ s.reads \subseteq Helpers
@@ -69,4 +77,6 @@ ClosedFinal == \A h \in Helpers : s.status[h] = "closed" => s.outcome[h]
 \* Reachability witnesses: multiple outcomes and repeated reading after restart are accepted.
 NoTwoReads == Cardinality(s.reads) < 2
 NoRepeatedRead == \A h \in Helpers : s.readCounts[h] < 2
+AuthorizedReads == s.readAuthorized
+OfflineEvent == s.offlineFinished \subseteq s.events
 =============================================================================

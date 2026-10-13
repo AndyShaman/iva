@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers v6.3: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
+# Helpers v6.4: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
 cd "$(dirname "$0")" || exit 2
@@ -80,33 +80,37 @@ check() {
     [ -n "$got" ] || return 2
   fi
 }
-check HelperRun-v63-auth none || exit 2
-check HelperRun-v63-capacity none || exit 2
-check HelperRun-v63-run none || exit 2
-check HelperRun-v63-effects none || exit 2
-check HelperRun-v63-live none || exit 2
-check HelperRun-v63-helper-start Authorized || exit 2
-check HelperRun-v63-may MayRequired || exit 2
-check HelperRun-v63-may-copy MayUnchanged || exit 2
-check HelperRun-v63-no-capacity OneRun || exit 2
-check HelperRun-v63-finalize-twice OutcomeOnce || exit 2
-check HelperRun-v63-stale-cas SlotFreedAfterEnd || exit 2
-check HelperRun-v63-stop-twice StopOnce || exit 2
-check HelperRun-v63-step-limit WithinLimits || exit 2
-check HelperRun-v63-work-output WorkMeasured || exit 2
-check HelperRun-v63-work-stop WorkStops || exit 2
-check HelperRun-v63-question-done QuestionFailed || exit 2
-check HelperRun-v63-early-free SlotFreedAfterEnd || exit 2
-check HelperRun-v63-partial PartialKept || exit 2
-check HelperRun-v63-sweep KeepClosed || exit 2
-check HelperRun-v63-read ClosedReadable || exit 2
-check HelperRun-v63-close-outcome CloseKeepsOutcome || exit 2
-check HelperRun-v63-late-effect NoLateEffect || exit 2
-check HelperRun-v63-duplicate-effect NoDuplicateEffect || exit 2
-check HelperRun-v63-tail-effect NoTailEffect || exit 2
-check HelperRun-v63-normal-waiting NoNormalWaiting || exit 2
-check HelperRun-v63-live-nofair NoSilentEnd || exit 2
-check HelperRun-v63-restart-effect NoRestartEffect || exit 2
+check HelperRun-v64-auth none || exit 2
+check HelperRun-v64-capacity none || exit 2
+check HelperRun-v64-run none || exit 2
+check HelperRun-v64-effects none || exit 2
+check HelperRun-v64-live none || exit 2
+check HelperRun-v64-helper-start Authorized || exit 2
+check HelperRun-v64-may MayRequired || exit 2
+check HelperRun-v64-may-copy MayUnchanged || exit 2
+check HelperRun-v64-no-capacity OneRun || exit 2
+check HelperRun-v64-finalize-twice OutcomeOnce || exit 2
+check HelperRun-v64-stale-cas SlotFreedAfterEnd || exit 2
+check HelperRun-v64-stop-twice StopOnce || exit 2
+check HelperRun-v64-step-limit WithinLimits || exit 2
+check HelperRun-v64-work-output WorkMeasured || exit 2
+check HelperRun-v64-work-stop WorkStops || exit 2
+check HelperRun-v64-question-done QuestionFailed || exit 2
+check HelperRun-v64-early-free SlotFreedAfterEnd || exit 2
+check HelperRun-v64-partial PartialKept || exit 2
+check HelperRun-v64-sweep KeepClosed || exit 2
+check HelperRun-v64-read ClosedReadable || exit 2
+check HelperRun-v64-close-outcome CloseKeepsOutcome || exit 2
+check HelperRun-v64-late-effect NoLateEffect || exit 2
+check HelperRun-v64-duplicate-effect NoDuplicateEffect || exit 2
+check HelperRun-v64-tail-effect NoTailEffect || exit 2
+check HelperRun-v64-normal-waiting NoNormalWaiting || exit 2
+check HelperRun-v64-live-nofair NoSilentEnd || exit 2
+check HelperRun-v64-restart-effect NoRestartEffect || exit 2
+check HelperRun-v64-ceiling-race NoCeilingRace || exit 2
+check HelperRun-v64-tick-partial TickRetainsText || exit 2
+check HelperOutcome-foreign-read AuthorizedReads || exit 2
+check HelperOutcome-offline-event OfflineEvent || exit 2
 check HelperOutcome-safety none || exit 2
 check HelperOutcome-finish-twice OutcomeOnce || exit 2
 check HelperOutcome-before-reply DeliveredAfterReply || exit 2

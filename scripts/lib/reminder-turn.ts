@@ -94,7 +94,6 @@ export type ReminderTurn = {
   readonly message?: string;
   readonly reason?: string;
   readonly partial?: string;
-  readonly serverEnded?: boolean;
   readonly feedback: (message: string) => Promise<unknown>;
 };
 
@@ -643,7 +642,6 @@ async function runHelperClient(
       status: "failed",
       message: "помощник остановлен до начала",
       partial: "",
-      serverEnded: true,
       feedback: noFeedback,
     };
     await deps.onCompleted?.(turn);
@@ -658,7 +656,8 @@ async function runHelperClient(
   let ended = false,
     stopping = false,
     parked = false,
-    lastEvent = Date.now();
+    lastEvent = Date.now(),
+    checkAt = lastEvent + (deps.helperCheckMs ?? 15000);
   try {
     if (deps.onSession && !(await deps.onSession(response.sessionId)))
       failure = "ход не записан";
@@ -673,7 +672,10 @@ async function runHelperClient(
     stopping ||= !!failure || deps.signal?.aborted === true;
     let timer: NodeJS.Timeout | undefined;
     const poll = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), deps.helperCheckMs ?? 15000);
+      timer = setTimeout(
+        () => resolve(null),
+        Math.max(0, checkAt - Date.now()),
+      );
     });
     let next: IteratorResult<TurnStreamEvent> | null;
     try {
@@ -685,7 +687,8 @@ async function runHelperClient(
     } finally {
       clearTimeout(timer);
     }
-    if (next === null) {
+    if (next === null || Date.now() >= checkAt) {
+      checkAt = Date.now() + (deps.helperCheckMs ?? 15000);
       if (Date.now() - lastEvent >= inactivityMs)
         failure ??= "помощник молчал слишком долго";
       stopping ||= !!failure || deps.signal?.aborted === true;
@@ -701,7 +704,7 @@ async function runHelperClient(
           log("helper cancel failed:", error);
         }
       }
-      continue;
+      if (next === null) continue;
     }
     if (next.done) {
       if (!stopping) break;
@@ -753,7 +756,6 @@ async function runHelperClient(
     message: failure ?? message,
     partial: message ?? "",
     reason,
-    serverEnded: ended,
     feedback: (text) => session.send(text),
   };
   if (ended) {

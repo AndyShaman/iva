@@ -150,5 +150,6 @@ for (const scenario of [
       assert.equal(cancels, 3);
     if (scenario === "closed") assert.equal(row.status, "closed");
     if (scenario === "failed") assert.match(row.reason ?? "", /\/menu/);
+    else assert.doesNotMatch(row.reason ?? "", /\/menu/);
   });
 }

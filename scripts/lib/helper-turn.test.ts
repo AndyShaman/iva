@@ -11,6 +11,95 @@ const options = {
   auth: { bearer: () => Promise.resolve("fixture") },
   headers: { "x-iva-turn": "helper" },
 };
+test("R1 close during a busy stream cancels within one check and retains the slot until confirmed end", async (t) => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const s = await import("../../agent/lib/helper-store.ts");
+  const dir = await mkdtemp(path.join(tmpdir(), "iva-helper-busy-"));
+  const prior = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  t.mock.timers.enable({ apis: ["Date"], now: 2000 });
+  t.after(async () => {
+    if (prior === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = prior;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const chat = { id: "42", threadId: null };
+  const added = await s.addHelper({ task: "busy", may: "", chat }, 1000);
+  assert.ok(added.ok);
+  const id = added.row.id;
+  await s.claimHelper(id, { ownerStartedAt: 1 }, 2000);
+  const controller = new AbortController();
+  const checkMs = 20;
+  let closedAt = 0,
+    cancels = 0,
+    firstCancelAt = 0,
+    finalized = false;
+  const response = Object.assign(
+    (async function* () {
+      yield { type: "message.completed", data: { message: "saved partial" } };
+      await s.closeHelper(id, chat, Date.now());
+      closedAt = Date.now();
+      controller.abort();
+      for (let i = 0; i < 100; i++) {
+        t.mock.timers.tick(1);
+        yield { type: "message.appended", data: { messageDelta: "busy" } };
+      }
+      await new Promise(() => {});
+    })(),
+    { sessionId: "busy", cancel: () => Promise.resolve() },
+  );
+  const client: ReminderClient = {
+    sessions: {
+      create: () =>
+        Promise.resolve({
+          response,
+          session: {
+            send: () => Promise.resolve(),
+            cancel: async () => {
+              assert.ok((await s.getHelper(id))?.run);
+              assert.equal(finalized, false);
+              if (++cancels === 1) firstCancelAt = Date.now();
+              return { status: cancels === 1 ? "accepted" : "no_active_turn" };
+            },
+            reset: () => Promise.resolve(),
+          },
+        }),
+    },
+  };
+  const result = await runReminderTurn("busy", options, {
+    createClient: () => Promise.resolve(client),
+    helperCheckMs: checkMs,
+    signal: controller.signal,
+    onSession: (sessionId) => s.recordHelperSession(id, 2000, sessionId),
+    onCompleted: async (turn) => {
+      assert.equal(cancels, 2);
+      assert.equal(turn.partial, "saved partial");
+      await s.finalizeHelper(
+        id,
+        { kind: "running", firedAt: 2000 },
+        {
+          outcome: "failed",
+          summary: turn.partial ?? null,
+          reason: null,
+          model: null,
+          steps: 0,
+          tokens: 0,
+        },
+        Date.now(),
+      );
+      finalized = true;
+    },
+  });
+  assert.ok(
+    firstCancelAt - closedAt <= checkMs,
+    `cancel delayed ${firstCancelAt - closedAt}ms by stream events`,
+  );
+  assert.equal(result.partial, "saved partial");
+  assert.equal((await s.getHelper(id))?.run, null);
+  assert.equal((await s.getHelper(id))?.outcome, "stopped");
+});
 function fixture(
   events: TurnStreamEvent[],
   cancel: () => Promise<unknown> = () =>
@@ -78,7 +167,6 @@ test("helper completed waiting: last completed text, reason, usage and finalize 
     },
     helperCheckMs: 1,
   });
-  assert.equal(r.serverEnded, true);
   assert.equal(r.reason, "step-limit");
   assert.equal(r.partial, "final");
   assert.equal(r.message, "final");
@@ -105,7 +193,6 @@ test("helper question waiting fails and confirms cancel before finalize", async 
   assert.equal(r.status, "failed");
   assert.match(r.message ?? "", /помощник ждал ответа/);
   assert.equal(r.partial, "partial");
-  assert.equal(r.serverEnded, true);
   assert.deepEqual(f.calls, ["cancel", "finalize", "reset"]);
 });
 test("helper early stream end preserves run: no completion callback or reset", async () => {
@@ -121,7 +208,6 @@ test("helper early stream end preserves run: no completion callback or reset", a
     },
     helperCheckMs: 1,
   });
-  assert.equal(r.serverEnded, false);
   assert.equal(r.partial, "partial");
   assert.deepEqual(f.calls, []);
 });
@@ -157,7 +243,6 @@ test("helper abort holds until cancel no_active_turn; late completed text exclud
     },
     helperCheckMs: 1,
   });
-  assert.equal(r.serverEnded, true);
   assert.equal(r.partial, "saved");
   assert.equal(f.calls.at(-1), "reset");
 });
@@ -172,7 +257,6 @@ test("unrecorded live session is canceled and failed only after observed end", a
     onSession: () => Promise.resolve(false),
     helperCheckMs: 1,
   });
-  assert.equal(r.serverEnded, true);
   assert.equal(r.status, "failed");
   assert.match(r.message ?? "", /ход не записан/);
 });
@@ -192,7 +276,6 @@ test("already stopped helper does not create a server turn and finalizes the con
       return Promise.resolve();
     },
   });
-  assert.equal(r.serverEnded, true);
   assert.equal(r.status, "failed");
   assert.equal(finalized, 1);
   assert.deepEqual(f.calls, []);
@@ -232,7 +315,6 @@ test("helper session limit and silence cancel and retain only completed partial"
     });
     assert.equal(r.status, "failed");
     assert.equal(r.partial, "saved");
-    assert.equal(r.serverEnded, true);
     assert.deepEqual(f.calls, ["cancel", "reset"]);
   }
 });
@@ -282,7 +364,6 @@ test("actual installed client: helper headers/create/stream and finalize before 
   });
   assert.equal(r.reason, "step-limit");
   assert.equal(r.partial, "full");
-  assert.equal(r.serverEnded, true);
   assert.equal(calls.length, 4);
 });
 

@@ -893,8 +893,7 @@ export function traceBridgeQueued(
   emitBridge(update, "queued", { count, parts: updatePartCount(update) });
 }
 
-export type HelperTraceEvent =
-  "refused" | "finished" | "race_lost" | "store_broken";
+export type HelperTraceEvent = "refused" | "finished" | "store_broken";
 
 export function traceHelper(
   event: HelperTraceEvent,

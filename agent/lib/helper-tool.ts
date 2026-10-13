@@ -104,6 +104,8 @@ export async function helperExecute(
       turnId: ctx.session.turn.id,
     });
   } catch (error) {
+    if (error instanceof s.HelperStoreError)
+      return "таблица помощников повреждена, помощники не работают";
     return `Не записалось, повтори: ${String(error)}`;
   }
 }

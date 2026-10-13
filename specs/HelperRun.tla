@@ -7,6 +7,7 @@ Empty == [status |-> "absent", run |-> FALSE, owner |-> 0, fired |-> 0,
   known |-> FALSE, clientId |-> FALSE, recordFailed |-> FALSE, client |-> FALSE, active |-> FALSE, cancel |-> FALSE,
   stop |-> "none", outcome |-> "none", partial |-> 0, saved |-> 0,
   steps |-> 0, previous |-> 0, work |-> 0, workProof |-> TRUE,
+  ceilingPending |-> FALSE, ceilingLost |-> FALSE, finishedByTick |-> FALSE,
   limited |-> FALSE, finishes |-> 0, endedProof |-> TRUE, stopProof |-> TRUE, may |-> "",
   authorized |-> TRUE, mayPresent |-> TRUE, asked |-> FALSE, retained |-> TRUE,
   finishedAt |-> 0, closedEarly |-> FALSE, closeChanged |-> FALSE,
@@ -52,7 +53,13 @@ Usage(h,input,output) ==
      IN s' = [s EXCEPT !.rows[h].steps = @ + 1, !.rows[h].previous = input,
        !.rows[h].work = work, !.rows[h].limited = s.rows[h].steps + 1 >= 2,
        !.rows[h].workProof = @ /\ (Mutant # "work-output" \/ output = 0),
-       !.rows[h].stop = IF work > 3 /\ Mutant # "work-stop" THEN "ceiling" ELSE @]
+       !.rows[h].ceilingPending = @ \/ (work > 3 /\ Mutant # "work-stop")]
+\* Usage reports first; the asynchronous store stop can lose to natural completion.
+CeilingStop(h) ==
+  /\ s.rows[h].ceilingPending
+  /\ s' = [s EXCEPT !.rows[h].ceilingPending = FALSE,
+       !.rows[h].stop = IF s.rows[h].run /\ s.rows[h].stop = "none"
+         THEN "ceiling" ELSE @]
 Stop(h,why) ==
   /\ s.rows[h].run /\ s.rows[h].stop = "none"
   /\ s' = [s EXCEPT !.rows[h].stop = why,
@@ -98,7 +105,9 @@ Finish(h,tick) ==
   /\ s' = [s EXCEPT !.rows[h].run = FALSE,
        !.rows[h].status = IF s.rows[h].stop = "closed" THEN "closed" ELSE "finished",
        !.rows[h].outcome = Result(h,tick), !.rows[h].finishes = @ + 1,
-       !.rows[h].saved = IF Mutant = "partial" THEN 0 ELSE s.rows[h].partial,
+       !.rows[h].saved = IF tick \/ Mutant = "partial" THEN 0 ELSE s.rows[h].partial,
+       !.rows[h].finishedByTick = tick,
+       !.rows[h].ceilingLost = ~tick /\ Result(h,tick) = "done" /\ s.rows[h].work > 3,
        !.rows[h].finishedAt = s.now,
        !.rows[h].endedProof = ~s.rows[h].active \/ (~s.rows[h].known /\ ~s.rows[h].client)]
 StaleFinish(h) ==
@@ -144,7 +153,8 @@ NormalWaiting(h) ==
 Clock == /\ s.now < 3 /\ s' = [s EXCEPT !.now = @ + 1]
 Lifecycle(h) == Claim(h) \/ Create(h) \/ RecordSession(h) \/ RecordFailure(h) \/ Message(h)
   \/ (\E why \in {"closed","ceiling","deadline"}: Stop(h,why)) \/ OverwriteStop(h)
-  \/ (\E input \in 0..2, output \in 0..1 : Usage(h,input,output))
+  \/ (\E input \in 0..(IF Case = "effects" THEN 2 ELSE 3), output \in 0..1 : Usage(h,input,output))
+  \/ CeilingStop(h)
   \/ Question(h) \/ Cancel(h) \/ End(h) \/ ClientExit(h) \/ RunnerTimeout(h)
   \/ Finish(h,TRUE) \/ Finish(h,FALSE) \/ StaleFinish(h) \/ StartFailed(h)
   \/ Close(h) \/ ReadClosed(h) \/ Sweep(h)
@@ -155,6 +165,7 @@ Next == (\E h \in Helpers :
 Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ WF_vars(Clock) /\ \A h \in Helpers :
   WF_vars(Cancel(h)) /\ WF_vars(End(h)) /\ WF_vars(RunnerTimeout(h)) /\ WF_vars(Finish(h,TRUE))
+  /\ WF_vars(CeilingStop(h))
 TypeOK == /\ s.now \in 0..3 /\ s.owner \in {1,2}
   /\ \A h \in Helpers : s.rows[h].status \in {"absent","pending","finished","closed"}
 Authorized == \A h \in Helpers : s.rows[h].authorized
@@ -163,13 +174,15 @@ MayUnchanged == \A h \in Helpers : s.rows[h].status # "absent" => s.rows[h].may 
 OneRun == Cardinality(Running) <= 1
 WithinLimits == \A h \in Helpers : s.rows[h].steps <= 2
 WorkMeasured == \A h \in Helpers : s.rows[h].workProof
-WorkStops == \A h \in Helpers : s.rows[h].run /\ s.rows[h].work > 3 => s.rows[h].stop = "ceiling"
+WorkStops == \A h \in Helpers : s.rows[h].run /\ s.rows[h].active
+  /\ s.rows[h].stop = "none" /\ s.rows[h].work > 3 => s.rows[h].ceilingPending
 OutcomeOnce == \A h \in Helpers : s.rows[h].finishes <= 1
 StopOnce == \A h \in Helpers : s.rows[h].stopProof
 ClosedFinal == \A h \in Helpers : s.rows[h].status = "closed" => s.rows[h].outcome # "none"
 SlotFreedAfterEnd == \A h \in Helpers : s.rows[h].endedProof
 QuestionFailed == \A h \in Helpers : s.rows[h].asked /\ s.rows[h].outcome # "none" /\ s.rows[h].stop = "none" => s.rows[h].outcome # "done"
-PartialKept == \A h \in Helpers : s.rows[h].finishes > 0 => s.rows[h].saved = s.rows[h].partial
+PartialKept == \A h \in Helpers : s.rows[h].finishes > 0 /\ ~s.rows[h].finishedByTick
+  => s.rows[h].saved = s.rows[h].partial
 KeepClosed == \A h \in Helpers : ~s.rows[h].closedEarly
 ClosedReadable == ~s.missingRead
 CloseKeepsOutcome == \A h \in Helpers : ~s.rows[h].closeChanged
@@ -180,4 +193,6 @@ NoLateEffect == \A h \in Helpers : ~s.rows[h].lateEffect
 NoDuplicateEffect == \A h \in Helpers : s.rows[h].effects < 2
 NoTailEffect == \A h \in Helpers : ~s.rows[h].tailEffect
 NoNormalWaiting == ~s.normalEnd
+NoCeilingRace == \A h \in Helpers : ~s.rows[h].ceilingLost
+TickRetainsText == \A h \in Helpers : s.rows[h].finishedByTick => s.rows[h].saved = s.rows[h].partial
 =============================================================================

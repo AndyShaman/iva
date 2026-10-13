@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns registration. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
@@ -18,6 +18,30 @@ const ctx = () => ({
     turn: { id: "turn_0" },
     auth: { initiator: auth(), current: auth() },
   },
+});
+test("R5 corrupt helper table tells the model it is damaged for every operation", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "iva-helper-tool-broken-"));
+  const prior = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  t.after(async () => {
+    if (prior === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = prior;
+    await rm(dir, { recursive: true, force: true });
+  });
+  await writeFile(join(dir, "helpers.json"), "{");
+  for (const action of ["start", "list", "close", "outcome"]) {
+    const reply = await helperExecute(
+      { action, task: "task", may: "", id: "h-abcdef" },
+      ctx(),
+      {
+        now: 1000,
+        tick: () => Promise.resolve(),
+      },
+    );
+    assert.match(reply, /таблица помощников повреждена/iu);
+    assert.doesNotMatch(reply, /повтори/iu);
+  }
+  assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), "{");
 });
 test("helper start may/type guards preserve table, list reads; seed 20261013", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "iva-helper-tool-"));
