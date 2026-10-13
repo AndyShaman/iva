@@ -1221,8 +1221,8 @@ async function handleOwnerTap({ update, callback, io }: CallbackContext) {
 }
 
 // ── Отклик кнопки: подсказка, память «уже нажато», правка сообщения ──
-// Память живёт в процессе Bridge, без файла: после рестарта она пуста (ADR-0015).
-const TAP_MEMORY_LIMIT = 256;
+// Память живёт до завершения процесса Bridge, без вытеснения другими кнопками.
+// После рестарта она пуста (ADR-0015, specs/ButtonTap.tla: OnePerProcess).
 const tappedButtons = new Map<string, number>();
 
 const alreadyChosenText = () => tr("Already chosen", "Уже выбрано");
@@ -1246,12 +1246,7 @@ function isRepeatTap(key: string | null, updateId: number): boolean {
 }
 
 function rememberTap(key: string, updateId: number): void {
-  tappedButtons.delete(key);
   tappedButtons.set(key, updateId);
-  for (const oldest of tappedButtons.keys()) {
-    if (tappedButtons.size <= TAP_MEMORY_LIMIT) break;
-    tappedButtons.delete(oldest);
-  }
 }
 
 type TapTree = { tree: unknown; rich: boolean; isRtl?: unknown };

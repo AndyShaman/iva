@@ -3252,18 +3252,29 @@ test("a stranger's tap and a group tap are neither marked nor remembered", async
   assert.equal(await handleControl(owner, deps), false);
 });
 
-test("the tap memory keeps at most 256 buttons, the oldest leaves first", async () => {
+test("tap memory keeps the first button after 256 and 300 other taps", async () => {
   const { deps } = tapDeps();
-  for (let i = 0; i < 300; i += 1)
-    await handleControl(modelTap(10_000 + i, 10_000 + i, "x"), deps);
-
-  // 300 − 256 = 44: кнопки 0…43 ушли, 44…299 на месте. Повтор память не трогает.
-  const newest = modelTap(20_299, 10_299, "x");
-  assert.equal(await handleControl(newest, deps), true, "the newest is kept");
-  const edge = modelTap(20_044, 10_044, "x");
-  assert.equal(await handleControl(edge, deps), true, "the 45th is kept");
-  const gone = modelTap(20_043, 10_043, "x");
-  assert.equal(await handleControl(gone, deps), false, "the 44th left");
+  assert.equal(await handleControl(modelTap(10_000, 10_000, "x"), deps), false);
+  for (let i = 1; i <= 300; i += 1) {
+    assert.equal(
+      await handleControl(modelTap(10_000 + i, 10_000 + i, "x"), deps),
+      false,
+    );
+    if (i === 256 || i === 300) {
+      const again = modelTap(20_000 + i, 10_000, "x");
+      assert.equal(
+        await handleControl(again, deps),
+        true,
+        `first key after ${i} other taps`,
+      );
+      assert.equal(again.message, undefined);
+    }
+  }
+  assert.equal(
+    await handleControl(modelTap(10_000, 10_000, "x"), deps),
+    false,
+    "same failed-admission update remains retryable",
+  );
 });
 
 test("a tap handed out again while its edit is in flight schedules no second edit", async () => {

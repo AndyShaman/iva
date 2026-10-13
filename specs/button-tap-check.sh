@@ -30,6 +30,7 @@ check() { # config expected; expected: none | <Invariant>
 }
 check ButtonTap-keyonly NoSwallow
 check ButtonTap-nomemory OnePerProcess
+check ButtonTap-eviction OnePerProcess
 check ButtonTap none
 echo "button-tap-check: $ok ok, $failed failed"
 [ "$failed" -eq 0 ]

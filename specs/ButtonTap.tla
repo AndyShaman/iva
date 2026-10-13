@@ -32,12 +32,14 @@ CONSTANTS
   MaxTaps,      \* сколько тапов владельца
   MaxRestarts,  \* сколько рестартов моста
   Memory,       \* TRUE — память «уже нажато» есть
+  EvictMemory,  \* TRUE — другие кнопки вытесняют память (свидетель старого кода)
   KeyOnly       \* TRUE — дубликат по ключу без сверки update_id (мутант)
 
 Updates == 1..MaxTaps
 None == 0
 
 VARIABLES
+  otherTaps,    \* абстракция нажатий других кнопок (256 ключей старого кода)
   taps,         \* сколько апдейтов уже создано (следующий update_id = taps + 1)
   pending,      \* апдейты в Telegram, ещё не подтверждённые offset
   memory,       \* update_id в памяти по ключу кнопки; None — пусто
@@ -46,9 +48,10 @@ VARIABLES
   editInFlight, \* правка кнопки в полёте
   restarts      \* сколько рестартов было
 
-vars == <<taps, pending, memory, admitted, marked, editInFlight, restarts>>
+vars == <<otherTaps, taps, pending, memory, admitted, marked, editInFlight, restarts>>
 
 TypeOK ==
+  /\ otherTaps \in 0..2
   /\ taps \in 0..MaxTaps
   /\ pending \subseteq Updates
   /\ memory \in {None} \cup Updates
@@ -58,6 +61,7 @@ TypeOK ==
   /\ restarts \in 0..MaxRestarts
 
 Init ==
+  /\ otherTaps = 0
   /\ taps = 0
   /\ pending = {}
   /\ memory = None
@@ -70,7 +74,7 @@ Tap ==
   /\ taps < MaxTaps
   /\ taps' = taps + 1
   /\ pending' = pending \cup {taps + 1}
-  /\ UNCHANGED <<memory, admitted, marked, editInFlight, restarts>>
+  /\ UNCHANGED <<otherTaps, memory, admitted, marked, editInFlight, restarts>>
 
 \* Дубликат: в памяти уже есть нажатие этой кнопки другим апдейтом.
 Repeat(u) ==
@@ -82,7 +86,7 @@ HandleRepeat(u) ==
   /\ u \in pending
   /\ Repeat(u)
   /\ pending' = pending \ {u}
-  /\ UNCHANGED <<taps, memory, admitted, marked, editInFlight, restarts>>
+  /\ UNCHANGED <<otherTaps, taps, memory, admitted, marked, editInFlight, restarts>>
 
 \* Свежий апдейт: память, правка в полёт, admission с одним из двух исходов.
 HandleFresh(u) ==
@@ -92,29 +96,38 @@ HandleFresh(u) ==
   /\ editInFlight' = TRUE
   /\ \/ /\ pending' = pending \ {u}          \* owned
         /\ admitted' = admitted \cup {u}
-     \/ /\ UNCHANGED <<pending, admitted>>   \* write-failed
-  /\ UNCHANGED <<taps, marked, restarts>>
+     \/ /\ UNCHANGED <<otherTaps, pending, admitted>>   \* write-failed
+  /\ UNCHANGED <<otherTaps, taps, marked, restarts>>
 
 EditLands ==
   /\ editInFlight
   /\ marked' = TRUE
   /\ editInFlight' = FALSE
-  /\ UNCHANGED <<taps, pending, memory, admitted, restarts>>
+  /\ UNCHANGED <<otherTaps, taps, pending, memory, admitted, restarts>>
 
 EditFails ==
   /\ editInFlight
   /\ editInFlight' = FALSE
-  /\ UNCHANGED <<taps, pending, memory, admitted, marked, restarts>>
+  /\ UNCHANGED <<otherTaps, taps, pending, memory, admitted, marked, restarts>>
 
 Restart ==
   /\ restarts < MaxRestarts
   /\ restarts' = restarts + 1
   /\ memory' = None
   /\ editInFlight' = FALSE
-  /\ UNCHANGED <<taps, pending, admitted, marked>>
+  /\ UNCHANGED <<otherTaps, taps, pending, admitted, marked>>
+
+\* Чужие кнопки проходят в том же процессе. Основной код хранит ключ до Restart;
+\* свидетель воспроизводит вытеснение старого ключа по числу других нажатий.
+OtherTap ==
+  /\ otherTaps < 2
+  /\ otherTaps' = otherTaps + 1
+  /\ memory' = IF EvictMemory THEN None ELSE memory
+  /\ UNCHANGED <<taps, pending, admitted, marked, editInFlight, restarts>>
 
 Next ==
   \/ Tap
+  \/ OtherTap
   \/ \E u \in Updates : HandleRepeat(u) \/ HandleFresh(u)
   \/ EditLands
   \/ EditFails
