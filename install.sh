@@ -31,7 +31,6 @@ if [ "${IVA_BETA:-}" = 1 ]; then
 fi
 BRANCH="${BRANCH:-main}"
 UPDATE_CHANNEL="$BRANCH"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/iva}"
 NODE_MAJOR_MIN=24
 UV_INSTALLER_URL="https://github.com/astral-sh/uv/releases/download/0.12.5/uv-installer.sh"
 UV_INSTALLER_SHA256="504511fbbbd811aeaba6738abc79408956b6c7da0ca35437b3dcc24a41efc111"
@@ -137,6 +136,8 @@ if [ "${1:-}" = --update-gws ]; then
   install_verified_npm_tarball gws "$GWS_TARBALL_URL" "$GWS_TARBALL_SHA256" --prefix "$2"
   exit "$?"
 fi
+
+INSTALL_DIR="${INSTALL_DIR:-$HOME/iva}"
 
 # Compact progress for automatic work. Prompts, sudo and the setup wizard never
 # run behind a spinner, so they remain fully readable and interactive.

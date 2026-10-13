@@ -2022,6 +2022,22 @@ void test("updater GWS path checks the same pinned bytes and preserves credentia
   assert.equal(readFileSync(credentials, "utf8"), "fixture authorization");
   assert.deepEqual(leftovers(world.tmp), []);
 });
+void test("updater GWS entry works with HOME and INSTALL_DIR unset", (t) => {
+  const world = createWorld(t);
+  const script = join(world.dir, "update-without-home.sh");
+  writeFileSync(
+    script,
+    'unset HOME INSTALL_DIR\nexec bash "$1" --update-gws "$2"\n',
+  );
+  const prefix = join(world.home, "prefix with spaces");
+  const result = world.run({
+    script,
+    args: [join(world.install, "install.sh"), prefix],
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(world.calls().includes(`npm i -g --prefix ${prefix} `));
+  assert.deepEqual(leftovers(world.tmp), []);
+});
 void test("updater GWS path rejects corrupt bytes before npm and removes its download", (t) => {
   const world = createWorld(t);
   const result = world.run({
