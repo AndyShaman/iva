@@ -1,3 +1,4 @@
+import "./fixtures/no-host-env.ts";
 import assert from "node:assert/strict";
 import {
   linkSync,

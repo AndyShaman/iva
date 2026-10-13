@@ -6,6 +6,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { notificationChat } from "../lib/notification-chat.ts";
 import { secretEntriesFromEnv } from "../../packages/secret-redaction/index.ts";
+import secretKeyInventory from "../skills/security-defense/outbound-sensitive-keys.json" with { type: "json" };
 import { redactNotice } from "../lib/outbox.ts";
 import type { ReminderChat } from "../lib/reminder-store.ts";
 import { chatOfTurn } from "../lib/reminder-tool.ts";
@@ -54,11 +55,12 @@ async function secretInFile(
   data: Buffer,
   signal?: AbortSignal,
 ): Promise<string | null> {
-  const needles = secretEntriesFromEnv(process.env).flatMap(({ name, value }) =>
-    ["utf8", "utf16le"].map((encoding) => ({
-      name,
-      bytes: Buffer.from(value, encoding as BufferEncoding),
-    })),
+  const needles = secretEntriesFromEnv(process.env, secretKeyInventory).flatMap(
+    ({ name, value }) =>
+      ["utf8", "utf16le"].map((encoding) => ({
+        name,
+        bytes: Buffer.from(value, encoding as BufferEncoding),
+      })),
   );
   const overlap = Math.max(0, ...needles.map(({ bytes }) => bytes.length - 1));
   const chunkBytes = 64 * 1024;

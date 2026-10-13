@@ -52,7 +52,9 @@ await test("grep stream preserves one-based lines and 300-character text (seed 1
   await fc.assert(
     fc.asyncProperty(
       fc.array(
-        fc.string({ maxLength: 450 }).filter((s) => !s.includes("\n")),
+        fc
+          .string({ minLength: 294, maxLength: 450 })
+          .filter((s) => !s.includes("\n")),
         { minLength: 1, maxLength: 20 },
       ),
       async (parts) => {
@@ -76,7 +78,11 @@ await test("grep stream preserves one-based lines and 300-character text (seed 1
         );
       },
     ),
-    { seed: 101315, numRuns: 30 },
+    {
+      seed: 101315,
+      numRuns: 30,
+      examples: [[["x".repeat(292), "x".repeat(293), "x".repeat(294)]]],
+    },
   );
 });
 
@@ -110,7 +116,7 @@ await test("grep deadline excludes message transfer before expression execution"
   assert.equal(answer.count, 1);
 });
 
-await test("honest grep over 400 MiB reaches the same first 1000 matching lines", async (t) => {
+await test("grep reads all 400 MiB for a final-chunk match and for an absent match", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "iva-grep-large-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, "large.txt");
@@ -120,27 +126,80 @@ await test("honest grep over 400 MiB reaches the same first 1000 matching lines"
   const handle = await open(path, "w");
   try {
     for (let i = 0; i < 400; i++) await handle.write(block);
+    await handle.write("needle final\n");
   } finally {
     await handle.close();
   }
-  const answer = (await grep.execute(
-    { path, pattern: "ПРИВЕТ МИР$", flags: "iu" },
-    { abortSignal: new AbortController().signal } as ToolContext,
-  )) as {
+  const answer = (await grep.execute({ path, pattern: "^needle final$" }, {
+    abortSignal: new AbortController().signal,
+  } as ToolContext)) as {
     error?: string;
     count: number;
     truncated: boolean;
     matches: { file: string; line: number; text: string }[];
   };
   assert.equal(answer.error, undefined);
-  assert.equal(answer.count, 1000);
-  assert.equal(answer.truncated, true);
-  assert.deepEqual(
-    answer.matches,
-    Array.from({ length: 1000 }, (_, i) => ({
+  assert.equal(answer.count, 1);
+  assert.equal(answer.truncated, false);
+  assert.deepEqual(answer.matches, [
+    {
+      file: path,
+      line: 400 * 2048 + 1,
+      text: "needle final",
+    },
+  ]);
+  const absent = await grep.execute(
+    { path, pattern: "never-present-in-this-file" },
+    {
+      abortSignal: new AbortController().signal,
+    } as ToolContext,
+  );
+  assert.deepEqual(absent, { count: 0, truncated: false, matches: [] });
+  const limited = await grep.execute(
+    { path, pattern: "ПРИВЕТ МИР$", flags: "iu" },
+    {
+      abortSignal: new AbortController().signal,
+    } as ToolContext,
+  );
+  assert.deepEqual(limited, {
+    count: 1000,
+    truncated: true,
+    matches: Array.from({ length: 1000 }, (_, i) => ({
       file: path,
       line: i + 1,
       text: "x".repeat(300) + "…",
     })),
+  });
+});
+
+await test("grep hears cancellation between stream batches and terminates its worker", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-grep-batch-abort-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "lines.txt");
+  writeFileSync(path, "ordinary line\n".repeat(20000) + "needle final\n");
+  const controller = new AbortController();
+  const original: unknown = Reflect.get(Worker.prototype, "postMessage");
+  assert.ok(typeof original === "function");
+  let batches = 0;
+  const observedWorkers = new Set<Worker>();
+  t.mock.method(
+    Worker.prototype,
+    "postMessage",
+    function (this: Worker, value: unknown) {
+      observedWorkers.add(this);
+      if (++batches === 1)
+        this.on("message", (message: { kind: string }) => {
+          if (message.kind === "result") controller.abort();
+        });
+      Reflect.apply(original, this, [value]);
+    },
   );
+  const answer = await grep.execute({ path, pattern: "needle" }, {
+    abortSignal: controller.signal,
+  } as ToolContext);
+  assert.equal(batches, 1);
+  assert.ok(typeof answer === "object" && answer !== null && "error" in answer);
+  assert.match(String(answer.error), /поиск отменён/u);
+  assert.equal(observedWorkers.size, 1);
+  for (const worker of observedWorkers) assert.equal(worker.threadId, -1);
 });

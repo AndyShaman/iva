@@ -23,17 +23,19 @@ export function isSecretValue(value: string): boolean {
   return characters.length >= 12 && new Set(characters).size > 1;
 }
 
-/** Named eligible credentials; the existing env classifier excludes process settings and plain hosts. */
+/** Eligible credentials selected from the shared inventory supplied by the caller. */
 export function secretEntriesFromEnv(
   env: Record<string, string | undefined>,
+  names: readonly string[],
 ): Array<{ name: string; value: string }> {
-  return Object.entries(env).flatMap(([name, value]) =>
-    value === undefined
+  return names.flatMap((name) => {
+    const value = env[name];
+    return value === undefined
       ? []
       : secretValuesFromEnv({ [name]: value })
           .filter(isSecretValue)
-          .map((value) => ({ name, value })),
-  );
+          .map((value) => ({ name, value }));
+  });
 }
 
 /**

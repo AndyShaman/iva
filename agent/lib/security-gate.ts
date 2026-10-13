@@ -579,13 +579,7 @@ const REDACTED = "[REDACTED]";
 
 export function scanOutbound(input: string, redact = true): OutboundResult {
   const findings: OutboundFinding[] = [];
-  const installationEnv = Object.fromEntries(
-    secretKeyInventory.flatMap((name) => {
-      const value = process.env[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-  const values = secretEntriesFromEnv(installationEnv).map(
+  const values = secretEntriesFromEnv(process.env, secretKeyInventory).map(
     ({ value }) => value,
   );
   // Values precede shapes: a shape can otherwise cut a prefix and leave the credential's tail.

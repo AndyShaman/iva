@@ -1,3 +1,4 @@
+import "../../scripts/fixtures/no-host-env.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
@@ -112,5 +113,17 @@ await test("full installation value is removed before partial shape matches", (t
     const input = `Bearer ${value}`;
     assert.equal(scanOutbound(input, false).text, input);
     assert.equal(scanOutbound(input).text, "Bearer [REDACTED]");
+  }
+});
+
+await test("secret length boundaries 11, 12 and 13 apply to the outbound gate", (t) => {
+  fixture(t);
+  for (const length of [11, 12, 13]) {
+    const value = "a" + "b".repeat(length - 1);
+    process.env.CUSTOM_API_KEY = value;
+    const text = `plain ${value}`;
+    const answer = scanOutbound(text);
+    assert.equal(answer.clean, length === 11, `length ${length}`);
+    assert.equal(answer.text, length === 11 ? text : "plain [REDACTED]");
   }
 });

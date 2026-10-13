@@ -10,7 +10,7 @@
 
 - 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.
 
-- 🛡 **Файл со значением секрета остаётся на сервере**: перед отправкой Ива проверяет байты файла по значениям секретов установки, включая двоичные файлы; отказ называет ключ, а обычные документы уходят без изменений. Files containing installation credential values are refused with the variable name while ordinary documents retain their bytes.
+- 🛡 **Файл со значением секрета остаётся на сервере**: перед отправкой Ива проверяет байты файла по описи секретов установки, включая двоичные файлы; отказ называет ключ, а настройки протокола, адреса и обычные документы сохраняются. File checks use the shared credential inventory, preserving ordinary settings and document bytes.
 
 - 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix; placeholder values stay intact and punctuated secrets are removed in full.
 

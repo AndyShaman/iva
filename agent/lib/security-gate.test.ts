@@ -1,3 +1,4 @@
+import "../../scripts/fixtures/no-host-env.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
