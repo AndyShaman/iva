@@ -193,3 +193,15 @@ test("live helper observations compare ordered hashes and fail closed", async ()
   assert.deepEqual(liveTurnHeaders(), {});
   assert.match(liveTurnHeaders(true)["x-iva-helper"], /^h-[0-9a-f]{6}$/);
 });
+test("R1 incomplete wire observations fail closed", async () => {
+  const { helperWireResult } = await import("./live-turn.ts");
+  for (const fields of [
+    { tools: 140 },
+    { tools: "140", hash: "a".repeat(64) },
+  ]) {
+    const line = (helperBlock: boolean) =>
+      "LIVE_HELPER_WIRE " +
+      JSON.stringify({ model: "fixture", ...fields, helperBlock });
+    assert.throws(() => helperWireResult([line(false)], [line(true)]));
+  }
+});

@@ -50,9 +50,10 @@ export function helperWireResult(
   const normal = first(chat),
     background = first(helper);
   if (
-    !normal.tools ||
-    !background.tools ||
-    !background.helperBlock ||
+    !Number.isSafeInteger(normal.tools) ||
+    normal.tools <= 0 ||
+    !/^[0-9a-f]{64}$/u.test(normal.hash) ||
+    background.helperBlock !== true ||
     normal.tools !== background.tools ||
     normal.hash !== background.hash
   )
