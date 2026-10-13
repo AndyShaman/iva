@@ -1045,7 +1045,7 @@ test("окружение git: свой язык сообщений, буквал
   )) as typeof import("../agent/lib/vault-commit.ts");
   const env = seam.gitEnv({
     PATH: "/usr/bin",
-    HOME: "/home/iva",
+    HOME: "/home/user",
     LANG: "ru_RU.UTF-8",
     LANGUAGE: "ru",
     LC_ALL: "ru_RU.UTF-8",
@@ -1059,7 +1059,7 @@ test("окружение git: свой язык сообщений, буквал
   assert.equal(env.LANGUAGE, "C");
   assert.equal(env.GIT_LITERAL_PATHSPECS, "1");
   assert.equal(env.PATH, "/usr/bin");
-  assert.equal(env.HOME, "/home/iva");
+  assert.equal(env.HOME, "/home/user");
   assert.deepEqual(
     Object.keys(env).filter(
       (name) => name.startsWith("GIT_") && name !== "GIT_LITERAL_PATHSPECS",

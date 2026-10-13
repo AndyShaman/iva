@@ -200,7 +200,7 @@ function systemdEnvironmentSegment(value: string): string {
 /**
  * One whole `Environment=` directive, quoted. The quotes are the point: without them a
  * data directory with a space in it reaches the service cut at the space
- * (`/home/my box/iva/data` → `/home/my`), which is how a plugin service silently reads
+ * (`/home/user/my box/iva/data` → `/home/user/my`), which is how a plugin service silently reads
  * the wrong directory.
  */
 function systemdEnvironment(key: string, value: string): string {

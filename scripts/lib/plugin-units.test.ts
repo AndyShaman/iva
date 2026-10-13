@@ -388,7 +388,7 @@ test("the two copies of the plugin-part rule agree", () => {
 });
 
 test("a data directory with a space or a percent survives into Environment=", () => {
-  const odd = "/home/my box/100% iva/data";
+  const odd = "/home/user/my box/100% iva/data";
   const body = pluginServiceUnitBody({
     plugin: "trace",
     service: "web",
@@ -400,15 +400,15 @@ test("a data directory with a space or a percent survives into Environment=", ()
     dataDir: odd,
     nodeBinDir: "/opt/node bin",
   });
-  // Кавычки — весь смысл: без них сервис получил бы `/home/my`, а `%` systemd съел бы
+  // Кавычки — весь смысл: без них сервис получил бы `/home/user/my`, а `%` systemd съел бы
   // как спецификатор. `$` в `Environment=` не раскрывается, поэтому не трогается.
   assert.deepEqual(
     body.split("\n").filter((line) => line.startsWith("Environment=")),
     [
       'Environment="IVA_SERVICE_PORT=8726"',
-      'Environment="IVA_DATA_DIR=/home/my box/100%% iva/data"',
-      'Environment="PLUGIN_ROOT=/home/my box/100%% iva/data/custom/plugins/trace"',
-      'Environment="PLUGIN_DATA=/home/my box/100%% iva/data/plugin-data/trace"',
+      'Environment="IVA_DATA_DIR=/home/user/my box/100%% iva/data"',
+      'Environment="PLUGIN_ROOT=/home/user/my box/100%% iva/data/custom/plugins/trace"',
+      'Environment="PLUGIN_DATA=/home/user/my box/100%% iva/data/plugin-data/trace"',
       'Environment="PATH=%h/.local/bin:/opt/node bin:/usr/local/bin:/usr/bin:/bin"',
     ],
   );

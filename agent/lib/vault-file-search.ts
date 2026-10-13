@@ -58,7 +58,7 @@ export function resolveVaultToolRoot(path?: string): string {
     : resolveVaultToolPath(path);
 }
 
-// Граница одного вызова grep и glob: 29.09.2026 на c1 grep по /home/shima обходил дом 4,5
+// Граница одного вызова grep и glob: 29.09.2026 на c1 grep по /home/user обходил дом 4,5
 // минуты, ход сняли по тишине через 180 с. 20 000 файлов — в 5,6 раза больше vault владельца
 // (3537 файлов, grep по нему за 1 с). Граница достигнута — отдаём найденное с подсказкой.
 const WALK_MAX_FILES = 20_000;

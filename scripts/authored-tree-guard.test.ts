@@ -454,7 +454,8 @@ test("a missing @iva package is a named error, not a silent null", () => {
 });
 
 // The literal username "user" is the portable fixture, never a machine identity.
-const MACHINE_HOME = /\/(?:home|Users)\/(?!user\/)[A-Za-z][A-Za-z0-9_-]*\//u;
+const MACHINE_HOME =
+  /\/(?:home|Users)\/(?!user(?=[^A-Za-z0-9._-]|$))[A-Za-z][A-Za-z0-9._-]*(?=[^A-Za-z0-9._-]|$)/u;
 test("tracked product files use portable home paths", () => {
   const tracked = execFileSync("git", ["ls-files", "-z"], {
     cwd: ROOT,
@@ -472,6 +473,13 @@ test("tracked product files use portable home paths", () => {
 test("home-path guard catches Linux and macOS names and allows portable fixtures", () => {
   for (const prefix of ["/home/", "/Users/"]) {
     assert.equal(MACHINE_HOME.test(`${prefix}fixture-owner/iva`), true);
+    assert.equal(MACHINE_HOME.test(`${prefix}fixture.owner`), true);
+    assert.equal(
+      MACHINE_HOME.test(`HOME=${prefix}alice and "${prefix}bob"`),
+      true,
+    );
     assert.equal(MACHINE_HOME.test(`${prefix}user/iva`), false);
+    assert.equal(MACHINE_HOME.test(`${prefix}user`), false);
+    assert.equal(MACHINE_HOME.test(`${prefix}username`), true);
   }
 });
