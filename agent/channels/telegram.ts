@@ -422,6 +422,7 @@ const telegram = telegramChannel({
     },
     // Решение о свёртке от уборки статуса не зависит: её сбой не отменяет пересказ.
     async "turn.completed"(_data, channel, ctx) {
+      if (!ctx?.session) return;
       await finishHelperOutcomes(
         { sessionId: ctx.session.id, turnId: _data.turnId },
         Date.now(),
@@ -528,6 +529,7 @@ const telegram = telegramChannel({
     // сообщение не потерялось: пустой рендер шов отдаёт с ok=false, поэтому проверки
     // delivered у вызывающего больше нет.
     async "message.completed"(data, channel, ctx) {
+      if (!ctx?.session) return;
       if (data.finishReason === "tool-calls") {
         const step = data.message;
         if (step)

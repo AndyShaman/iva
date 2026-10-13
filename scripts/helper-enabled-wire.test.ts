@@ -3,12 +3,16 @@ import "./fixtures/no-host-anthropic.ts";
 import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { wireTurn } from "./fixtures/helper-turn.test-fixture.ts";
 process.env.MODEL_PROVIDER = "ollama";
 process.env.OLLAMA_MODEL = "chat-fixture";
 process.env.AGENT_LANGUAGE = "en";
 process.env.ASSISTANT_TIMEZONE = "UTC";
+const { default: helperTool } = await import("../agent/tools/helper.ts");
 type Wire = {
   tools: { name: string; [key: string]: unknown }[];
   prefix: unknown[];
@@ -26,6 +30,82 @@ const fixture = JSON.parse(
   ),
 ) as Wire;
 const enabled = { tools: fixture.tools, prefix: fixture.prefix };
+test("F1 wave 3-4 instructions, channel hooks and tools accept empty and unauthenticated contexts", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "iva-helper-contexts-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from "node:assert/strict";
+    import { registerHooks } from "node:module";
+    import { readdir } from "node:fs/promises";
+    await import("./scripts/lib/ts-esm-hooks.ts");
+    const telegramUrl = import.meta.resolve("eve/channels/telegram");
+    registerHooks({ load(url, context, next) {
+      if (url !== telegramUrl) return next(url, context);
+      const actual = JSON.stringify(url + "?f1-original");
+      return { format: "module", shortCircuit: true, source:
+        "export * from " + actual + "; import { telegramChannel as original } from " + actual +
+        "; export function telegramChannel(config) { globalThis.f1Hooks = config.events; return original(config); }" };
+    }});
+    await import("./agent/channels/telegram.ts");
+    const helper = (await import("./agent/tools/helper.ts")).default;
+    const web = (await import("./agent/tools/web_search.ts")).default;
+    const contexts = [
+      ["empty", {}],
+      ["no-auth", { session: { id: "fixture", turn: { id: "turn_0" } }, abortSignal: new AbortController().signal }],
+    ];
+    let posts = 0;
+    const channel = { state: {}, telegram: { chatId: "41", messageThreadId: null, request: async () => ({ message_id: 1 }), post: async () => { posts++; return { id: "1" }; } } };
+    globalThis.fetch = async () => Response.json({ ok: true, result: { message_id: 1, chat: { id: 41, type: "private" } }, results: [] });
+    const results = [], failures = [];
+    const probe = async (entry, context, work) => {
+      try { await work(); results.push({ entry, context, ok: true }); }
+      catch (error) { failures.push({ entry, context, error: String(error) }); }
+    };
+    for (const [name, ctx] of contexts) {
+      for (const file of (await readdir("./agent/instructions")).filter(f => f.endsWith(".ts"))) {
+        const definition = (await import("./agent/instructions/" + file)).default;
+        if (definition.events?.["turn.started"]) await probe("instructions/" + file, name, async () => {
+          const value = await definition.events["turn.started"]({}, ctx);
+          if (file === "41-helper-outcomes.ts" || file === "00-helper.ts") assert.equal(value, null);
+        });
+      }
+      for (const event of ["turn.completed", "message.completed"]) await probe("telegram:" + event, name, () => globalThis.f1Hooks[event]({ turnId: "turn_0", message: "Ready", finishReason: "stop" }, channel, ctx));
+      if (name === "empty") assert.equal(posts, 0);
+      for (const action of ["start", "list", "close", "outcome"]) await probe("helper:" + action, name, async () => {
+        assert.match(await helper.execute({ action, task: "test", may: "", id: "h-abcdef" }, ctx), /личного/);
+      });
+      await probe("web_search", name, async () => {
+        const reply = await web.execute({ query: "fixture" }, ctx);
+        if (name === "empty") assert.match(reply.error, /сеть/);
+        else assert.deepEqual(reply.results, []);
+      });
+    }
+    console.log(JSON.stringify({ results, failures }));
+    assert.deepEqual(failures, []);
+  `,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ASSISTANT_DATA_DIR: dir,
+        ASSISTANT_VAULT_DIR: join(dir, "vault"),
+        TELEGRAM_BOT_TOKEN: "fixture",
+        TELEGRAM_WEBHOOK_SECRET_TOKEN: "fixture",
+        TELEGRAM_ALLOWED_USER_IDS: "41",
+        SEARCH_PROVIDER: "tavily",
+        TAVILY_API_KEY: "fixture",
+      },
+    },
+  );
+  console.log("F1 context matrix " + output.trim());
+});
+
 test("real installed framework registry removes only the three automatic task tools", async () => {
   const { frameworkAgentSourceRegistry } =
     await import("../node_modules/eve/dist/src/framework/sources/registry.js");
@@ -55,7 +135,10 @@ test("enabled tools on the provider wire equal the base minus removed tools plus
     enabled.tools.filter((t) => t.name !== "helper"),
     previous.tools.filter((t) => !removed.has(t.name)),
   );
-  assert.ok(enabled.tools.find((t) => t.name === "helper"));
+  assert.equal(
+    enabled.tools.find((t) => t.name === "helper")?.description,
+    helperTool.description,
+  );
   for (const kind of "chat reminder signal watch brief insight alert helper".split(
     " ",
   )) {

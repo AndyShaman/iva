@@ -23,10 +23,10 @@ export const helperInputSchema = z.strictObject({
   id: z.string().optional(),
 });
 export function helperAuth(ctx: {
-  session: Pick<HelperToolContext["session"], "auth">;
+  session?: Partial<Pick<HelperToolContext["session"], "auth">>;
 }): s.HelperChat | null {
-  const init = ctx.session.auth.initiator,
-    current = ctx.session.auth.current;
+  const init = ctx?.session?.auth?.initiator,
+    current = ctx?.session?.auth?.current;
   if (
     isHelperTurn(ctx) ||
     init?.authenticator !== "telegram-webhook" ||
