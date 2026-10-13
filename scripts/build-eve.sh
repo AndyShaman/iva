@@ -53,5 +53,5 @@ write_build_json "$packed_hash"
 mkdir "$stage_root/final"
 tar -xzf "$archive" -C "$stage_root/final"
 actual_hash="$(node "$repo_root/scripts/lib/eve-tree-hash.ts" packed "$stage_root/final/package")"
-[[ "$actual_hash" == "$packed_hash" ]]
+[[ "$actual_hash" == "$packed_hash" ]] || { echo 'Archive contents differ from BUILD.json.' >&2; exit 1; }
 printf '%s\n' "$archive"
