@@ -22,6 +22,9 @@ function app(): string {
     "scripts/lib/data-dir.ts",
     "scripts/lib/link-target.ts",
     "scripts/lib/wf-store.ts",
+    "agent/lib/run-status.ts",
+    "agent/lib/fs-atomic.ts",
+    "agent/lib/data-dir.ts",
     "packages/data-dir/index.ts",
   ]) {
     mkdirSync(dirname(join(root, file)), { recursive: true });

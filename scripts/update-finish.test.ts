@@ -105,6 +105,7 @@ test("update quarantines session state and rewrites chat status in place", (t) =
       updatedAt: 0,
       statusMessageId: 42,
       sessionId: "old-session",
+      generation: 1,
     },
   );
   assert.equal(

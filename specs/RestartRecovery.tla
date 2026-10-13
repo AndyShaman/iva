@@ -10,15 +10,20 @@
 \* отказ восстановления не даёт сервису стартовать. Fixed = TRUE — поведение после ремонта.
 EXTENDS Naturals
 
-CONSTANTS MaxMsgs, MaxCrashes, MaxFaults, Keep, Fixed
+CONSTANTS MaxMsgs, MaxCrashes, MaxFaults, Keep, Fixed, RecoveryCAS
 
 VARIABLES proc, turn, lock, status, queue, sent, answered, noticed,
           crashes, faults, interrupted, quarantines, origKept, blocked
+
+VARIABLES recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, statusLock, bridgeDone
+recoveryVars == <<recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, statusLock, bridgeDone>>
 
 vars == <<proc, turn, lock, status, queue, sent, answered, noticed,
           crashes, faults, interrupted, quarantines, origKept, blocked>>
 
 Init ==
+  /\ recoveryPhase = "idle" /\ diskStatus = "running" /\ diskGeneration = 1
+  /\ scanGeneration = 0 /\ checkedGeneration = 0 /\ statusLock = FALSE /\ bridgeDone = FALSE
   /\ proc = "up" /\ turn = FALSE /\ lock = FALSE /\ status = "none"
   /\ queue = 0 /\ sent = 0 /\ answered = 0 /\ noticed = 0
   /\ crashes = 0 /\ faults = 0 /\ interrupted = 0
@@ -99,9 +104,41 @@ Notice ==
   /\ UNCHANGED <<proc, turn, queue, sent, answered, crashes, faults,
                  interrupted, quarantines, origKept, blocked>>
 
-Next ==
+LegacyNext ==
   \/ Send \/ StartTurn \/ FinishTurn \/ Crash \/ Boot
   \/ Quarantine \/ MarkStale \/ Fault \/ Start \/ Notice
+
+Next == LegacyNext /\ UNCHANGED recoveryVars
+
+\* H2: scan -> repeated read -> publication, with Bridge closing the same chat.
+\* RecoveryCAS uses the same per-chat lock and generation comparison as writers.
+RecoveryScan ==
+  /\ recoveryPhase = "idle"
+  /\ recoveryPhase' = "scanned" /\ scanGeneration' = diskGeneration
+  /\ UNCHANGED <<diskStatus, diskGeneration, checkedGeneration, statusLock, bridgeDone>>
+RecoveryRead ==
+  /\ recoveryPhase = "scanned" /\ ~statusLock
+  /\ recoveryPhase' = "checked" /\ checkedGeneration' = diskGeneration
+  /\ statusLock' = RecoveryCAS
+  /\ UNCHANGED <<diskStatus, diskGeneration, scanGeneration, bridgeDone>>
+BridgeFinish ==
+  /\ ~statusLock /\ ~bridgeDone
+  /\ diskStatus' = "idle" /\ diskGeneration' = diskGeneration + 1 /\ bridgeDone' = TRUE
+  /\ UNCHANGED <<recoveryPhase, scanGeneration, checkedGeneration, statusLock>>
+RecoveryPublish ==
+  /\ recoveryPhase = "checked"
+  /\ recoveryPhase' = "done" /\ statusLock' = FALSE
+  /\ IF (~RecoveryCAS /\ checkedGeneration = 1)
+          \/ (RecoveryCAS /\ diskStatus = "running" /\ scanGeneration = checkedGeneration)
+       THEN /\ diskStatus' = "stale"
+            /\ diskGeneration' = IF RecoveryCAS THEN diskGeneration + 1 ELSE checkedGeneration
+       ELSE UNCHANGED <<diskStatus, diskGeneration>>
+  /\ UNCHANGED <<scanGeneration, checkedGeneration, bridgeDone>>
+SecondWindowNext == (RecoveryScan \/ RecoveryRead \/ BridgeFinish \/ RecoveryPublish)
+  /\ UNCHANGED vars
+SecondWindowSpec == Init /\ [][SecondWindowNext]_<<vars, recoveryVars>>
+ClosedStaysClosed == bridgeDone => diskStatus = "idle"
+GenerationAdvances == diskGeneration >= checkedGeneration
 
 Fair ==
   /\ WF_vars(StartTurn) /\ WF_vars(FinishTurn) /\ WF_vars(Boot)
