@@ -63,8 +63,6 @@ function expected(configured: string | undefined): string {
 }
 
 test("C4: every process resolves the same canonical data directory", () => {
-  assert.equal(resolveAuthoredDataDir, canonicalDataDir);
-  assert.equal(resolveOperationalDataDir, canonicalDataDir);
   for (const configured of [
     undefined,
     "",
@@ -73,6 +71,9 @@ test("C4: every process resolves the same canonical data directory", () => {
     " /tmp/iva-absolute/../canonical ",
   ]) {
     const canonical = expected(configured);
+    assert.equal(canonicalDataDir(ROOT, configured), canonical);
+    assert.equal(resolveAuthoredDataDir(ROOT, configured), canonical);
+    assert.equal(resolveOperationalDataDir(ROOT, configured), canonical);
     assert.equal(fromProcess(AUTHORED, "m.dataDir()", configured), canonical);
     assert.equal(
       fromProcess(OPERATIONAL, "m.resolveDataDir(process.cwd())", configured),

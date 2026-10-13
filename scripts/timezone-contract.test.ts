@@ -20,7 +20,6 @@ function assertValidTimeZone(timeZone: string): void {
 }
 
 test("R1: valid, empty, and invalid timezone settings resolve identically", () => {
-  assert.equal(resolveAuthoredTimeZone, resolveOperationalTimeZone);
   for (const [input, expected] of [
     [" Asia/Tashkent ", "Asia/Tashkent"],
     ["", "UTC"],

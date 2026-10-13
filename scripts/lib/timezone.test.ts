@@ -5,7 +5,7 @@ import fc from "fast-check";
 import { validateTimeZone as validateAuthored } from "#lib/timezone.ts";
 import { validateTimeZone } from "./timezone.ts";
 
-// Оба дерева экспортируют одну функцию: authored tree проверяет зону на старте сервера,
+// Оба дерева соблюдают один контракт: authored tree проверяет зону на старте сервера,
 // scripts/ — когда Doctor пишет юниты без каталога agent/.
 const CASES: readonly [unknown, string | null][] = [
   [" Asia/Tashkent ", "Asia/Tashkent"],
@@ -27,8 +27,13 @@ const ZONES = Intl.supportedValuesOf("timeZone");
 
 const PADDING = fc.constantFrom("", " ", "  ", "\t", "\n", " ", " ");
 
-void test("authored and operational trees export one validator", () => {
-  assert.equal(validateAuthored, validateTimeZone);
+void test("authored and operational validators agree for arbitrary input (seed 190000)", () => {
+  fc.assert(
+    fc.property(fc.oneof(fc.string(), fc.jsonValue()), (input) => {
+      assert.equal(validateAuthored(input), validateTimeZone(input));
+    }),
+    { seed: 190_000, numRuns: 1_000 },
+  );
 });
 
 for (const [input, expected] of CASES) {
