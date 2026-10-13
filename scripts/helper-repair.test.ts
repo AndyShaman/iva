@@ -237,15 +237,19 @@ test("R4 malformed helper cannot fall through to local-dev and foreign authentic
     false,
   );
 });
-test("R5 records actual root, planner and inline models and never resolves helper windows in the usage hook", async () => {
+test("R5 records actual root, declared and inline models and never resolves helper windows in the usage hook", async () => {
   const home = await mkdtemp(join(tmpdir(), "iva-repair-usage-"));
   process.env.ASSISTANT_DATA_DIR = home;
   try {
     const hook = (await import("../agent/hooks/usage.ts")).default;
     const { generateText } = await import("ai");
     const { makeTextModel } = await import("../agent/provider.ts");
-    const planner = (await import("../agent/subagents/planner/agent.ts"))
-      .default;
+    const declared = {
+      model: makeTextModel({
+        model: "chat-fixture",
+        chatModelSeesImages: () => Promise.resolve(false),
+      }),
+    };
     const previous = globalThis.fetch;
     const wire: string[] = [];
     globalThis.fetch = (_url, init) => {
@@ -291,10 +295,10 @@ test("R5 records actual root, planner and inline models and never resolves helpe
         turnId: "turn_0",
         usage: { inputTokens: 10, outputTokens: 2 },
       };
-      // Root and separate planner sessions each receive their actual step.started model.
+      // Root and separate declared sessions each receive their actual step.started model.
       for (const [id, kind, model] of [
         ["root", "http", rootModel],
-        ["planner", "subagent", planner.model],
+        ["declared", "subagent", declared.model],
       ] as const) {
         await generateText({ model, prompt: "plan" });
         const owner = {
@@ -307,15 +311,15 @@ test("R5 records actual root, planner and inline models and never resolves helpe
           owner as never,
         );
       }
-      await generateText({ model: planner.model, prompt: "inline plan" });
+      await generateText({ model: declared.model, prompt: "inline plan" });
       for (const inner of [
         {
           type: "step.completed",
-          data: { ...data, providerModelId: planner.model.modelId },
+          data: { ...data, providerModelId: declared.model.modelId },
         },
       ])
         await hook.events!["subagent.event"]!(
-          { data: { subagentName: "planner", event: inner } } as never,
+          { data: { subagentName: "declared", event: inner } } as never,
           ctx as never,
         );
       const rows = (await readFile(join(home, "usage.jsonl"), "utf8"))

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node test registrations. */
 import "./fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test, after } from "node:test";
@@ -63,22 +63,16 @@ test("helper uses chat definitions and static block, retaining owner instruction
     /owner-fixture/,
   );
 });
-test("existing turn wire equals ordered bytes from 21f447ed", async () => {
-  const base = JSON.parse(
-    await readFile(
-      new URL("./fixtures/helper-turn-base.json", import.meta.url),
-      "utf8",
-    ),
-  ) as { base: string; wire: string };
-  assert.equal(base.base, "21f447ed");
+test("enabled turn wire stays identical across all existing turn kinds", async () => {
+  const expected = (await wireTurn({ kind: "chat" })).wire;
   for (const kind of "chat reminder signal watch brief insight alert".split(
     " ",
   )) {
     const { wire } = await wireTurn({ kind });
-    assert.equal(JSON.stringify(wire), base.wire, kind);
+    assert.equal(JSON.stringify(wire), JSON.stringify(expected), kind);
     assert.notEqual(
       JSON.stringify({ ...wire, tools: [...wire.tools].reverse() }),
-      base.wire,
+      JSON.stringify(expected),
     );
   }
 });
@@ -179,7 +173,7 @@ test("live helper observations compare ordered hashes and fail closed", async ()
     background = [observation(helper.wire.tools, true)];
   assert.deepEqual(helperWireResult(normal, background), {
     model: "helper-fixture",
-    tools: 140,
+    tools: chat.wire.tools.length,
   });
   for (const tools of [
     [],

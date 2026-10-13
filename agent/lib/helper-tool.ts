@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isHelperTurn } from "./eve-auth.ts";
 import { traceHelper } from "./trace.ts";
 import * as s from "./helper-store.ts";
+import { readHelperOutcome } from "./helper-outcome.ts";
 import { runHelperTick } from "./helper-tick.ts";
 type Auth = {
   authenticator: string;
@@ -21,7 +22,9 @@ export const helperInputSchema = z.strictObject({
   may: z.string().optional(),
   id: z.string().optional(),
 });
-export function helperAuth(ctx: HelperToolContext): s.HelperChat | null {
+export function helperAuth(ctx: {
+  session: Pick<HelperToolContext["session"], "auth">;
+}): s.HelperChat | null {
   const init = ctx.session.auth.initiator,
     current = ctx.session.auth.current;
   if (
@@ -96,7 +99,10 @@ export async function helperExecute(
           ? "Останавливается, частичный итог будет после остановки; прочитай через outcome."
           : "Закрыто, автоматический пересказ снят; исход доступен через outcome.";
     }
-    return "Чтение outcome подключается вместе с доставкой исходов.";
+    return await readHelperOutcome(v.id ?? "", chat, {
+      sessionId: ctx.session.id,
+      turnId: ctx.session.turn.id,
+    });
   } catch (error) {
     return `Не записалось, повтори: ${String(error)}`;
   }

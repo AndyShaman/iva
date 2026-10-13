@@ -1,3 +1,7 @@
+import {
+  noteHelperReply,
+  finishHelperOutcomes,
+} from "../lib/helper-outcome.ts";
 import { randomUUID } from "node:crypto";
 import {
   telegramChannel,
@@ -418,6 +422,10 @@ const telegram = telegramChannel({
     },
     // Решение о свёртке от уборки статуса не зависит: её сбой не отменяет пересказ.
     async "turn.completed"(_data, channel, ctx) {
+      await finishHelperOutcomes(
+        { sessionId: ctx.session.id, turnId: _data.turnId },
+        Date.now(),
+      );
       try {
         await flushSettledTelegramQuestions(channel.state, channel.telegram);
       } finally {
@@ -570,6 +578,10 @@ const telegram = telegramChannel({
       );
       if (!result.ok) return;
       recordDelivery(true);
+      noteHelperReply(
+        { sessionId: ctx.session.id, turnId: data.turnId },
+        message,
+      );
     },
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.

@@ -39,3 +39,5 @@ userbot-чаты и вывод скилла agent-browser (он приходит
 fail-open Gate с редакцией секретов. Это принятый риск владельца, не пробел
 плана. Дока и SECURITY.md описывают границу честно. Вопрос открывается снова
 только по прямой команде владельца.
+
+Helper rights and the removal of bundled planner/default task tools are defined in [ADR-0025](0025-helper-turn-rights.md).

@@ -153,6 +153,10 @@ async function authoredTurn(root: string, kind: string) {
       inputSchema: jsonSchema(serializeInputSchema(d.inputSchema)! as never),
       execute: async () => "ok",
     });
+  const { frameworkAgentSourceRegistry } = await load<
+    typeof import("../../node_modules/eve/dist/src/framework/sources/registry.js")
+  >(root, "node_modules/eve/dist/src/framework/sources/registry.js");
+  const registered = JSON.stringify(frameworkAgentSourceRegistry.registrations);
   for (const [name, path] of [
     ["todo", "provided/todo"],
     ["load_skill", "provided/load-skill"],
@@ -161,15 +165,16 @@ async function authoredTurn(root: string, kind: string) {
     ["task_cancel", "framework/task-cancel"],
     ["agent", "framework/agent"],
   ])
-    add(
-      name,
-      (
-        await load<{ default: Definition }>(
-          root,
-          "node_modules/eve/dist/src/tools/" + path + ".js",
-        )
-      ).default,
-    );
+    if (registered.includes(`tools/${name}.ts`))
+      add(
+        name,
+        (
+          await load<{ default: Definition }>(
+            root,
+            "node_modules/eve/dist/src/tools/" + path + ".js",
+          )
+        ).default,
+      );
   for (const name of (await readdir(join(root, "agent/tools"))).sort())
     if (name.endsWith(".ts") && !name.endsWith(".test.ts"))
       add(
@@ -180,7 +185,14 @@ async function authoredTurn(root: string, kind: string) {
   const { createPreparedRuntimeSubagentTool } = await load<
     typeof import("../../node_modules/eve/dist/src/runtime/subagents/registry.js")
   >(root, "node_modules/eve/dist/src/runtime/subagents/registry.js");
-  for (const name of (await readdir(join(root, "agent/subagents"))).sort()) {
+  for (const name of (
+    await readdir(join(root, "agent/subagents")).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      },
+    )
+  ).sort()) {
     const mod = await load<{ default: { description: string } }>(
       root,
       "agent/subagents/" + name + "/agent.ts",
@@ -242,6 +254,7 @@ export async function wireTurn(
     noEvents?: boolean;
     retry?: boolean;
     compact?: boolean;
+    approvalTool?: string;
     onStep?: (ctx: AlsContext) => Promise<void>;
   } = {},
 ) {
@@ -268,6 +281,12 @@ export async function wireTurn(
         }
       : auth,
   );
+  if (options.approvalTool)
+    ctx.set(eve.SessionKey, {
+      auth: { initiator: auth, current: auth },
+      sessionId: "fixture",
+      turn: { id: "turn_0", sequence: 0 },
+    });
   ctx.set(eve.SessionIdKey, "fixture");
   ctx.set(eve.TurnDynamicInstructionsKey, authored.instructions);
   let count = 0,
@@ -372,6 +391,9 @@ export async function wireTurn(
   for (const [name, tool] of authored.tools)
     authored.tools.set(name, {
       ...tool,
+      ...(options.approvalTool === name
+        ? { approval: () => "user-approval" as const }
+        : {}),
       execute: async () => {
         executions++;
         return "ok";

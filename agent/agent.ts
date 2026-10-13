@@ -4,7 +4,7 @@ import { isHelperTurn } from "./lib/eve-auth.ts";
 import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
 import { defineAgent, defineDynamic } from "eve";
 // Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts
-// и agent/subagents/planner/agent.ts).
+// и the selected helper model).
 // codex = подписка ChatGPT (Responses API + OAuth); ollama/opencode = OpenAI-совместимый chat.
 import {
   providerName,

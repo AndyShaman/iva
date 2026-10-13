@@ -111,3 +111,5 @@ ADR-0005 (изоляция секретов от шелла) отложена в
 остаётся в силе про реестр.
 
 Статус: решение принято 15.08.2026, рельсы — ADR-0009, первый плагин — ADR-0010.
+
+Helper rights and the removal of bundled planner/default task tools are defined in [ADR-0025](0025-helper-turn-rights.md).

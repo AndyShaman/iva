@@ -292,7 +292,10 @@ export default defineTool({
         headers: req.headers,
         body: req.body,
         // Отмена хода обрывает и запрос к провайдеру, а не только ожидание ответа.
-        signal: ctx.abortSignal,
+        signal: AbortSignal.any([
+          ctx.abortSignal,
+          AbortSignal.timeout(120_000),
+        ]),
       });
     } catch (e) {
       return { error: `сеть: ${(e as Error).message}` };

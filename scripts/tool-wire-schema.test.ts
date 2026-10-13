@@ -7,7 +7,7 @@
 import "./lib/ts-esm-hooks.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -23,7 +23,7 @@ const { serializeInputSchema } = (await import(
 function toolFiles(): string[] {
   const dirs = [join(ROOT, "agent/tools")];
   const subagents = join(ROOT, "agent/subagents");
-  for (const name of readdirSync(subagents))
+  for (const name of existsSync(subagents) ? readdirSync(subagents) : [])
     dirs.push(join(subagents, name, "tools"));
   return dirs.flatMap((dir) => {
     let names: string[];

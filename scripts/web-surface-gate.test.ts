@@ -48,10 +48,6 @@ function agentNodeDirectories(): string[] {
 test("каждый узел графа агентов либо гейтит web-тул, либо выключает его", async () => {
   const nodes = agentNodeDirectories();
   assert.ok(nodes.includes("agent"), "корневой узел обязан быть в обходе");
-  assert.ok(
-    nodes.includes("agent/subagents/planner"),
-    "planner обязан быть в обходе; каталог субагентов переименован?",
-  );
 
   for (const node of nodes) {
     for (const name of WEB_TOOL_NAMES) {
@@ -74,17 +70,5 @@ test("каждый узел графа агентов либо гейтит web-
         `${relativePath} не выключен и не ссылается на ${GATE_MODULE}: web-контент пойдёт мимо санитайзера`,
       );
     }
-  }
-});
-
-test("web-слоты планировщика закрыты sentinel-ом, а не пустым модулем", async () => {
-  for (const name of WEB_TOOL_NAMES) {
-    const { default: authored } = (await import(
-      join(ROOT, "agent/subagents/planner/tools", `${name}.ts`)
-    )) as { default: unknown };
-    assert.ok(
-      isDisabledToolSentinel(authored),
-      `planner/${name} обязан экспортировать disableTool()`,
-    );
   }
 });

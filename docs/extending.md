@@ -77,12 +77,14 @@ and file paths must be resolved and bounded to their permitted root. Keep creden
 The disposable build compiles custom tools together with the authored tree's tools without copying their
 source into the live checkout.
 
+For long background work use [helpers](helpers.md). Bundled `planner` and the automatic
+`agent`, `task_cancel`, `task_update` tools have been removed (ADR-0025).
+
 ## Subagents
 
 A subagent is `data/custom/agent/subagents/<name>/` with an `agent.ts` and its own `instructions.md`.
-The bundled `agent/subagents/planner` is the pattern: its `description` tells the main agent when to
-delegate ("break a large goal into steps"), and a zod `outputSchema` forces a structured, validated
-reply instead of prose:
+Custom declared nodes remain supported by eve. Their `description` tells the main agent when to
+use them, and a zod `outputSchema` provides a structured, validated reply:
 
 ```ts
 outputSchema: z.object({
@@ -93,7 +95,7 @@ outputSchema: z.object({
 }),
 ```
 
-A subagent runs on the main provider: the planner takes its model straight from `agent/provider.ts`, so `MODEL_PROVIDER` picks the model for every node of the graph at once. Subagents deliberately keep no provider or env of their own — one selection, one identity, one usage line.
+A subagent runs on the main provider: a declared node can take its model from `agent/provider.ts`, so `MODEL_PROVIDER` picks the model for every node of the graph at once. Subagents deliberately keep no provider or env of their own — one selection, one identity, one usage line.
 
 ## Your rules
 

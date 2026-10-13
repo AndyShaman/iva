@@ -93,7 +93,7 @@ Every model step appends one JSON line to `data/usage.jsonl` — including tool-
 
 - 📍 **Source** — `telegram` chat vs `http` background jobs, so rollups and digests don't hide inside your chat totals
 - 🧮 **Five counters** — in, out, cache read, cache write, total — plus model, session, turn and step index
-- 🤖 **Subagent steps** — planner tokens are tagged with the subagent name and counted, not lost
+- 🤖 **Subagent steps** — declared subagent tokens are tagged with the subagent name and counted, not lost
 
 The log lives in `data/` next to `tasks.json`, gitignored and outside the vault — otherwise the nightly Brain pass would commit an ever-growing log into your memory repo.
 

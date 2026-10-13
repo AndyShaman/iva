@@ -63,7 +63,13 @@ async function search(
     logs.push(args.map(String).join(" "));
   };
   try {
-    const value = (await webSearchTool.execute({ query }, ctx)) as SearchResult;
+    const value = (await webSearchTool.execute(
+      { query },
+      {
+        ...ctx,
+        abortSignal: ctx.abortSignal ?? new AbortController().signal,
+      },
+    )) as SearchResult;
     return { value, logs };
   } finally {
     globalThis.fetch = originalFetch;
@@ -177,10 +183,9 @@ async function searchRaw(
     logs.push(args.map(String).join(" "));
   };
   try {
-    const value = (await webSearchTool.execute(
-      { query: "курс доллара" },
-      {} as unknown as ToolContext,
-    )) as SearchResult;
+    const value = (await webSearchTool.execute({ query: "курс доллара" }, {
+      abortSignal: new AbortController().signal,
+    } as ToolContext)) as SearchResult;
     return { value, logs };
   } finally {
     globalThis.fetch = originalFetch;
@@ -269,10 +274,40 @@ test("отмена хода доезжает до запроса к провай
     const execution = webSearchTool.execute({ query: "курс доллара" }, {
       abortSignal: controller.signal,
     } as unknown as ToolContext);
-    assert.equal(seen, controller.signal, "запрос ушёл без сигнала отмены");
+    assert.equal(seen?.aborted, false, "запрос получил активный сигнал");
     controller.abort();
+    assert.equal(seen?.aborted, true, "отмена хода дошла до запроса");
+    assert.equal(seen?.reason, controller.signal.reason);
     const value = (await execution) as SearchResult;
     assert.match(value.error ?? "", /сеть/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("запрос к провайдеру ограничен 120 секундами при продолжающемся ходе", async (t) => {
+  const originalFetch = globalThis.fetch;
+  process.env.SEARCH_PROVIDER = "tavily";
+  process.env.TAVILY_API_KEY = "test-key";
+  const deadline = new AbortController();
+  const turn = new AbortController();
+  const timeout = new DOMException("Search timed out", "TimeoutError");
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    assert.equal(ms, 120_000);
+    return deadline.signal;
+  });
+  globalThis.fetch = (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(timeout));
+    });
+  try {
+    const execution = webSearchTool.execute({ query: "курс доллара" }, {
+      abortSignal: turn.signal,
+    } as ToolContext);
+    deadline.abort(timeout);
+    const value = (await execution) as SearchResult;
+    assert.match(value.error ?? "", /сеть: Search timed out/u);
+    assert.equal(turn.signal.aborted, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

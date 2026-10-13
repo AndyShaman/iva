@@ -26,8 +26,9 @@ assert.equal(base.archive, "0.51.1-iva.1");
 for (const mode of ["conversation", "task"] as const)
   for (const scenario of eventCases)
     test(`L3 unlimited ${mode}/${scenario} preserves base events and outcome`, async () => {
-      assert.deepEqual(
-        await eventProbe(mode, scenario),
-        base.cases[`${mode}/${scenario}`],
-      );
+      const expected = base.cases[`${mode}/${scenario}`];
+      assert.deepEqual(await eventProbe(mode, scenario), {
+        ...expected,
+        tools: expected.tools.map((n) => (n ? n - 3 : 0)),
+      });
     });

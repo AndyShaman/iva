@@ -360,7 +360,7 @@ export const codexFetch: typeof fetch = async (input, init) => {
 // ведёт шаги одного диалога к одному кэшу, и префикс прошлого шага читается из кэша. Без
 // ключа соседние шаги попадали в кэш через раз. Без сессии ключ — ID процесса (wireSessionId).
 // wrapGenerate: бэкенд подписки принимает только stream:true, на запрос без стрима отвечает
-// 400. generateText (пересказ истории eve между ходами и страховка внутри хода, planner)
+// 400. generateText (пересказ истории eve между ходами и страховка внутри хода, declared nodes)
 // поэтому идёт стримом, ответ собирается в результат doGenerate (generateViaStream).
 // doGenerate у codex не вызывается никогда. Внутренний doStream идёт мимо
 // modelFirstChunkDeadlineMiddleware из makeTextModel, поэтому срок первой части тот же,
@@ -553,7 +553,7 @@ export function attachVaultImages(
  * Прикладывает картинки Vault к промпту. Предикат «текстовая модель видит картинки»
  * приходит параметром, а не импортом `vision.ts`: vision сам зовёт `makeTextModel()`
  * для пробника, и этот импорт замыкал цикл provider ↔ vision. Форма — как у эффектов
- * telegram-media: потребитель (agent.ts, planner, vision) отдаёт свою реализацию.
+ * telegram-media: потребитель (agent.ts, declared nodes, vision) отдаёт свою реализацию.
  */
 export type ImageCapability = () => Promise<boolean>;
 

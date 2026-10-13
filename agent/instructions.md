@@ -35,7 +35,7 @@ the owner's rules.
 - tasks → `task-management`, `tasks`
 - reminders → the `remind` tool
 - day plan, daily brief → `brief`
-- big goal → `planner`
+- long work → `helper`
 - web → `web_search`/`web_fetch`, deep research → `web-research`
 - browser → `agent-browser`
 - Google → `google-workspace`

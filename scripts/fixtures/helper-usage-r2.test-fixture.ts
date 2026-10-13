@@ -42,15 +42,16 @@ export async function usageProbe() {
     )[event.type];
     await fn?.(event, owner);
   };
-  for (const kind of ["root", "planner", "inline", "failure"]) {
+  for (const kind of ["root", "declared", "inline", "failure"]) {
     const bare =
       kind === "root" || kind === "failure"
         ? makeTextModel({
             model: choice.model,
             chatModelSeesImages: async () => false,
           })
-        : (await import("../../agent/subagents/planner/agent.ts")).default
-            .model;
+        : makeTextModel({
+            chatModelSeesImages: async () => false,
+          });
     models.push(bare.modelId);
     const model = wrapLanguageModel({
       model: bare,
@@ -100,7 +101,7 @@ export async function usageProbe() {
         events.push(event);
         if (kind === "inline")
           await hook.events!["subagent.event"]!(
-            { data: { subagentName: "planner", event } } as never,
+            { data: { subagentName: "declared", event } } as never,
             owner as never,
           );
         else await dispatch(event);
@@ -108,7 +109,7 @@ export async function usageProbe() {
           // Replayed completion must carry its own model on every delivery.
           if (kind === "inline")
             await hook.events!["subagent.event"]!(
-              { data: { subagentName: "planner", event } } as never,
+              { data: { subagentName: "declared", event } } as never,
               owner as never,
             );
           else await dispatch(event);
