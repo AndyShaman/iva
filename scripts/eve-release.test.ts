@@ -16,8 +16,10 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { hashEveTree } from "./lib/eve-tree-hash.ts";
+import { eveReleaseVersion } from "./fixtures/eve-release-version.test-fixture.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const TAG = "eve-0.51.1-iva.1";
+const VERSION = eveReleaseVersion(ROOT);
+const TAG = "eve-" + VERSION;
 const GIT = execFileSync("sh", ["-c", "command -v git"], {
   encoding: "utf8",
 }).trim();
@@ -39,20 +41,21 @@ import {spawnSync} from 'node:child_process';
 import {appendFileSync, copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {basename} from 'node:path';
 const tool = basename(process.argv[1]), args = process.argv.slice(2);
+const tag = ${JSON.stringify(TAG)};
 const step = tool === 'git' ? args[0] === 'rev-parse' ? 'commit' : args[0] === 'tag' ? 'tag' : args[0] === 'push' ? 'push' : null : tool === 'gh' ? args[1] : tool === 'curl' ? 'download' : 'ci';
 if (step) {
  appendFileSync(process.env.EVE_TEST_LOG, JSON.stringify({tool, step, args})+'\n');
  if (process.env.EVE_TEST_FAIL === step) process.exit(7);
 }
 if (tool === 'git') {
- if (args[0] === 'push') { if (args.join(' ') !== 'push origin refs/tags/eve-0.51.1-iva.1') throw Error('unexpected push'); process.exit(0); }
+ if (args[0] === 'push') { if (args.join(' ') !== 'push origin refs/tags/' + tag) throw Error('unexpected push'); process.exit(0); }
  const result = spawnSync(process.env.EVE_TEST_GIT, args, {stdio: 'inherit'}); process.exit(result.status ?? 1);
 }
 if (tool === 'gh') {
  const state = process.env.EVE_TEST_STATE, asset = process.env.EVE_TEST_ASSET;
  if (args[1] === 'view') {
   if (!existsSync(state)) { console.error('release not found'); process.exit(1); }
-  console.log(existsSync(asset) ? 'eve-0.51.1-iva.1.tgz' : '');
+  console.log(existsSync(asset) ? tag + '.tgz' : '');
  } else if (args[1] === 'create') {
   if (existsSync(state)) throw Error('release already exists');
   writeFileSync(state, 'release');
@@ -96,10 +99,10 @@ async function fixture(t: TestContext) {
   writeFileSync(path.join(root, "eve/NOTICE"), "source");
   json("out/input/package/package.json", {
     name: "eve",
-    version: "0.51.1-iva.1",
+    version: VERSION,
   });
   json("out/input/package/BUILD.json", {
-    packageVersion: "0.51.1-iva.1",
+    packageVersion: VERSION,
     sourceTreeHash: await hashEveTree(path.join(root, "eve"), "source"),
     packedTreeHash: await hashEveTree(
       path.join(root, "out/input/package"),

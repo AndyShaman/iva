@@ -1239,10 +1239,44 @@ test("provider, model, effort and pending key persist in one atomic write", asyn
     {
       THINKING_EFFORT: "medium",
       MODEL_PROVIDER: "opencode",
+      HELPER_MODEL: null,
       OPENCODE_MODEL: "live-model",
       OPENCODE_API_KEY: "new-secret",
     },
   ]);
+});
+
+test("saving a model on the same provider preserves the helper model", async () => {
+  const writes: Array<Record<string, string | null>> = [];
+  await validateAndSaveWizard(
+    {
+      flow: "model",
+      provider: "opencode",
+      model: "live-model",
+      effort: "medium",
+      pendingKey: "new-secret",
+    },
+    {
+      readEnv: async () => ({
+        MODEL_PROVIDER: "opencode",
+        HELPER_MODEL: "helper-model",
+      }),
+      validate: async (selection) => ({
+        id: selection.model,
+        reasoningLevels: ["medium"],
+      }),
+      write: async (updates) => writes.push(updates),
+    },
+  );
+  assert.deepEqual(writes, [
+    {
+      THINKING_EFFORT: "medium",
+      MODEL_PROVIDER: "opencode",
+      OPENCODE_MODEL: "live-model",
+      OPENCODE_API_KEY: "new-secret",
+    },
+  ]);
+  assert.equal(Object.hasOwn(writes[0], "HELPER_MODEL"), false);
 });
 
 // --- Свойство жнеца на виртуальном времени (seeded, реплей через IVA_TEST_SEED) ---

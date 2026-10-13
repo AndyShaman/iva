@@ -30,24 +30,26 @@ export const TURN_KINDS: ReadonlySet<string> = new Set([
   "helper",
 ]);
 
-export function isHelperTurn(ctx?: {
-  session: {
-    auth?: {
-      initiator?: {
-        authenticator: string;
-        attributes: Readonly<Record<string, unknown>>;
+export function isHelperTurn(
+  ctx?: {
+    session?: {
+      auth?: {
+        initiator?: {
+          authenticator: string;
+          attributes?: Readonly<Record<string, unknown>> | null;
+        } | null;
+        current?: {
+          authenticator: string;
+          attributes?: Readonly<Record<string, unknown>> | null;
+        } | null;
       } | null;
-      current?: {
-        authenticator: string;
-        attributes: Readonly<Record<string, unknown>>;
-      } | null;
-    };
-  };
-}): boolean {
-  return [ctx?.session.auth?.initiator, ctx?.session.auth?.current].some(
+    } | null;
+  } | null,
+): boolean {
+  return [ctx?.session?.auth?.initiator, ctx?.session?.auth?.current].some(
     (auth) =>
       auth?.authenticator === "iva-bearer" &&
-      auth.attributes.iva_turn === "helper",
+      auth.attributes?.iva_turn === "helper",
   );
 }
 

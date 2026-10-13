@@ -461,7 +461,13 @@ for (const inheritedGitDirectory of [false, true]) {
           );
         };
         commit();
-        const archive = path.join(fixture, "out/eve-0.51.1-iva.2.tgz");
+        const { eveReleaseVersion } =
+          await import("./fixtures/eve-release-version.test-fixture.ts");
+        const archive = path.join(
+          fixture,
+          "out",
+          `eve-${eveReleaseVersion(ROOT)}.tgz`,
+        );
         const bytes = await readFile(archive);
         const first = runRelease();
         assert.equal(first.status, 0, first.stdout + first.stderr);

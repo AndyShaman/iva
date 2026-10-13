@@ -4,7 +4,12 @@ import { randomBytes } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { routeAuth } from "eve/channels/auth";
 import fc from "fast-check";
-import { assistantBearerAuth, createEveAuth, TURN_KINDS } from "./eve-auth.ts";
+import {
+  assistantBearerAuth,
+  createEveAuth,
+  isHelperTurn,
+  TURN_KINDS,
+} from "./eve-auth.ts";
 
 const SEED = Number(process.env.FC_SEED ?? Date.now() % 2 ** 31);
 
@@ -13,6 +18,26 @@ const request = (host: string, token?: string) =>
   new Request(`http://${host}/eve/v1/session`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
+
+test("helper detection tolerates missing context, session, auth and attributes", () => {
+  for (const ctx of [
+    {},
+    { session: {} },
+    undefined,
+    null,
+    { session: null },
+    { session: { auth: null } },
+    { session: { auth: { initiator: null, current: null } } },
+    { session: { auth: { initiator: { authenticator: "iva-bearer" } } } },
+    {
+      session: {
+        auth: { current: { authenticator: "iva-bearer", attributes: null } },
+      },
+    },
+  ]) {
+    assert.equal(isHelperTurn(ctx), false);
+  }
+});
 
 test("bearer auth accepts only the configured secret", async () => {
   const auth = assistantBearerAuth(TOKEN);
