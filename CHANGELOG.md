@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.
+
 - 🛡 **Текстовый файл с ключами остаётся на сервере**: перед отправкой файла Ива проверяет его содержимое и просит убрать секреты из копии. Text files containing credentials are refused before Telegram receives their bytes.
 
 - 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix.
