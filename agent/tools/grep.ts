@@ -1,7 +1,8 @@
 import { Worker } from "node:worker_threads";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { relative, sep } from "node:path";
 import {
   globToRegExp,
@@ -31,11 +32,29 @@ async function* filesAt(
   else yield* eachFile(root, bound);
 }
 
-async function readLines(file: string): Promise<string[] | null> {
+async function* lineBatches(file: string): AsyncGenerator<string[]> {
+  const stream = createReadStream(file, {
+    encoding: "utf8",
+    highWaterMark: 64 * 1024,
+  });
+  let pending: string[] = [];
   try {
-    return (await readFile(file, "utf8")).split("\n");
+    for await (const chunk of stream) {
+      const parts = String(chunk).split("\n");
+      if (parts.length === 1) {
+        pending.push(parts[0]);
+        continue;
+      }
+      parts[0] = pending.join("") + parts[0];
+      pending = [parts.pop()!];
+      yield parts;
+    }
+    // split("\\n") includes an empty final line after a trailing newline, including an empty file.
+    yield [pending.join("")];
   } catch {
-    return null;
+    return;
+  } finally {
+    stream.destroy();
   }
 }
 
@@ -43,16 +62,24 @@ async function readLines(file: string): Promise<string[] | null> {
 const MATCH_SOURCE = `
 const { parentPort, workerData } = require("node:worker_threads");
 const expression = new RegExp(workerData.pattern, workerData.flags);
-parentPort.on("message", (lines) => {
+parentPort.on("message", ({lines, offset, limit}) => {
+  parentPort.postMessage({kind: "started"});
   const matches = [];
+  const started = performance.now();
   for (let index = 0; index < lines.length; index++) {
     expression.lastIndex = 0;
     if (expression.test(lines[index])) matches.push({
-      line: index + 1,
+      line: offset + index + 1,
       text: lines[index].length > 300 ? lines[index].slice(0, 300) + "…" : lines[index]
     });
+    if (performance.now() - started > workerData.matchTimeMs) {
+      parentPort.postMessage({kind: "error", error: "выражение слишком тяжёлое, упрости"});
+      return;
+    }
+    if (matches.length >= limit) break;
   }
-  parentPort.postMessage(matches);
+  parentPort.postMessage({kind: "matched"});
+  parentPort.postMessage({kind: "result", matches});
 });
 `;
 const MATCH_TIME_MS = 1000;
@@ -61,10 +88,16 @@ type LineMatch = Omit<Match, "file">;
 function matchLines(
   worker: Worker,
   lines: string[],
+  offset: number,
+  limit: number,
   signal?: AbortSignal,
 ): Promise<LineMatch[]> {
   return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
     const finish = (error: Error | null, matches: LineMatch[] = []) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       worker.off("message", receive);
@@ -74,34 +107,53 @@ function matchLines(
       else resolve(matches);
     };
     const abort = () => finish(new Error("поиск отменён"));
-    const receive = (matches: LineMatch[]) => finish(null, matches);
+    const receive = (message: {
+      kind: string;
+      matches?: LineMatch[];
+      error?: string;
+    }) => {
+      if (message.kind === "started")
+        timer = setTimeout(
+          () => finish(new Error("выражение слишком тяжёлое, упрости")),
+          MATCH_TIME_MS,
+        );
+      else if (message.kind === "matched") clearTimeout(timer);
+      else if (message.kind === "error") finish(new Error(message.error));
+      else if (message.kind === "result") finish(null, message.matches);
+    };
     const failed = (error: Error) => finish(error);
     const exited = () => finish(new Error("поток поиска завершился"));
-    const timer = setTimeout(
-      () => finish(new Error("выражение слишком тяжёлое, упрости")),
-      MATCH_TIME_MS,
-    );
-    worker.once("message", receive);
+    worker.on("message", receive);
     worker.once("error", failed);
     worker.once("exit", exited);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     else if (worker.threadId === -1) exited();
-    else worker.postMessage(lines);
+    else worker.postMessage({ lines, offset, limit });
   });
 }
 
 async function matchesInFile(
   file: string,
   worker: Worker,
+  limit: number,
   signal?: AbortSignal,
 ): Promise<Match[]> {
-  const lines = await readLines(file);
-  if (lines === null) return [];
-  return (await matchLines(worker, lines, signal)).map((match) => ({
-    file,
-    ...match,
-  }));
+  const matches: Match[] = [];
+  let offset = 0;
+  for await (const lines of lineBatches(file)) {
+    const found = await matchLines(
+      worker,
+      lines,
+      offset,
+      limit - matches.length,
+      signal,
+    );
+    matches.push(...found.map((match) => ({ file, ...match })));
+    offset += lines.length;
+    if (matches.length >= limit) break;
+  }
+  return matches;
 }
 
 function result(matches: Match[], full: boolean, bound: WalkBound) {
@@ -121,7 +173,12 @@ async function findMatches(
     const relativePath = relative(root, file).split(sep).join("/");
     if (globExpression !== null && !globExpression.test(relativePath)) continue;
     const remaining = MAX_MATCHES - matches.length;
-    const additions = await matchesInFile(file, worker, bound.signal);
+    const additions = await matchesInFile(
+      file,
+      worker,
+      remaining,
+      bound.signal,
+    );
     matches.push(...additions.slice(0, remaining));
     if (additions.length >= remaining) return result(matches, true, bound);
   }
@@ -153,7 +210,7 @@ export default defineTool({
       }
       worker = new Worker(MATCH_SOURCE, {
         eval: true,
-        workerData: { pattern, flags: flags ?? "" },
+        workerData: { pattern, flags: flags ?? "", matchTimeMs: MATCH_TIME_MS },
       });
       worker.on("error", () => {});
       return await findMatches(
