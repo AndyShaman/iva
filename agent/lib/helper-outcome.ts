@@ -75,8 +75,7 @@ export async function helperOutcomesMarkdown(chat: s.HelperChat) {
       )
       .join("\n");
   } catch (error) {
-    if (error instanceof s.HelperStoreError)
-      return "таблица помощников повреждена, помощники не работают";
-    throw error;
+    console.error("[helper] outcomes:", error);
+    return "таблица помощников повреждена, помощники не работают";
   }
 }

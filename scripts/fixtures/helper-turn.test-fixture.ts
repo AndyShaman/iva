@@ -31,20 +31,37 @@ type Definition = {
     typeof import("../../node_modules/eve/dist/src/tools/schema.js").serializeInputSchema
   >[0];
 };
-async function authoredTurn(root: string, kind: string) {
+async function authoredTurn(root: string, kind: string, telegramAuth = false) {
   const eve = await eveInternals();
   const { assistantBearerAuth } = await load<
     typeof import("../../agent/lib/eve-auth.ts")
   >(root, "agent/lib/eve-auth.ts");
-  const auth = await assistantBearerAuth("fixture")(
-    new Request("http://fixture.invalid", {
-      headers: {
-        authorization: "Bearer fixture",
-        ...(kind === "chat" ? {} : { "x-iva-turn": kind }),
-        ...(kind === "helper" ? { "x-iva-helper": "h-abc123" } : {}),
-      },
-    }),
-  );
+  const auth = telegramAuth
+    ? (
+        await load<
+          typeof import("../../node_modules/eve/dist/src/public/channels/telegram/defaults.js")
+        >(
+          root,
+          "node_modules/eve/dist/src/public/channels/telegram/defaults.js",
+        )
+      ).defaultTelegramAuth({
+        attachments: [],
+        caption: "",
+        text: "hello",
+        raw: {},
+        chat: { id: "41", type: "private" },
+        from: { id: "41", isBot: false },
+        messageId: "1",
+      })
+    : await assistantBearerAuth("fixture")(
+        new Request("http://fixture.invalid", {
+          headers: {
+            authorization: "Bearer fixture",
+            ...(kind === "chat" ? {} : { "x-iva-turn": kind }),
+            ...(kind === "helper" ? { "x-iva-helper": "h-abc123" } : {}),
+          },
+        }),
+      );
   const context = {
     session: {
       id: "fixture",
@@ -70,6 +87,11 @@ async function authoredTurn(root: string, kind: string) {
       };
     }>(root, "agent/instructions/" + name);
     const value = await mod.default.events["turn.started"]({}, context);
+    if (
+      value?.role === "user" &&
+      !(value.content ?? value.markdown ?? "").trim()
+    )
+      continue;
     if (value?.role === "user")
       userInstructions.push({
         role: "user",
@@ -243,6 +265,7 @@ export async function wireTurn(
   options: {
     root?: string;
     kind?: string;
+    telegramAuth?: boolean;
     attributes?: Record<string, unknown>;
     currentAttributes?: Record<string, unknown>;
     calls?: number;
@@ -261,6 +284,7 @@ export async function wireTurn(
   const authored = await authoredTurn(
     options.root ?? process.cwd(),
     options.kind ?? "chat",
+    options.telegramAuth,
   );
   const { eve } = authored,
     ctx = new eve.ContextContainer();

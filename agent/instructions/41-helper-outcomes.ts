@@ -6,7 +6,10 @@ export default defineDynamic({
     "turn.started": async (_event, ctx) => {
       const chat = helperAuth(ctx);
       return chat
-        ? defineInstructions({ markdown: await helperOutcomesMarkdown(chat) })
+        ? defineInstructions({
+            content: await helperOutcomesMarkdown(chat),
+            role: "user",
+          })
         : null;
     },
   },

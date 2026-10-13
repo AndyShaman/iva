@@ -212,6 +212,23 @@ test("dynamic instruction is chat-only and preserves broken table; unread turn t
   await emit("turn.completed", "unread");
   assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), "broken");
 });
+
+test("R4 invalid Date in a finished row logs the fault and keeps the Telegram turn instruction usable", async (t) => {
+  await fresh();
+  const row = await add();
+  await finish(row.id);
+  const state = await s.readHelpers();
+  state.rows[0].finishedAt = 9000000000000000;
+  await writeFile(join(dir, "helpers.json"), JSON.stringify(state));
+  const logged: unknown[][] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
+  const result = await instruction.events["turn.started"]!({}, ctx() as never);
+  assert.match(JSON.stringify(result), /таблица помощников повреждена/);
+  assert.ok(
+    logged.some((parts) => parts.some((value) => value instanceof RangeError)),
+  );
+  assert.equal((await s.readHelpers()).rows[0].finishedAt, 9000000000000000);
+});
 test("seeded property: only the complete session/turn pair with a nonempty reply marks a read outcome", async () => {
   const seed = 13102026;
   console.log(`helper outcome PBT seed=${seed}`);

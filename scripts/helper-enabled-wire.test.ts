@@ -109,3 +109,68 @@ test("helper start/finish/read leave the static prefix and full set unchanged", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("R3 real Telegram chat keeps system prefix across outcome and delivery; outcome context is user", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const dir = await mkdtemp(path.join(tmpdir(), "iva-telegram-prefix-"));
+  const before = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  try {
+    const s = await import("../agent/lib/helper-store.ts");
+    const { helperExecute } = await import("../agent/lib/helper-tool.ts");
+    const { noteHelperReply, finishHelperOutcomes } =
+      await import("../agent/lib/helper-outcome.ts");
+    const first = await wireTurn({ telegramAuth: true });
+    assert.equal(first.authored.auth?.authenticator, "telegram-webhook");
+    const added = await s.addHelper(
+      { task: "Find it", may: "", chat: { id: "41", threadId: null } },
+      1000,
+    );
+    assert.ok(added.ok);
+    await s.finalizeHelper(
+      added.row.id,
+      { kind: "pending", createdAt: 1000 },
+      {
+        outcome: "done",
+        summary: "found",
+        reason: null,
+        model: "fixture",
+        steps: 1,
+        tokens: 10,
+      },
+      2000,
+    );
+    const ready = await wireTurn({ telegramAuth: true });
+    assert.deepEqual(ready.wire, first.wire);
+    const prompt = ready.model.doStreamCalls[0].prompt;
+    const block = prompt.find((message) =>
+      JSON.stringify(message.content).includes(added.row.id),
+    );
+    assert.equal(block?.role, "user");
+    assert.match(JSON.stringify(block), /прочитай helper outcome и расскажи/);
+    assert.match(
+      await helperExecute(
+        { action: "outcome", id: added.row.id },
+        ready.authored.context,
+      ),
+      /helper_outcome/,
+    );
+    const key = { sessionId: "fixture", turnId: "turn_0" };
+    noteHelperReply(key, "Found it");
+    await finishHelperOutcomes(key, 3000);
+    assert.equal((await s.getHelper(added.row.id))?.deliveredAt, 3000);
+    const delivered = await wireTurn({ telegramAuth: true });
+    assert.deepEqual(delivered.wire, first.wire);
+    assert.ok(
+      !delivered.model.doStreamCalls[0].prompt.some((message) =>
+        JSON.stringify(message.content).includes(added.row.id),
+      ),
+    );
+  } finally {
+    if (before === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = before;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
