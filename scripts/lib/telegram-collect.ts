@@ -1,4 +1,7 @@
-import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
+import {
+  TELEGRAM_BUTTON_TAP_FIELD,
+  telegramMessageSource,
+} from "#lib/telegram-parts.ts";
 import type {
   TelegramQueueMessage,
   TelegramQueueUpdate,
@@ -111,6 +114,7 @@ export function updateParts(
 
 /** Отдельной доставкой идёт то, чей смысл держится на «первое и единственное» (ADR-0011). */
 export function deliveredAlone(update: TelegramCollectUpdate): boolean {
+  if (telegramMessageSource(update.message) === "wake") return true;
   if (update.message?.from?.id === undefined || update.update_id < 0)
     return true;
   return updateParts(update).some(
@@ -143,7 +147,9 @@ export function queueBatchLength(
     chars += nextParts.reduce((sum, part) => sum + messageChars(part), 0);
     return (
       index > 0 &&
-      (deliveredAlone(next) ||
+      (telegramMessageSource(next.message) !==
+        telegramMessageSource(head.message) ||
+        deliveredAlone(next) ||
         String(next.message?.from?.id) !== author ||
         parts > maxParts ||
         chars > maxChars)
@@ -159,6 +165,15 @@ export function joinUpdates(
   const [first] = updates;
   if (first === undefined)
     throw new Error("joinUpdates needs at least one update");
+  if (
+    updates.some((update) =>
+      updateParts(update).some(
+        (part) =>
+          telegramMessageSource(part) !== telegramMessageSource(first.message),
+      ),
+    )
+  )
+    throw new Error("Cannot join different input sources");
   if (updates.length === 1) return first;
   return {
     ...first,

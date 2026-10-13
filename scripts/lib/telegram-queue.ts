@@ -115,6 +115,9 @@ function isTelegramQueueMessageAtDepth(
     optionalField(value, "message_id", Number.isSafeInteger) &&
     optionalField(value, "message_thread_id", Number.isSafeInteger) &&
     optionalField(value, "date", Number.isSafeInteger) &&
+    optionalField(value, "iva_input", (source) =>
+      ["owner", "tap", "wake"].includes(String(source)),
+    ) &&
     optionalField(value, "text", (text) => typeof text === "string") &&
     optionalField(value, "caption", (caption) => typeof caption === "string") &&
     optionalField(

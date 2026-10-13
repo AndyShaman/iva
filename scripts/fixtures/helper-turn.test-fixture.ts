@@ -377,7 +377,7 @@ export async function wireTurn(
   for (const [name, tool] of authored.tools)
     authored.tools.set(name, {
       ...tool,
-      ...(options.approvalTool === name ? { approval: () => "user-approval" as const } : {}),
+      ...(options.approvalTool === name ? { approval: () => "user-approval" } : {}),
       execute: async () => {
         executions++;
         return "ok";
