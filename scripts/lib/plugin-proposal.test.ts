@@ -220,3 +220,26 @@ test("owner texts follow the spec word for word in both languages", () => {
     `Плагин relay не установился: ${"x".repeat(300)}`,
   );
 });
+
+// PluginProposal.TakeStamp -> Begin/SweepSparesTaken: the installer owns its
+// copy for less than TTL after the tap, including taps long after propose.
+test("a late tap keeps the taken plugin copy through a sweep while its installer holds it", async () => {
+  const dir = proposals();
+  const digest12 = await plant(dir);
+  const tappedAt = NOW + 20 * 60 * 60 * 1_000;
+  const outcome = await takeProposal({
+    dir,
+    digest12,
+    nowMs: tappedAt,
+    digest: pluginTreeDigest,
+  });
+  assert.equal(outcome.status, "taken");
+  sweepProposals(dir, NOW + 26 * 60 * 60 * 1_000);
+  const taken = takenDir(dir, digest12);
+  assert.equal(
+    existsSync(taken),
+    true,
+    "six hours of installation keep the taken copy",
+  );
+  assert.equal((await pluginTreeDigest(taken)).slice(0, 12), digest12);
+});
