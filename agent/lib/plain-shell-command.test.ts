@@ -193,3 +193,60 @@ test("эталонные гварды побайтно соответствую�
     assert.equal(actual, digest, name);
   }
 });
+
+await test("prototype names are outside the plain command table", async (t) => {
+  const { plainDataCommand, plainHelpCommand } = await loadSubject();
+  for (const name of [
+    "constructor",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+  ]) {
+    for (const command of [
+      name,
+      `${name} x`,
+      `${name} -x`,
+      `${name} -n 1`,
+      `iva --help | ${name}`,
+    ]) {
+      await t.test(command, () => {
+        assert.equal(plainDataCommand(command), false, command);
+        assert.equal(plainHelpCommand(command), false, command);
+      });
+    }
+  }
+});
+await test("shell guards always decide for arbitrary input (seed 101307)", async () => {
+  const fc = await import("fast-check");
+  const { plainDataCommand, plainHelpCommand } = await loadSubject();
+  const { selfRestartViolation } = await import("./self-restart-guard.ts");
+  const { schedulerBypassViolation } =
+    await import("./scheduler-bypass-guard.ts");
+  fc.default.assert(
+    fc.default.property(
+      fc.default.oneof(
+        fc.default.string(),
+        fc.default.constantFrom(
+          "constructor -x",
+          "toString -n 1",
+          "__proto__ -x",
+        ),
+      ),
+      (input) => {
+        assert.equal(typeof plainDataCommand(input), "boolean");
+        assert.equal(typeof plainHelpCommand(input), "boolean");
+        assert.doesNotThrow(() => selfRestartViolation(input));
+        assert.doesNotThrow(() => schedulerBypassViolation(input));
+      },
+    ),
+    { seed: 101307, numRuns: 1000 },
+  );
+});

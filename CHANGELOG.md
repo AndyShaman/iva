@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🐚 **Защита команд отвечает и на странные имена**: имена `constructor`, `toString` и `__proto__` проходят обычную проверку и больше вызывают понятный отказ вместо ошибки хода. Shell guards return a decision for prototype names instead of treating them as approved commands or throwing.
+
 - 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.
 
 - 🛡 **Текстовый файл с ключами остаётся на сервере**: перед отправкой файла Ива проверяет его содержимое и просит убрать секреты из копии. Text files containing credentials are refused before Telegram receives their bytes.

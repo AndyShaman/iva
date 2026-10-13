@@ -18,6 +18,7 @@ const POLICIES: Readonly<Record<string, Policy>> = {
   ls: ["laAhd1trRSF", ""],
   getent: ["", ""],
 };
+Object.setPrototypeOf(POLICIES, null);
 const REDIRECTS = new Set(["2>/dev/null", ">/dev/null", "2>&1"]);
 const SEPARATORS = new Set([";", "|", "||", "&&"]);
 const TOKEN =
