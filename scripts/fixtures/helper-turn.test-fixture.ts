@@ -242,7 +242,6 @@ export async function wireTurn(
     noEvents?: boolean;
     retry?: boolean;
     compact?: boolean;
-    approvalTool?: string;
     onStep?: (ctx: AlsContext) => Promise<void>;
   } = {},
 ) {
@@ -270,12 +269,6 @@ export async function wireTurn(
       : auth,
   );
   ctx.set(eve.SessionIdKey, "fixture");
-  if (options.approvalTool)
-    ctx.set(eve.SessionKey, {
-      sessionId: "fixture",
-      auth: { initiator: auth, current: auth },
-      turn: { id: "turn_0", sequence: 0 },
-    });
   ctx.set(eve.TurnDynamicInstructionsKey, authored.instructions);
   let count = 0,
     executions = 0;
@@ -379,9 +372,6 @@ export async function wireTurn(
   for (const [name, tool] of authored.tools)
     authored.tools.set(name, {
       ...tool,
-      ...(options.approvalTool === name
-        ? { approval: () => "user-approval" }
-        : {}),
       execute: async () => {
         executions++;
         return "ok";
