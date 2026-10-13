@@ -4,12 +4,206 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
   acquireUpdateLock,
   createVersionStore,
   updateRunning,
 } from "./version-store.ts";
+
+void test("an ownerless stale observer preserves a successor paused between mkdir and owner publication", async (t) => {
+  const data = fs.mkdtempSync(join(tmpdir(), "iva-update-lock-ownerless-"));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const path = join(data, "update.lock");
+  fs.mkdirSync(path);
+  const old = new Date(Date.now() - 2 * 3600_000);
+  fs.utimesSync(path, old, old);
+  const created = join(data, "created");
+  const resume = join(data, "resume");
+  const ready = join(data, "ready.json");
+  const moduleUrl = pathToFileURL(
+    join(import.meta.dirname, "version-store.ts"),
+  ).href;
+  const waitFor = (file: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(file)) {
+      assert.ok(Date.now() < deadline, `reached ${file}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  };
+  let child: ChildProcess | undefined;
+  let exited: Promise<void> | undefined;
+  const rename = fs.renameSync;
+  let scheduled = false;
+  t.mock.method(
+    fs,
+    "renameSync",
+    (...args: Parameters<typeof fs.renameSync>) => {
+      if (String(args[0]) === path && !scheduled) {
+        scheduled = true;
+        child = spawn(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `
+        import fs from "node:fs";
+        import { syncBuiltinESMExports } from "node:module";
+        const mkdir = fs.mkdirSync;
+        fs.mkdirSync = (...args) => {
+          const result = mkdir(...args);
+          if (String(args[0]) === ${JSON.stringify(path)} && args[1] === undefined) {
+            fs.writeFileSync(${JSON.stringify(created)}, "");
+            const deadline = Date.now() + 10000;
+            while (!fs.existsSync(${JSON.stringify(resume)})) {
+              if (Date.now() > deadline) throw new Error("observer timeout");
+              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+            }
+          }
+          return result;
+        };
+        syncBuiltinESMExports();
+        const { acquireUpdateLock } = await import(${JSON.stringify(moduleUrl)});
+        const lock = acquireUpdateLock(${JSON.stringify(data)});
+        fs.writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ acquired: lock !== null, pid: process.pid }));
+        setInterval(() => {}, 1000);
+      `,
+          ],
+          { stdio: "ignore" },
+        );
+        exited = new Promise((resolve) => child!.once("exit", () => resolve()));
+        waitFor(created);
+      }
+      return rename(...args);
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    const observer = acquireUpdateLock(data);
+    fs.writeFileSync(resume, "");
+    waitFor(ready);
+    const successor = JSON.parse(fs.readFileSync(ready, "utf8")) as {
+      acquired: boolean;
+      pid: number;
+    };
+    assert.equal(successor.acquired, true);
+    process.kill(successor.pid, 0);
+    assert.equal(observer, null, "only the successor owns the update lock");
+    assert.equal(
+      (
+        JSON.parse(fs.readFileSync(join(path, "owner.json"), "utf8")) as {
+          pid: number;
+        }
+      ).pid,
+      successor.pid,
+    );
+    assert.deepEqual(
+      fs
+        .readdirSync(data)
+        .filter((name) => name.startsWith("update.lock.stale-")),
+      [],
+    );
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    child?.kill("SIGKILL");
+    await exited;
+  }
+});
+
+void test("an ownerless update lock becomes reclaimable after the short publication window", (t) => {
+  const data = fs.mkdtempSync(join(tmpdir(), "iva-update-lock-young-"));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const path = join(data, "update.lock");
+  fs.mkdirSync(path);
+  assert.equal(acquireUpdateLock(data), null);
+  const old = new Date(Date.now() - 10_000);
+  fs.utimesSync(path, old, old);
+  const lock = acquireUpdateLock(data);
+  assert.ok(
+    lock,
+    "a crash before owner publication delays takeover for seconds",
+  );
+  lock.release();
+});
+
+for (const kind of [
+  "unreadable-owner",
+  "owner-directory",
+  "lock-file",
+] as const)
+  void test(`an update lock with ${kind} is occupied and acquisition returns null`, (t) => {
+    const data = fs.mkdtempSync(join(tmpdir(), "iva-update-lock-hostile-"));
+    t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+    const path = join(data, "update.lock");
+    if (kind === "lock-file") fs.writeFileSync(path, "foreign");
+    else fs.mkdirSync(path);
+    const owner = join(path, "owner.json");
+    if (kind === "owner-directory") fs.mkdirSync(owner);
+    if (kind === "unreadable-owner") {
+      fs.writeFileSync(owner, "private");
+      const read = fs.readFileSync;
+      t.mock.method(
+        fs,
+        "readFileSync",
+        (...args: Parameters<typeof fs.readFileSync>) => {
+          if (String(args[0]) === owner)
+            throw Object.assign(new Error("permission denied"), {
+              code: "EACCES",
+            });
+          return read(...args);
+        },
+      );
+      syncBuiltinESMExports();
+    }
+    try {
+      assert.equal(acquireUpdateLock(data), null);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(fs.existsSync(path), true);
+    assert.deepEqual(fs.readdirSync(data), ["update.lock"]);
+  });
+
+void test("the owner snapshot precedes liveness inspection when a successor takes over during that inspection", (t) => {
+  const data = fs.mkdtempSync(join(tmpdir(), "iva-update-lock-inspection-"));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const path = join(data, "update.lock");
+  fs.mkdirSync(path);
+  fs.writeFileSync(
+    join(path, "owner.json"),
+    JSON.stringify({ pid: 2147483647 }),
+  );
+  const kill = process.kill.bind(process);
+  let scheduled = false;
+  let successor: ReturnType<typeof acquireUpdateLock> | undefined;
+  t.mock.method(process, "kill", (...args: Parameters<typeof process.kill>) => {
+    if (args[0] === 2147483647 && !scheduled) {
+      scheduled = true;
+      successor = acquireUpdateLock(data);
+      assert.ok(successor);
+    }
+    return kill(...args);
+  });
+  try {
+    assert.equal(acquireUpdateLock(data), null);
+    assert.ok(scheduled);
+    assert.equal(updateRunning(data), true);
+    assert.equal(
+      (
+        JSON.parse(fs.readFileSync(join(path, "owner.json"), "utf8")) as {
+          pid: number;
+        }
+      ).pid,
+      process.pid,
+    );
+  } finally {
+    t.mock.restoreAll();
+    successor?.release();
+  }
+});
 
 for (const third of [false, true])
   void test(

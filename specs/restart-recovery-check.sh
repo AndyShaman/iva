@@ -16,5 +16,6 @@ check() {
   echo "OK $cfg: $expected (exit $code)"
 }
 check RestartRecovery none
+check RestartRecovery-candidate NeverBlocked
 check RestartRecovery-window none
 check RestartRecovery-window-unsafe ClosedStaysClosed

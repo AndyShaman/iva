@@ -15,15 +15,16 @@ CONSTANTS MaxMsgs, MaxCrashes, MaxFaults, Keep, Fixed, RecoveryCAS
 VARIABLES proc, turn, lock, status, queue, sent, answered, noticed,
           crashes, faults, interrupted, quarantines, origKept, blocked
 
-VARIABLES recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, statusLock, bridgeDone
-recoveryVars == <<recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, statusLock, bridgeDone>>
+VARIABLES recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, checkedStatus, statusLock, bridgeDone, newTurn
+recoveryVars == <<recoveryPhase, diskStatus, diskGeneration, scanGeneration, checkedGeneration, checkedStatus, statusLock, bridgeDone, newTurn>>
 
 vars == <<proc, turn, lock, status, queue, sent, answered, noticed,
           crashes, faults, interrupted, quarantines, origKept, blocked>>
 
 Init ==
   /\ recoveryPhase = "idle" /\ diskStatus = "running" /\ diskGeneration = 1
-  /\ scanGeneration = 0 /\ checkedGeneration = 0 /\ statusLock = FALSE /\ bridgeDone = FALSE
+  /\ scanGeneration = 0 /\ checkedGeneration = 0 /\ checkedStatus = "none"
+  /\ statusLock = FALSE /\ bridgeDone = FALSE /\ newTurn = FALSE
   /\ proc = "up" /\ turn = FALSE /\ lock = FALSE /\ status = "none"
   /\ queue = 0 /\ sent = 0 /\ answered = 0 /\ noticed = 0
   /\ crashes = 0 /\ faults = 0 /\ interrupted = 0
@@ -115,29 +116,36 @@ Next == LegacyNext /\ UNCHANGED recoveryVars
 RecoveryScan ==
   /\ recoveryPhase = "idle"
   /\ recoveryPhase' = "scanned" /\ scanGeneration' = diskGeneration
-  /\ UNCHANGED <<diskStatus, diskGeneration, checkedGeneration, statusLock, bridgeDone>>
+  /\ UNCHANGED <<diskStatus, diskGeneration, checkedGeneration, checkedStatus, statusLock, bridgeDone, newTurn>>
 RecoveryRead ==
   /\ recoveryPhase = "scanned" /\ ~statusLock
   /\ recoveryPhase' = "checked" /\ checkedGeneration' = diskGeneration
+  /\ checkedStatus' = diskStatus
   /\ statusLock' = RecoveryCAS
-  /\ UNCHANGED <<diskStatus, diskGeneration, scanGeneration, bridgeDone>>
+  /\ UNCHANGED <<diskStatus, diskGeneration, scanGeneration, bridgeDone, newTurn>>
 BridgeFinish ==
   /\ ~statusLock /\ ~bridgeDone
   /\ diskStatus' = "idle" /\ diskGeneration' = diskGeneration + 1 /\ bridgeDone' = TRUE
-  /\ UNCHANGED <<recoveryPhase, scanGeneration, checkedGeneration, statusLock>>
+  /\ UNCHANGED <<recoveryPhase, scanGeneration, checkedGeneration, checkedStatus, statusLock, newTurn>>
+BridgeStart ==
+  /\ bridgeDone /\ ~newTurn /\ ~statusLock /\ recoveryPhase \in {"scanned", "checked"}
+  /\ newTurn' = TRUE /\ diskStatus' = "running" /\ diskGeneration' = diskGeneration + 1
+  /\ UNCHANGED <<recoveryPhase, scanGeneration, checkedGeneration, checkedStatus, statusLock, bridgeDone>>
 RecoveryPublish ==
   /\ recoveryPhase = "checked"
   /\ recoveryPhase' = "done" /\ statusLock' = FALSE
-  /\ IF (~RecoveryCAS /\ checkedGeneration = 1)
-          \/ (RecoveryCAS /\ diskStatus = "running" /\ scanGeneration = checkedGeneration)
+  \* Publication uses the locked READ snapshot, as the code does. There is no
+  \* atomic last-minute disk-status check hiding a missing/early-released lock.
+  /\ IF checkedStatus = "running" /\ scanGeneration = checkedGeneration
        THEN /\ diskStatus' = "stale"
-            /\ diskGeneration' = IF RecoveryCAS THEN diskGeneration + 1 ELSE checkedGeneration
+            /\ diskGeneration' = checkedGeneration + 1
        ELSE UNCHANGED <<diskStatus, diskGeneration>>
-  /\ UNCHANGED <<scanGeneration, checkedGeneration, bridgeDone>>
-SecondWindowNext == (RecoveryScan \/ RecoveryRead \/ BridgeFinish \/ RecoveryPublish)
+  /\ UNCHANGED <<scanGeneration, checkedGeneration, checkedStatus, bridgeDone, newTurn>>
+SecondWindowNext == (RecoveryScan \/ RecoveryRead \/ BridgeFinish \/ BridgeStart \/ RecoveryPublish)
   /\ UNCHANGED vars
 SecondWindowSpec == Init /\ [][SecondWindowNext]_<<vars, recoveryVars>>
-ClosedStaysClosed == bridgeDone => diskStatus = "idle"
+ClosedStaysClosed == bridgeDone /\ ~newTurn => diskStatus = "idle"
+NewTurnKept == newTurn => diskStatus = "running"
 GenerationAdvances == diskGeneration >= checkedGeneration
 
 Fair ==

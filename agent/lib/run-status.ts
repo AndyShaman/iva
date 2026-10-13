@@ -163,11 +163,14 @@ function readCurrent(chatKey: string): StatusRecord | null {
 }
 
 // Статус хода — не публичные данные: и лок, и сам файл создаются под 0600.
-export function acquireChatLock(file: string): FileLock {
+export function acquireChatLock(
+  file: string,
+  staleMs = LOCK_STALE_MS,
+): FileLock {
   const lock = `${file}.lock`;
   const held = acquireFileLockSync(lock, {
     timeoutMs: LOCK_TIMEOUT_MS,
-    staleMs: LOCK_STALE_MS,
+    staleMs,
     retryMs: LOCK_RETRY_MS,
     mode: 0o600,
   });

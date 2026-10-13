@@ -19,3 +19,5 @@ check UpdateLock none
 check UpdateLock-mixed MutualExclusion
 check UpdateLock-three MutualExclusion
 check UpdateLock-by-path MutualExclusion
+check UpdateLock-ownerless none
+check UpdateLock-ownerless-unsafe MutualExclusion

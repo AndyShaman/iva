@@ -533,7 +533,7 @@ void test("restart publication and Bridge terminal write share the chat lock (se
       sessionId: "old",
     }),
   );
-  const attempted = join(data, "attempted");
+  const blocked = join(data, "blocked");
   const finished = join(data, "finished");
   const moduleUrl = pathToFileURL(
     join(import.meta.dirname, "../../agent/lib/run-status.ts"),
@@ -559,8 +559,10 @@ void test("restart publication and Bridge terminal write share the chat lock (se
           import { syncBuiltinESMExports } from "node:module";
           const mkdir = fs.mkdirSync;
           fs.mkdirSync = (...args) => {
-            if (String(args[0]) === ${JSON.stringify(file + ".lock")}) fs.writeFileSync(${JSON.stringify(attempted)}, "attempted");
-            return mkdir(...args);
+            try { return mkdir(...args); } catch (error) {
+              if (String(args[0]) === ${JSON.stringify(file + ".lock")} && error.code === "EEXIST") fs.writeFileSync(${JSON.stringify(blocked)}, "blocked");
+              throw error;
+            }
           };
           syncBuiltinESMExports();
           const { setChatStatus } = await import(${JSON.stringify(moduleUrl)});
@@ -589,10 +591,7 @@ void test("restart publication and Bridge terminal write share the chat lock (se
               );
             });
             const until = Date.now() + 10_000;
-            while (
-              !existsSync(finished) &&
-              !(existsSync(attempted) && existsSync(`${file}.lock`))
-            ) {
+            while (!existsSync(finished) && !existsSync(blocked)) {
               assert.ok(
                 Date.now() < until,
                 "Bridge reached the terminal write",
@@ -618,4 +617,134 @@ void test("restart publication and Bridge terminal write share the chat lock (se
   assert.equal(record.status, "idle", "a completed turn stays closed");
   assert.ok(record.generation >= 2, "generation advances");
   assert.equal(record.sessionId, undefined);
+});
+
+void test("restart recovery reclaims the fresh status lock of a killed writer within two seconds", async (t) => {
+  const data = mkdtempSync(join(tmpdir(), "wf-store-orphan-"));
+  t.after(() => rmSync(data, { recursive: true, force: true }));
+  const file = join(data, "run-status.d", "chat.json");
+  mkdirSync(join(data, "run-status.d"));
+  writeFileSync(
+    file,
+    JSON.stringify({
+      status: "running",
+      generation: 7,
+      updatedAt: 123,
+      sessionId: "old",
+    }),
+  );
+  const moduleUrl = pathToFileURL(
+    join(import.meta.dirname, "../../agent/lib/run-status.ts"),
+  ).href;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    const { acquireChatLock } = await import(${JSON.stringify(moduleUrl)});
+    acquireChatLock(${JSON.stringify(file)});
+    console.log("HELD");
+    setInterval(() => {}, 1000);
+  `,
+    ],
+    {
+      env: { ...process.env, ASSISTANT_DATA_DIR: data },
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
+  const exited = new Promise<void>((resolve) =>
+    child.once("exit", () => resolve()),
+  );
+  t.after(async () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await exited;
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.stdout.once("data", () => resolve());
+  });
+  child.kill("SIGKILL");
+  await exited;
+  const started = performance.now();
+  assert.equal(rewriteRunStatusesForUpdate(data, true), 1);
+  assert.ok(
+    performance.now() - started < 2750,
+    "recovery waits only for the two-second stale threshold",
+  );
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
+    status: "running",
+    generation: 8,
+    updatedAt: 0,
+    sessionId: "old",
+  });
+  assert.equal(existsSync(`${file}.lock`), false);
+});
+
+void test("restart recovery preserves a new turn started between its snapshot and lock", (t) => {
+  const data = mkdtempSync(join(tmpdir(), "wf-store-new-turn-"));
+  t.after(() => rmSync(data, { recursive: true, force: true }));
+  const file = join(data, "run-status.d", "chat.json");
+  mkdirSync(join(data, "run-status.d"));
+  writeFileSync(
+    file,
+    JSON.stringify({
+      status: "running",
+      generation: 1,
+      updatedAt: 123,
+      sessionId: "old",
+    }),
+  );
+  const next = JSON.stringify({
+    status: "running",
+    generation: 3,
+    updatedAt: 456,
+    sessionId: "new",
+  });
+  const mkdir = fs.mkdirSync;
+  withFsHook(
+    () => {
+      mock.method(
+        fs,
+        "mkdirSync",
+        (...args: Parameters<typeof fs.mkdirSync>) => {
+          if (String(args[0]) === `${file}.lock`) writeFileSync(file, next);
+          return mkdir(...args);
+        },
+      );
+    },
+    () => assert.equal(rewriteRunStatusesForUpdate(data), 0),
+  );
+  assert.equal(readFileSync(file, "utf8"), next);
+});
+
+void test("restart recovery skips a turn closed before the locked reread even with the same generation", (t) => {
+  const data = mkdtempSync(join(tmpdir(), "wf-store-closed-"));
+  t.after(() => rmSync(data, { recursive: true, force: true }));
+  const file = join(data, "run-status.d", "chat.json");
+  mkdirSync(join(data, "run-status.d"));
+  writeFileSync(
+    file,
+    JSON.stringify({ status: "running", generation: 1, updatedAt: 123 }),
+  );
+  const next = JSON.stringify({
+    status: "idle",
+    generation: 1,
+    updatedAt: 456,
+  });
+  const mkdir = fs.mkdirSync;
+  withFsHook(
+    () => {
+      mock.method(
+        fs,
+        "mkdirSync",
+        (...args: Parameters<typeof fs.mkdirSync>) => {
+          if (String(args[0]) === `${file}.lock`) writeFileSync(file, next);
+          return mkdir(...args);
+        },
+      );
+    },
+    () => assert.equal(rewriteRunStatusesForUpdate(data), 0),
+  );
+  assert.equal(readFileSync(file, "utf8"), next);
 });

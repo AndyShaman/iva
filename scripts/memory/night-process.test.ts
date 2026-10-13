@@ -2137,7 +2137,7 @@ void test("owner edit window: facts built from a Card draft preserve the owner's
     IVA_TEST_OWNER_TRIGGER: "Day.draft",
     IVA_TEST_OWNER_STEP: "read",
   });
-  assert.equal(result.code, 1, result.stderr);
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stderr, /OWNER_EDIT_WINDOW Day.draft/u);
   assert.match(read(file), /Правда владельца/u);
   assert.match(read(file), /OWNER_EDIT/u);
@@ -2184,7 +2184,7 @@ void test("owner edit window: links use the last Card publication as their snaps
     IVA_TEST_OWNER_TRIGGER: "Day.write",
     IVA_TEST_OWNER_STEP: "card",
   });
-  assert.equal(result.code, 1, result.stderr);
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stderr, /OWNER_EDIT_WINDOW Day.write/u);
   assert.match(read(file), /Правда владельца/u);
   assert.match(read(file), /OWNER_EDIT/u);
@@ -2217,7 +2217,7 @@ void test("owner edit window: pending facts keep their cache when the Card chang
     IVA_TEST_OWNER_TRIGGER: "applyCachePending",
     IVA_TEST_OWNER_STEP: "read",
   });
-  assert.equal(result.code, 1, result.stderr);
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stderr, /OWNER_EDIT_WINDOW applyCachePending/u);
   assert.match(read(file), /Правда владельца/u);
   assert.match(read(file), /OWNER_EDIT/u);
@@ -2243,9 +2243,133 @@ void test("owner edit window: daily summary saved while A runs stays on disk", a
   );
   held.release();
   const result = await run.result;
-  assert.equal(result.code, 1, result.stderr);
+  assert.equal(result.code, 0, result.stderr);
   assert.match(read(summary(fx)), /OWNER_EDIT/u);
 });
+
+for (const hash of ["absent", "valid"] as const)
+  void test(`owner edit window: a summary with ${hash} body_hash saved during A keeps its bytes`, async (t) => {
+    const fx = await fixture(t);
+    day(fx, "## 10:00 [text]\nПросто день\n");
+    fx.model.replies = [A()];
+    const held = fx.model.hold(1);
+    const run = spawnNight(fx);
+    await held.reached;
+    const { summaryText } = await import("./night-input.ts");
+    const owner =
+      hash === "valid"
+        ? summaryText({ type: "daily-summary" }, "# Owner\n")
+        : "---\ntype: daily-summary\n---\n# Owner\n";
+    mkdirSync(join(summary(fx), ".."), { recursive: true });
+    writeFileSync(summary(fx), owner);
+    held.release();
+    const result = await run.result;
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(read(summary(fx)), owner);
+    assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  });
+
+for (const trigger of ["Day.draft", "Day.write", "applyCachePending"] as const)
+  void test(`owner edit window: ${trigger} defers its day and finishes the other day, CORE, periods and Report`, async (t) => {
+    const fx = await fixture(t);
+    const older = "2026-09-25";
+    const file = card(fx, "cards/projects/аврора", aurora);
+    reportsOn(fx, "ru");
+    const first = join(fx.vault, "daily", `${older}.md`);
+    const cache = join(fx.data, "memory/night", `${older}.json`);
+    writeFileSync(first, "## 10:00 [text]\nАврора сменила курс\n");
+    if (trigger === "applyCachePending") {
+      mkdirSync(join(cache, ".."), { recursive: true });
+      const { prefixHash } = await import("./night-input.ts");
+      writeFileSync(
+        cache,
+        JSON.stringify({
+          v: 1,
+          date: older,
+          through: 0,
+          prefixHash: prefixHash([], 0),
+          touched: [],
+          core: [],
+          pending: { "cards/projects/аврора": [`- ${older}: Отложенный факт`] },
+        }),
+      );
+    } else {
+      if (trigger === "Day.write")
+        card(
+          fx,
+          "cards/projects/спутник",
+          aurora.map((row) => row.replace("Аврора", "Спутник")),
+        );
+    }
+    day(fx, "## 10:00 [text]\nКофе после четырёх не пью\n");
+    const periodInput = join(fx.vault, "summaries/daily/2026-08-17.md");
+    mkdirSync(join(periodInput, ".."), { recursive: true });
+    const { summaryText } = await import("./night-input.ts");
+    writeFileSync(
+      periodInput,
+      summaryText({ description: "День", input_hash: "old" }, "# Day\n"),
+    );
+    commit(fx.vault);
+    fx.model.replies = [
+      periodReply("Готовая неделя"),
+      periodReply("Готовый месяц"),
+      ...(trigger === "applyCachePending"
+        ? []
+        : [
+            A({
+              facts: [
+                {
+                  card: "cards/projects/аврора",
+                  text: "Курс сменён",
+                  src: "e1",
+                  quote: "Аврора сменила курс",
+                },
+              ],
+              links:
+                trigger === "Day.write"
+                  ? [
+                      {
+                        a: "cards/projects/аврора",
+                        b: "cards/projects/спутник",
+                        src: "e1",
+                      },
+                    ]
+                  : [],
+            }),
+          ]),
+      A({ core: [{ text: "Не пьёт кофе после 16:00", src: "e1" }] }),
+      {
+        sections: [
+          { section: "Предпочтения", text: "- Не пьёт кофе после 16:00" },
+        ],
+      },
+    ];
+    const result = await night(fx, null, {
+      IVA_TEST_OWNER_FILE: file,
+      IVA_TEST_OWNER_TRIGGER: trigger,
+      IVA_TEST_OWNER_STEP: trigger === "Day.write" ? "card" : "read",
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(read(file), /OWNER_EDIT/u);
+    assert.equal(existsSync(summary(fx, older)), false);
+    assert.equal(existsSync(summary(fx)), true, result.stderr);
+    assert.match(read(join(fx.vault, "CORE.md")), /Не пьёт кофе после 16:00/u);
+    assert.match(read(join(fx.vault, "weekly/2026-W34.md")), /Готовая неделя/u);
+    assert.match(reportOf(result.stderr) ?? "", /26 сентября:/u);
+    assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+    assert.match(
+      read(cache),
+      trigger === "applyCachePending" ? /Отложенный факт/u : /"pass"/u,
+    );
+    fx.model.replies = trigger === "applyCachePending" ? [A()] : [B()];
+    const retry = await night(fx, null);
+    assert.equal(retry.code, 0, retry.stderr);
+    assert.match(
+      read(file),
+      trigger === "applyCachePending" ? /Отложенный факт/u : /Курс сменён/u,
+    );
+    assert.match(read(file), /OWNER_EDIT/u);
+  });
 
 void test("owner edit window: period summary saved while the model runs wins", async (t) => {
   const fx = await fixture(t);

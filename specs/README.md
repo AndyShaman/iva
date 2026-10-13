@@ -29,7 +29,7 @@ The model assumes that a live asynchronous holder's event loop runs often enough
 
 `NightWriter.tla` models one writer under the memory lock: a model call whose answer is cached before any write, a whole-section replacement guarded by the file hash read for the call, an owner edit racing the night, commit-gated readiness, a crash at any step and restart, and an ordered queue of days. On a hash mismatch nothing is written, the answer is dropped, the Card gets `truth_pending` and the day still closes; the call repeats next night.
 
-`Replace` and `Conflict` are single steps, and `HumanEdit` is enabled only while the night waits for or holds the answer, because the hash check, the write and the commit run under the Card lock that the day writers take too (`write_card`, CORE through `writeCore`): an owner edit cannot land between the check and the write.
+`Check`, `SavePost`, `Recheck` and `Replace` are separate steps. The night rereads the Card after saving its answer to the day cache. Cooperating Iva writers share the Card lock; a direct owner save can occur between filesystem operations. `HumanPublishStable` explicitly assumes a stable file from the final reread through the atomic rename. With that assumption disabled, `NightWriter-publish-window.cfg` demonstrates the remaining direct-edit window; `NightWriter-save-window.cfg` demonstrates publication without the reread. `night-writer-check.sh` checks those witnesses and the positive `NightWriter.cfg`. Card drafts, pending facts, daily summaries and periods have separate executable tests.
 
 ```sh
 d=$(mktemp -d)
@@ -46,6 +46,32 @@ Checked invariants:
 5. `QueueDrains`: with the stated fairness assumptions, the bounded queue reaches zero.
 
 Mutants that must fail: the hash check removed (`HumanEditWins`), restart without the cache (`NoSecondCall`), readiness without a commit (`ReadyOnlyAfterCommit`). After a restart an uncommitted new file is committed first, before any call — the production contract of the night's opening sweep.
+
+## UpdateLock
+
+`UpdateLock.tla` separates abandoned-owner inspection, rename, owner comparison,
+restoration, mkdir and publication. `UpdateLock.cfg` and `UpdateLock-ownerless.cfg`
+check two new contenders with recorded and missing owners. The ownerless model
+distinguishes an old empty directory from the fresh `mkdir → owner.json` publication
+window; `UpdateLock-ownerless-unsafe.cfg` shows two holders when null contents are
+accepted without checking freshness. `UpdateLock-by-path.cfg`, `UpdateLock-mixed.cfg`
+and `UpdateLock-three.cfg` retain witnesses for path deletion, legacy contenders
+and a third contender in the restore window. Run `sh specs/update-lock-check.sh`.
+Actual milliseconds, process liveness and crashes during displacement are covered
+by executable tests and the accepted residual windows in `docs/tech-debt.md` §18.
+
+## RestartRecovery
+
+`RestartRecovery.cfg` checks restart, quarantine, failures, notification and queue
+drain; `RestartRecovery-candidate.cfg` retains the earlier blocking behavior.
+`RestartRecovery-window.cfg` checks scan, lock acquisition, reread and publication
+against Bridge closing a turn or starting a new one. Publication uses the stored
+reread snapshot. The chat lock holds `ClosedStaysClosed`; the generation comparison
+holds `NewTurnKept` for a new turn started before acquisition.
+`RestartRecovery-window-unsafe.cfg` removes the lock and must violate
+`ClosedStaysClosed`. Run `sh specs/restart-recovery-check.sh`.
+The two-second recovery stale threshold has the same short synchronous-section
+assumption as `FileLock`; a stalled live writer exceeding it can lose its lock.
 
 ## Proactive
 

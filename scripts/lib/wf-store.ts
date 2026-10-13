@@ -187,7 +187,9 @@ export function rewriteRunStatusesForUpdate(
       const snapshot: unknown = JSON.parse(readFileSync(file, "utf8"));
       if (!isInterruptedRun(snapshot)) continue;
       const { acquireChatLock, releaseFileLock } = statusLocks();
-      const lock = acquireChatLock(file);
+      // Recovery runs after the service stops; reclaim a killed writer's fresh lock.
+      // A live writer stalled for over two seconds can lose it (FileLock-sync-slow).
+      const lock = acquireChatLock(file, 2_000);
       try {
         const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
         // Fence the snapshot and publication with the same lock as live chat writers.

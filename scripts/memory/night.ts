@@ -258,10 +258,11 @@ async function applyCachePending(cache: DayCache): Promise<void> {
       found.fields,
       withFacts(found.body, rows),
     );
-    if (readIf(found.file) !== found.raw)
-      throw new Error(
-        `${card}: Card changed after read; pending facts stay cached`,
-      );
+    if (readIf(found.file) !== found.raw) {
+      deferred.add(cache.date);
+      jobs.push(`${card}: Card changed after read; pending facts stay cached`);
+      continue;
+    }
     writeAtomic(found.file, next);
     if (!(await commit(`${card}: pending facts`, [found.file])))
       throw new Error(`${card}: отложенные факты не закоммичены`);
@@ -422,6 +423,9 @@ type Draft = {
   parsed: fm.ParsedFrontmatter;
 };
 
+class OwnerEditConflict extends Error {}
+const deferred = new Set<string>();
+
 /** Card дня в памяти до записи: читается раз, пишется одним коммитом шага. */
 class Day {
   readonly drafts = new Map<string, Draft | null>();
@@ -451,7 +455,7 @@ class Day {
       if (!draft || next === draft.before) return [];
       mkdirSync(dirname(draft.file), { recursive: true });
       if ((readIf(draft.file) ?? "") !== draft.before)
-        throw new Error(
+        throw new OwnerEditConflict(
           `${draft.file}: Card changed after read; cached facts wait for the next night`,
         );
       writeAtomic(draft.file, next);
@@ -836,11 +840,10 @@ async function finishDay(
   mkdirSync(dirname(summary), { recursive: true });
   const nextSummary = summaryOf(cache, entries, raw);
   const currentSummary = readIf(summary);
-  if (
-    currentSummary !== expectedSummary ||
-    (currentSummary !== null && input.summaryEdited(currentSummary))
-  )
-    return fail(`выжимка ${date} изменена вручную; день ждёт владельца`);
+  if (currentSummary !== expectedSummary)
+    throw new OwnerEditConflict(
+      `выжимка ${date} изменена вручную; день ждёт следующей ночи`,
+    );
   writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
@@ -1181,23 +1184,31 @@ function cleanupCaches(): void {
 
 async function runDays(dates: readonly string[]) {
   const done: string[] = [];
+  let code = 0;
   const attempt = (date: string, reason: attempts.AttemptReason) =>
     attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
-  for (const date of dates)
+  for (const date of dates) {
+    if (deferred.has(date)) continue;
     try {
       if (!(await processDay(date)))
         return { done, code: 1, stop: attempt(date, "day-unfinished") };
       done.push(date);
     } catch (error) {
+      if (error instanceof OwnerEditConflict) {
+        jobs.push(`${date}: ${error.message}`);
+        continue;
+      }
       if (error instanceof call.NightCeilingError) {
         console.error(`memory-night: обрез пределом ночи на ${date}`);
         return { done, code: 1, stop: attempt(date, "cut") };
       }
       if (!(error instanceof call.NightSchemaError)) throw error;
+      code = 1;
       attempt(date, "no-report");
       jobs.push(`${date}: ответ A не по форме после повтора: ${error.message}`);
     }
-  return { done, code: done.length === dates.length ? 0 : 1 };
+  }
+  return { done, code };
 }
 
 async function night(manual: string | undefined): Promise<number> {
