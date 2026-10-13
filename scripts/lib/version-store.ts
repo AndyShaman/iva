@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import {
   existsSync,
@@ -29,6 +30,8 @@ const LIVE_FAILURES = "live-failures.json";
 /** Enough for the versions on disk and the releases a box works through. */
 const FAILURES_KEPT = 8;
 const LOCK = "update.lock";
+const STALE_LOCK_PREFIX = `${LOCK}.stale-`;
+const STALE_LOCK_RETENTION_MS = 24 * 60 * 60 * 1000;
 const STALE_MS = 60 * 60 * 1000;
 const FLIP_PREFIX = ".current.iva-flip-";
 /** Names in `home` that only an interrupted update can leave behind. */
@@ -603,6 +606,25 @@ export function createVersionStore(
       rmSync(join(home, name), { recursive: true, force: true });
       stale.push(name);
     }
+    let dataEntries;
+    try {
+      dataEntries = readdirSync(layout.data, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return stale;
+    }
+    for (const entry of dataEntries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(STALE_LOCK_PREFIX))
+        continue;
+      const path = join(layout.data, entry.name);
+      if (
+        Date.now() - statSync(path).mtimeMs <= STALE_LOCK_RETENTION_MS ||
+        held(path)
+      )
+        continue;
+      rmSync(path, { recursive: true, force: true });
+      stale.push(entry.name);
+    }
     return stale;
   }
 
@@ -861,7 +883,21 @@ export function updateRunning(dataDir: string): boolean {
   return existsSync(path) && held(path);
 }
 
-/** Serialize updates with one atomic mkdir. */
+function ownerContents(path: string): string | null {
+  try {
+    return readFileSync(join(path, "owner.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/**
+ * Serialize updates with mkdir; reclaim a recorded dead owner by rename and compare.
+ * A third contender can claim the empty path before a fresh owner's directory is
+ * restored; a legacy contender still removes by path. These residual windows are
+ * witnesses in UpdateLock.tla and tracked in docs/tech-debt.md.
+ */
 export function acquireUpdateLock(dataDir: string): UpdateLock | null {
   mkdirSync(dataDir, { recursive: true });
   const path = join(dataDir, LOCK);
@@ -874,11 +910,37 @@ export function acquireUpdateLock(dataDir: string): UpdateLock | null {
   } catch (caught) {
     if ((caught as NodeJS.ErrnoException).code !== "EEXIST") throw caught;
   }
+  const expected = ownerContents(path);
   if (held(path)) return null;
-  rmSync(path, { recursive: true, force: true });
+  const stale = join(dataDir, `${STALE_LOCK_PREFIX}${randomUUID()}`);
+  try {
+    renameSync(path, stale);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let unchanged = false;
+  try {
+    unchanged = ownerContents(stale) === expected;
+  } catch (error) {
+    console.error(`cannot verify moved update lock ${stale}: ${String(error)}`);
+  }
+  if (!unchanged) {
+    try {
+      if (existsSync(path)) throw new Error("update lock path is occupied");
+      renameSync(stale, path);
+    } catch (error) {
+      console.error(
+        `update lock owner changed; kept ${stale}: ${String(error)}`,
+      );
+    }
+    return null;
+  }
+  rmSync(stale, { recursive: true, force: true });
   try {
     return claim();
-  } catch {
-    return null; // Another retry won the race for the same abandoned lock.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw error;
   }
 }

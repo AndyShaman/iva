@@ -14,6 +14,8 @@
 
 - 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix; placeholder values stay intact and punctuated secrets are removed in full.
 
+- 🔧 **Обновлятор сохраняет замок другого запуска**: при разборе брошенного замка каталог переименовывается, а владелец повторно сверяется; свежий замок возвращается на место. Забытые каталоги захвата старше суток убираются вместе с остатками обновления. Update takeover renames and verifies the abandoned owner, restores a successor's lock, and sweeps forgotten takeover directories after a day.
+
 - 🌙 **Ночь сохраняет прямые правки памяти**: Card повторно сверяется после сохранения кэша; изменённые черновики ждут следующей ночи с сохранёнными фактами, а выжимки проверяются после ответа модели. Night rereads Cards after saving its cache and preserves owner edits to Cards and summaries.
 
 - 🔧 **Закрытый ход остаётся закрытым после перезапуска**: восстановление сверяет поколение статуса под общим замком с мостом. A restart keeps a turn closed when Bridge has already finished it.
