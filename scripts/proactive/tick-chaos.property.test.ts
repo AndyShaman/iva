@@ -45,7 +45,7 @@ mkdirSync(process.env.ASSISTANT_DATA_DIR, { recursive: true });
 after(() => rmSync(ROOT, { recursive: true, force: true }));
 
 const { isQuietHour } = await import("#lib/proactive-config.ts");
-const { runProactiveTick } = await import("./tick.ts");
+const { dueBrief, runProactiveTick } = await import("./tick.ts");
 const { countToday, localDay, readProactiveState, writeProactiveState } =
   await import("./state.ts");
 const { sendTelegramHtml } = await import("../lib/telegram-send.ts");
@@ -861,13 +861,16 @@ function failureTold(
 /** Спокойный тик вне тихих часов: сбой, о котором не сказали, приходит сейчас. */
 async function calmTick(w: World): Promise<void> {
   const cfg = w.s.cfg;
-  let t = Math.ceil((w.now + MIN) / (30 * MIN)) * 30 * MIN;
-  for (let i = 0; i < 200; i++, t += 30 * MIN) {
-    const { hour, minute } = localDay(t, w.s.zone);
-    if (minute < 30 && !isQuietHour(cfg, hour)) break;
-  }
+  const nextCalm = () => {
+    let t = Math.ceil((w.now + MIN) / (30 * MIN)) * 30 * MIN;
+    for (let i = 0; i < 200; i++, t += 30 * MIN) {
+      const { hour, minute } = localDay(t, w.s.zone);
+      if (minute < 30 && !isQuietHour(cfg, hour)) break;
+    }
+    return (t - w.now) / MIN;
+  };
   const calm: TickSpec = {
-    advanceMin: (t - w.now) / MIN,
+    advanceMin: nextCalm(),
     tg: { kind: "ok", items: [] },
     mail: { kind: "ok", items: [] },
     timers: "ok",
@@ -883,16 +886,19 @@ async function calmTick(w: World): Promise<void> {
   };
   // Первый прогон (файла состояния ещё нет) по замыслу не берёт выход таймера старше суток
   // (tick-failures.test.ts «first run: failures of the last 24 hours come; older ones do not»).
+  const firstRunAt = existsSync(w.statePath)
+    ? w.firstRunAt
+    : w.now + calm.advanceMin * MIN;
   const pending = [...w.failing]
     .filter(
       ([key, f]) =>
-        !w.throttled(key) && !(f.timer && f.at <= w.firstRunAt - 24 * HOUR),
+        !w.throttled(key) && !(f.timer && f.at <= firstRunAt - 24 * HOUR),
     )
     .map(([key]) => key);
   let { code } = await w.step(calm);
   // Прогон с Insight кончается без Watch (ADR-0022): сбой приходит следующим спокойным прогоном.
   if (w.turns.some((x) => x.tick === w.tick && x.prompt.startsWith("Insight:")))
-    ({ code } = await w.step({ ...calm, advanceMin: 60 }));
+    ({ code } = await w.step({ ...calm, advanceMin: nextCalm() }));
   assert.equal(
     code,
     0,
@@ -911,8 +917,8 @@ async function calmTick(w: World): Promise<void> {
 const stateWorks = (s: Series) =>
   !["empty", "garbage", "truncated", "newer"].includes(s.disk);
 
-const property = (checks: Checks) =>
-  fc.asyncProperty(series, (s) => runSeries(s, checks));
+const property = (checks: Checks, inputs = series) =>
+  fc.asyncProperty(inputs, (s) => runSeries(s, checks));
 
 const RUNS = Number(process.env.CHAOS_RUNS ?? 250);
 const options = { seed: SEED, numRuns: RUNS };
@@ -949,11 +955,21 @@ test(`chaos (2'): a damaged or newer state file stays as it is, every tick exits
 });
 
 test(`chaos (3): a failure is marked told only after a delivered line about it, and an untold one comes in the next calm tick (seed ${SEED})`, async () => {
+  const watchSeries = series.filter(({ cfg }) =>
+    Array.from({ length: 24 }, (_, hour) => hour).some(
+      (hour) =>
+        !isQuietHour(cfg, hour) &&
+        dueBrief(cfg.insightTimes, [], { hour, minute: 0 }) === null,
+    ),
+  );
   await fc.assert(
-    property({
-      each: failureTold,
-      end: (w) => (stateWorks(w.s) ? calmTick(w) : undefined),
-    }),
+    property(
+      {
+        each: failureTold,
+        end: (w) => (stateWorks(w.s) ? calmTick(w) : undefined),
+      },
+      watchSeries,
+    ),
     options,
   );
 });
