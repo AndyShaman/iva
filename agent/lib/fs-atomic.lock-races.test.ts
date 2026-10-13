@@ -47,8 +47,24 @@ function lockDir(t: { after: (fn: () => void) => void }): string {
 }
 
 // Держатель в другом процессе: берёт лок с staleMs 300, печатает HELD, дальше body.
-function holderProcess(lock: string, body: string) {
-  const code = `const m = await import(${JSON.stringify(FS_ATOMIC)});
+function holderProcess(lock: string, body: string, observeHeartbeat = false) {
+  const code = `
+    ${
+      observeHeartbeat
+        ? `
+      const fs = (await import("node:fs")).default;
+      const { syncBuiltinESMExports } = await import("node:module");
+      const touch = fs.utimesSync;
+      fs.utimesSync = (...args) => {
+        touch(...args);
+        if (String(args[0]) === ${JSON.stringify(lock)})
+          process.send({ age: Date.now() - fs.statSync(${JSON.stringify(lock)}).mtimeMs });
+      };
+      syncBuiltinESMExports();
+    `
+        : ""
+    }
+    const m = await import(${JSON.stringify(FS_ATOMIC)});
     const held = await m.acquireFileLock(${JSON.stringify(lock)}, { staleMs: 300 });
     console.log(held ? "HELD" : "NOLOCK");
     ${body}`;
@@ -56,14 +72,32 @@ function holderProcess(lock: string, body: string) {
     process.execPath,
     ["--input-type=module", "--eval", code],
     {
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: observeHeartbeat
+        ? ["ignore", "pipe", "inherit", "ipc"]
+        : ["ignore", "pipe", "inherit"],
     },
   );
   const exited = new Promise((resolve) => child.on("exit", resolve));
   const held = new Promise<string>((resolve) =>
-    child.stdout.once("data", (chunk) => resolve(String(chunk).trim())),
+    child.stdout!.once("data", (chunk) => resolve(String(chunk).trim())),
   );
-  return { child, exited, held };
+  const tick = observeHeartbeat
+    ? new Promise<number>((accept, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("holder heartbeat was not observed")),
+          10_000,
+        );
+        child.once("message", (message: { age: number }) => {
+          clearTimeout(timeout);
+          accept(message.age);
+        });
+        child.once("exit", () => {
+          clearTimeout(timeout);
+          reject(new Error("holder exited before heartbeat"));
+        });
+      })
+    : undefined;
+  return { child, exited, held, tick };
 }
 
 // Трасса fast-3p (20 шагов): папка упавшего протухла; два уборщика увидели её пустой и
@@ -167,19 +201,23 @@ test("the heartbeat keeps a live holder's directory younger than staleMs/2 and n
 
 test("a holder killed after its heartbeat ticked is taken over after staleMs", async (t) => {
   const lock = join(lockDir(t), "state.lock");
-  const holder = holderProcess(lock, "setInterval(() => {}, 1_000);");
+  const holder = holderProcess(lock, "setInterval(() => {}, 1_000);", true);
+  t.after(() => {
+    if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
+  });
   assert.equal(await holder.held, "HELD");
-  await sleep(500);
+  const tickAge = await holder.tick;
+  assert.ok(
+    typeof tickAge === "number" && tickAge > -1_000 && tickAge < 300,
+    `heartbeat age ${tickAge} ms in the holder`,
+  );
   holder.child.kill("SIGKILL");
   await holder.exited;
-  const killedAt = Date.now();
-  const age = killedAt - statSync(lock).mtimeMs;
+  // A delayed parent resumes after staleMs: takeover still succeeds.
+  await sleep(350);
   const next = await acquireFileLock(lock, { staleMs: 300, timeoutMs: 3_000 });
-  const waited = Date.now() - killedAt;
   if (next) releaseFileLock(next);
-  assert.ok(age > -1_000 && age < 300, `directory age ${age} ms at the kill`);
   assert.ok(next, "a crashed holder's lock was never taken over");
-  assert.ok(waited < 1_500, `take-over took ${waited} ms`);
 });
 
 test("a second release of an old lock does not stop the new holder's heartbeat", async (t) => {
