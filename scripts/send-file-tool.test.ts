@@ -274,3 +274,50 @@ void test("копии .env и промпт CLI во временном ката�
   }
   assert.equal(calls.length, 0);
 });
+
+void test("текстовый файл с секретом получает отказ до sendDocument", async (t) => {
+  const secret = "fixtureFileBearerWithoutPrefix";
+  const before = process.env.ASSISTANT_BEARER;
+  process.env.ASSISTANT_BEARER = secret;
+  t.after(() => {
+    if (before === undefined) delete process.env.ASSISTANT_BEARER;
+    else process.env.ASSISTANT_BEARER = before;
+  });
+  for (const [index, content] of [
+    `ASSISTANT_BEARER=${secret}\n`,
+    secret,
+    `| ASSISTANT_BEARER | ${secret} |`,
+    `ключ sk-${"x".repeat(30)}`,
+  ].entries()) {
+    await t.test(`secret document carrier ${index}`, async (t) => {
+      const calls = stubFetch(t);
+      writeFileSync(join(vault, "attachments", "notes.txt"), content);
+      const answer = await run(
+        { path: "attachments/notes.txt" },
+        turnCtx({ chat_id: "1" }),
+      );
+      assert.equal(answer.ok, false, "secret document sent");
+      assert.match(answer.ok ? "" : answer.error, /секрет/u);
+      assert.equal(calls.length, 0);
+    });
+  }
+});
+
+void test("обычный текст и двоичный файл отправляются исходными байтами", async (t) => {
+  const calls = stubFetch(t);
+  const contents = [
+    Buffer.from("Отчёт: всё готово\nuser@example.com"),
+    Buffer.from([0, 255, 254, 1, 2]),
+  ];
+  for (const [index, bytes] of contents.entries()) {
+    writeFileSync(join(vault, "attachments", "safe.dat"), bytes);
+    const answer = await run(
+      { path: "attachments/safe.dat" },
+      turnCtx({ chat_id: "1" }),
+    );
+    assert.equal(answer.ok, true);
+    const document = calls[index].form.get("document");
+    assert.ok(document instanceof File);
+    assert.deepEqual(Buffer.from(await document.arrayBuffer()), bytes);
+  }
+});

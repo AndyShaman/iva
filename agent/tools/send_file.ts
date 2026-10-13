@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { Stats } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,6 +6,7 @@ import { basename, isAbsolute, relative, sep } from "node:path";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { notificationChat } from "../lib/notification-chat.ts";
+import { scanOutbound } from "../lib/security-gate.ts";
 import { redactNotice } from "../lib/outbox.ts";
 import type { ReminderChat } from "../lib/reminder-store.ts";
 import { chatOfTurn } from "../lib/reminder-tool.ts";
@@ -193,6 +195,13 @@ export async function sendFile(
   if (!token) return fail("не задан TELEGRAM_BOT_TOKEN");
   const file = await readAllowed(path, maxBytes);
   if ("ok" in file) return file;
+  if (!file.data.includes(0) && isUtf8(file.data)) {
+    const checked = scanOutbound(file.data.toString("utf8"), false);
+    if (checked.findings.some((finding) => finding.type === "api_key"))
+      return fail(
+        "файл содержит секрет: удали ключи и токены из копии и вызови send_file ещё раз",
+      );
+  }
   const form = documentForm(target.id, target.threadId, caption, file);
   return postDocument(token, form, file, signal);
 }
