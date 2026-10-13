@@ -256,3 +256,5 @@ false`, текст байт в байт и ноль атак-флагов).
   и цена лишних ложных сработок выше пользы.
 - Ступень 1 закрыта не полностью: документы (PDF/DOCX) и userbot-чаты доходят до
   модели сырыми. Это следующие поверхности, не эта.
+
+Helper rights and the removal of bundled planner/default task tools are defined in [ADR-0025](0025-helper-turn-rights.md).

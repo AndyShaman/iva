@@ -63,23 +63,68 @@ test("helper uses chat definitions and static block, retaining owner instruction
     /owner-fixture/,
   );
 });
-test("existing turn wire equals ordered bytes from 21f447ed", async () => {
+test("R7 Telegram chat and existing turns retain 91dd9bb6 wire bytes except the approved tools and prefix switch", async () => {
   const base = JSON.parse(
     await readFile(
-      new URL("./fixtures/helper-turn-base.json", import.meta.url),
+      new URL("./fixtures/helper-w3-base.json", import.meta.url),
       "utf8",
     ),
-  ) as { base: string; wire: string };
-  assert.equal(base.base, "21f447ed");
-  for (const kind of "chat reminder signal watch brief insight alert".split(
-    " ",
-  )) {
-    const { wire } = await wireTurn({ kind });
-    assert.equal(JSON.stringify(wire), base.wire, kind);
-    assert.notEqual(
-      JSON.stringify({ ...wire, tools: [...wire.tools].reverse() }),
-      base.wire,
-    );
+  ) as {
+    base: string;
+    wires: Record<string, { tools: { name: string }[]; prefix: unknown[] }>;
+  };
+  const enabled = JSON.parse(
+    await readFile(
+      new URL("./fixtures/helper-enabled-wire.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { tools: { name: string }[]; ruPrefix: unknown[] };
+  assert.equal(base.base, "91dd9bb6");
+  const previous = base.wires["wire-0"],
+    removed = new Set(["agent", "task_cancel", "task_update", "planner"]),
+    tools = previous.tools.filter((tool) => !removed.has(tool.name)),
+    helper = enabled.tools.find((tool) => tool.name === "helper");
+  assert.ok(helper);
+  assert.equal(previous.tools.length, 140);
+  assert.equal(
+    previous.tools.filter((tool) => removed.has(tool.name)).length,
+    4,
+  );
+  tools.splice(enabled.tools.indexOf(helper), 0, helper);
+  const expected = JSON.stringify({ tools, prefix: enabled.ruPrefix });
+  const saved = { ...process.env };
+  Object.assign(process.env, {
+    AGENT_LANGUAGE: "ru",
+    ASSISTANT_DATA_DIR: join(home, "golden-data"),
+    ASSISTANT_VAULT_DIR: join(home, "golden-vault"),
+  });
+  try {
+    await mkdir(join(home, "golden-vault"), { recursive: true });
+    for (const kind of "chat reminder signal watch brief insight alert".split(
+      " ",
+    )) {
+      const turn = await wireTurn({ kind, telegramAuth: kind === "chat" });
+      if (kind === "chat") {
+        assert.equal(turn.authored.auth?.authenticator, "telegram-webhook");
+        assert.equal(turn.authored.auth?.principalType, "user");
+        assert.equal(turn.authored.auth?.attributes?.chat_id, "41");
+        assert.equal(turn.authored.auth?.attributes?.chat_type, "private");
+      }
+      assert.equal(turn.wire.tools.length, 137, kind);
+      assert.equal(JSON.stringify(turn.wire), expected, kind);
+      assert.notEqual(
+        JSON.stringify({ ...turn.wire, tools: [...turn.wire.tools].reverse() }),
+        expected,
+      );
+    }
+  } finally {
+    for (const key of [
+      "AGENT_LANGUAGE",
+      "ASSISTANT_DATA_DIR",
+      "ASSISTANT_VAULT_DIR",
+    ])
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
   }
 });
 for (const noEvents of [false, true])
@@ -179,7 +224,7 @@ test("live helper observations compare ordered hashes and fail closed", async ()
     background = [observation(helper.wire.tools, true)];
   assert.deepEqual(helperWireResult(normal, background), {
     model: "helper-fixture",
-    tools: 140,
+    tools: chat.wire.tools.length,
   });
   for (const tools of [
     [],

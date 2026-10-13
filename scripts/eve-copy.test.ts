@@ -133,7 +133,18 @@ test("eve archive dependency and installed lock metadata agree", async () => {
   assert.equal(lock.packages[""]?.dependencies.eve, url);
   assert.equal(entry.resolved, url);
   assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/u);
-  for (const field of ["version", "resolved", "integrity"] as const)
+  const localArchive = process.env.EVE_LOCAL_ARCHIVE;
+  if (localArchive) {
+    assert.equal(have.resolved, `file:${localArchive}`);
+    assert.equal(
+      "sha512-" +
+        createHash("sha512")
+          .update(await readFile(path.resolve(ROOT, localArchive)))
+          .digest("base64"),
+      entry.integrity,
+    );
+  } else assert.equal(have.resolved, entry.resolved);
+  for (const field of ["version", "integrity"] as const)
     assert.equal(
       have[field],
       entry[field],
@@ -521,6 +532,10 @@ for (const inheritedGitDirectory of [false, true]) {
           corruptBuild.status,
           0,
           "second packing must be checked against the first",
+        );
+        assert.match(
+          corruptBuild.stderr,
+          /Archive contents differ from BUILD.json/u,
         );
         await writeFile(archive, bytes);
         const wrongPnpm = spawnSync(

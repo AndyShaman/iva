@@ -892,3 +892,23 @@ export function traceBridgeQueued(
 ): void {
   emitBridge(update, "queued", { count, parts: updatePartCount(update) });
 }
+
+export type HelperTraceEvent = "refused" | "finished" | "store_broken";
+
+export function traceHelper(
+  event: HelperTraceEvent,
+  id: string | null,
+  fields: Omit<TraceInput, "kind" | "name">,
+  options?: TraceOptions,
+): void {
+  appendTrace(
+    {
+      ...fields,
+      source: "helper",
+      kind: "helper",
+      name: event,
+      data: { ...fields.data, helper: id },
+    },
+    options,
+  );
+}

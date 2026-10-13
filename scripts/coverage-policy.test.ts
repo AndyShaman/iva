@@ -21,6 +21,10 @@ const BLIND_SPOT: ReadonlyArray<{
   readonly path: string;
   readonly why: string;
 }> = [
+  {
+    path: "agent/sandbox.ts",
+    why: "настройка в одну строку — выбор backend just-bash; логики нет, собирается npm run build",
+  },
   // Границы фреймворка: грузит только eve, тесты гоняют швы вокруг.
   {
     path: "agent/channels/eve.ts",

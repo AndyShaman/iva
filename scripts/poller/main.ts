@@ -1,3 +1,4 @@
+import { createHelperOutcomeScan } from "./helper-outcomes.ts";
 import { fileURLToPath } from "node:url";
 
 import { COLLECT_QUIET_MS } from "../lib/telegram-collect.ts";
@@ -331,12 +332,18 @@ export async function main({
     log("starting offset:", offset);
   }
 
+  const scanHelperOutcomes = createHelperOutcomeScan();
   let consecutiveConflicts = 0;
   for (;;) {
     assertTelegramProcessLease(processLease);
     // One batch per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
     scheduleResetIntentReconciliation();
+    try {
+      await scanHelperOutcomes();
+    } catch (error) {
+      log("helper outcome:", errorMessage(error));
+    }
     try {
       await retireSettledSessions();
     } catch (error) {

@@ -31,20 +31,37 @@ type Definition = {
     typeof import("../../node_modules/eve/dist/src/tools/schema.js").serializeInputSchema
   >[0];
 };
-async function authoredTurn(root: string, kind: string) {
+async function authoredTurn(root: string, kind: string, telegramAuth = false) {
   const eve = await eveInternals();
   const { assistantBearerAuth } = await load<
     typeof import("../../agent/lib/eve-auth.ts")
   >(root, "agent/lib/eve-auth.ts");
-  const auth = await assistantBearerAuth("fixture")(
-    new Request("http://fixture.invalid", {
-      headers: {
-        authorization: "Bearer fixture",
-        ...(kind === "chat" ? {} : { "x-iva-turn": kind }),
-        ...(kind === "helper" ? { "x-iva-helper": "h-abc123" } : {}),
-      },
-    }),
-  );
+  const auth = telegramAuth
+    ? (
+        await load<
+          typeof import("../../node_modules/eve/dist/src/public/channels/telegram/defaults.js")
+        >(
+          root,
+          "node_modules/eve/dist/src/public/channels/telegram/defaults.js",
+        )
+      ).defaultTelegramAuth({
+        attachments: [],
+        caption: "",
+        text: "hello",
+        raw: {},
+        chat: { id: "41", type: "private" },
+        from: { id: "41", isBot: false },
+        messageId: "1",
+      })
+    : await assistantBearerAuth("fixture")(
+        new Request("http://fixture.invalid", {
+          headers: {
+            authorization: "Bearer fixture",
+            ...(kind === "chat" ? {} : { "x-iva-turn": kind }),
+            ...(kind === "helper" ? { "x-iva-helper": "h-abc123" } : {}),
+          },
+        }),
+      );
   const context = {
     session: {
       id: "fixture",
@@ -70,6 +87,11 @@ async function authoredTurn(root: string, kind: string) {
       };
     }>(root, "agent/instructions/" + name);
     const value = await mod.default.events["turn.started"]({}, context);
+    if (
+      value?.role === "user" &&
+      !(value.content ?? value.markdown ?? "").trim()
+    )
+      continue;
     if (value?.role === "user")
       userInstructions.push({
         role: "user",
@@ -153,6 +175,10 @@ async function authoredTurn(root: string, kind: string) {
       inputSchema: jsonSchema(serializeInputSchema(d.inputSchema)! as never),
       execute: async () => "ok",
     });
+  const { frameworkAgentSourceRegistry } = await load<
+    typeof import("../../node_modules/eve/dist/src/framework/sources/registry.js")
+  >(root, "node_modules/eve/dist/src/framework/sources/registry.js");
+  const registered = JSON.stringify(frameworkAgentSourceRegistry.registrations);
   for (const [name, path] of [
     ["todo", "provided/todo"],
     ["load_skill", "provided/load-skill"],
@@ -161,15 +187,16 @@ async function authoredTurn(root: string, kind: string) {
     ["task_cancel", "framework/task-cancel"],
     ["agent", "framework/agent"],
   ])
-    add(
-      name,
-      (
-        await load<{ default: Definition }>(
-          root,
-          "node_modules/eve/dist/src/tools/" + path + ".js",
-        )
-      ).default,
-    );
+    if (registered.includes(`tools/${name}.ts`))
+      add(
+        name,
+        (
+          await load<{ default: Definition }>(
+            root,
+            "node_modules/eve/dist/src/tools/" + path + ".js",
+          )
+        ).default,
+      );
   for (const name of (await readdir(join(root, "agent/tools"))).sort())
     if (name.endsWith(".ts") && !name.endsWith(".test.ts"))
       add(
@@ -180,7 +207,14 @@ async function authoredTurn(root: string, kind: string) {
   const { createPreparedRuntimeSubagentTool } = await load<
     typeof import("../../node_modules/eve/dist/src/runtime/subagents/registry.js")
   >(root, "node_modules/eve/dist/src/runtime/subagents/registry.js");
-  for (const name of (await readdir(join(root, "agent/subagents"))).sort()) {
+  for (const name of (
+    await readdir(join(root, "agent/subagents")).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      },
+    )
+  ).sort()) {
     const mod = await load<{ default: { description: string } }>(
       root,
       "agent/subagents/" + name + "/agent.ts",
@@ -231,6 +265,7 @@ export async function wireTurn(
   options: {
     root?: string;
     kind?: string;
+    telegramAuth?: boolean;
     attributes?: Record<string, unknown>;
     currentAttributes?: Record<string, unknown>;
     calls?: number;
@@ -242,12 +277,14 @@ export async function wireTurn(
     noEvents?: boolean;
     retry?: boolean;
     compact?: boolean;
+    approvalTool?: string;
     onStep?: (ctx: AlsContext) => Promise<void>;
   } = {},
 ) {
   const authored = await authoredTurn(
     options.root ?? process.cwd(),
     options.kind ?? "chat",
+    options.telegramAuth,
   );
   const { eve } = authored,
     ctx = new eve.ContextContainer();
@@ -268,6 +305,12 @@ export async function wireTurn(
         }
       : auth,
   );
+  if (options.approvalTool)
+    ctx.set(eve.SessionKey, {
+      auth: { initiator: auth, current: auth },
+      sessionId: "fixture",
+      turn: { id: "turn_0", sequence: 0 },
+    });
   ctx.set(eve.SessionIdKey, "fixture");
   ctx.set(eve.TurnDynamicInstructionsKey, authored.instructions);
   let count = 0,
@@ -372,6 +415,9 @@ export async function wireTurn(
   for (const [name, tool] of authored.tools)
     authored.tools.set(name, {
       ...tool,
+      ...(options.approvalTool === name
+        ? { approval: () => "user-approval" as const }
+        : {}),
       execute: async () => {
         executions++;
         return "ok";

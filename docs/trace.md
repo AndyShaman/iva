@@ -38,7 +38,7 @@ content (`data.traceTrimmed: true`). Names, timings and sizes always survive.
 1. **Before the turn exists** — the update key `tg:<chatId>:<messageId>`. Both the Bridge
    and the core can compute it; `update_id` is invisible to the core.
 2. **After the turn starts** — the Eve `turnId` (`turn_0`, `turn_1`, …). Subagent steps
-   carry a suffix: `turn_3#planner`, the same key `data/usage.jsonl` uses.
+   carry a suffix: `turn_3#custom-node`, the same key `data/usage.jsonl` uses.
 3. **Night turns have no turn key at all.** Rollup and other cron deliveries go through
    the Eve client, which exposes only a session id, so their `gate.outbound` and
    `outbox.*` lines carry `turn: ""` with a non-empty `session` and `source` in
@@ -174,3 +174,5 @@ not match `YYYY-MM-DD.jsonl` are left alone.
   minute) and nothing else.
 - Two processes append to one file, so line order is write order, not turn order. Sort by
   `ts`.
+
+Historical Trace entries such as `turn_3#planner` retain their original meaning.

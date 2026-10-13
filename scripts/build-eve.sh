@@ -7,7 +7,7 @@ eve_root="$repo_root/eve"
 package_root="$eve_root/packages/eve"
 package_json="$package_root/package.json"
 build_json="$package_root/BUILD.json"
-version="0.51.1-iva.2"
+version="0.51.1-iva.3"
 pnpm_version="11.25.0"
 upstream_commit="eb5949a622801b35a2a6f78bb58d9eef27273cac"
 if [[ -n "${EVE_PNPM_BIN:-}" ]]; then
@@ -53,5 +53,5 @@ write_build_json "$packed_hash"
 mkdir "$stage_root/final"
 tar -xzf "$archive" -C "$stage_root/final"
 actual_hash="$(node "$repo_root/scripts/lib/eve-tree-hash.ts" packed "$stage_root/final/package")"
-[[ "$actual_hash" == "$packed_hash" ]]
+[[ "$actual_hash" == "$packed_hash" ]] || { echo 'Archive contents differ from BUILD.json.' >&2; exit 1; }
 printf '%s\n' "$archive"

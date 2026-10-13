@@ -57,7 +57,9 @@ const TAIL_MAX = 4000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_DELAY_MS = 20;
 const LOCK_TIMEOUT_MS = 500;
-const OWNER_STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
+export const OWNER_STARTED_AT = Math.round(
+  Date.now() - process.uptime() * 1000,
+);
 
 interface ScheduleStatusEntry {
   readonly inProgressSince?: number;

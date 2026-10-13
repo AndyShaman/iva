@@ -190,6 +190,8 @@ class CliSystemdLifecycle {
       // Everything eve creates (vault, transcripts, data/) must not be world-readable:
       // the system umask (022 on Ubuntu) would expose it to every user on the box.
       "UMask=0077",
+      "OOMPolicy=continue",
+      "KillMode=control-group",
       `WorkingDirectory=${this.runtime.ROOT}`,
       `EnvironmentFile=${this.runtime.ROOT}/.env`,
       // Стартуем через `eve start`, а НЕ напрямую `node .output/server/index.mjs`: eve start

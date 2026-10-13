@@ -160,9 +160,10 @@ describe("compileAgentManifest source graph", () => {
     ]);
     const graph = await resolveRuntimeAgentGraph({ manifest: serialized, moduleMap });
 
-    expect(serialized.tools.find((tool) => tool.name === "agent")).toMatchObject({
-      hasExecute: true,
-    });
+    for (const name of ["agent", "task_update", "task_cancel"]) {
+      expect(serialized.tools.find((tool) => tool.name === name)).toBeUndefined();
+      expect(graph.root.turnAgent.tools.find((tool) => tool.name === name)).toBeUndefined();
+    }
     expect(serialized.tools.find((tool) => tool.name === "ask_question")).toMatchObject({
       behavior: {
         availability: ["requires-request-input"],
@@ -176,14 +177,6 @@ describe("compileAgentManifest source graph", () => {
         handling: { kind: "provider-tool", provider: "parallel" },
       },
       hasExecute: false,
-    });
-    expect(graph.root.turnAgent.tools.find((tool) => tool.name === "agent")).toMatchObject({
-      rootOnly: true,
-      task: {
-        nodeId: "__root__",
-        resultKind: "subagent",
-        workflowId: expect.stringContaining("subagentToolExecuteWorkflow"),
-      },
     });
     expect(graph.root.turnAgent.tools.find((tool) => tool.name === "web_search")).toMatchObject({
       behavior: {

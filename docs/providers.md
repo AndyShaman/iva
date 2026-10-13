@@ -25,7 +25,7 @@ MODEL_PROVIDER=opencode   # or ollama / openrouter / codex / claude / custom, th
 
 Those six names, spelled exactly. Anything else — `ollmaa`, `OLLAMA` — stops the agent at startup with the list of accepted names, instead of running Ollama under a name nobody configured ([troubleshooting.md](troubleshooting.md)).
 
-OpenCode Go only serves clients that identify themselves: every request carries Iva's own `User-Agent` (`iva/<version>`) and a stable conversation id in `x-opencode-session` — the eve session id, or one id per process where there is no session (planner, vision). Without them Go answers `MissingSessionID` on every turn ([Go docs](https://opencode.ai/docs/go/#where-can-i-use-it)). Other providers get neither header.
+OpenCode Go only serves clients that identify themselves: every request carries Iva's own `User-Agent` (`iva/<version>`) and a stable conversation id in `x-opencode-session` — the eve session id, or one id per process where there is no session (declared nodes, vision). Without them Go answers `MissingSessionID` on every turn ([Go docs](https://opencode.ai/docs/go/#where-can-i-use-it)). Other providers get neither header.
 
 Start with Go: a quarter of the price, ~23 models to switch between (the wizard pulls the live list, so new ones like `kimi-k3` appear on their own). Keys, model pick and context-window settings live in [configuration.md](configuration.md).
 

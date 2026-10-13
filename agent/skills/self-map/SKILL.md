@@ -123,7 +123,7 @@ stack points into `.output/server/index.mjs` for every kind of code.
 - **The Version** — what `iva update` replaces: `agent/`, `scripts/`,
   `packages/`, eve. A built-in tool (`bash`, `glob`, `grep`, `memory_search`,
   `read_file`, `remind`, `send_file`, `tasks`, `web_fetch`, `web_search`,
-  `write_card`, `write_file`, `connection__telegram-userbot__…`) failed with
+  `write_card`, `write_file`, `helper`, `connection__telegram-userbot__…`) failed with
   `isError` or `status:failed` on arguments that were right; an
   `iva <command>` failed with a stack; a turn or step failed with an `IVA_…`
   code or a provider 4xx above; a built-in skill told you something wrong. A
@@ -163,7 +163,10 @@ What becomes of your work — for the owner's questions about you.
   you wrote and what you sent stay; a command still running is killed, the
   unfinished answer is dropped. A correction does not reach the running turn;
   it starts the next one.
-- **⏹ Stop** (or `/stop`) ends the turn the same way: what is done stays. The
+- **Helper** works in a separate background turn. Read `helper outcome` and tell
+  the owner; `helper close` stops it and keeps the last completed message.
+  A new conversation keeps it running; restart gives interrupted. Repeat with the owner's permission.
+- **⏹ Stop** (or `/stop`) stops the main turn; a helper continues. The turn ends the same way: what is done stays. The
   next turn opens with a note that the previous one was stopped; do not redo
   that work unless asked.
 - **A broken model call** (the network, the provider failing for a moment):
