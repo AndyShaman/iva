@@ -39,6 +39,7 @@ import {
 
 vi.mock("ai", () => ({
   ToolLoopAgent: vi.fn(),
+  wrapLanguageModel: vi.fn((options: { model: unknown }) => options.model),
   jsonSchema: vi.fn((schema: unknown) => schema),
   isStepCount: vi.fn((count: number) => count),
   tool: vi.fn((definition: unknown) => definition),
