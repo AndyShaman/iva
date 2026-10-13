@@ -22,6 +22,8 @@ import type { TelegramQueueUpdate } from "../lib/telegram-queue.ts";
 type TelegramUpdate = TelegramQueueUpdate;
 type ErrorLike = { message?: unknown; name?: unknown };
 export type DeliverOptions = {
+  inputSource?: "owner" | "tap" | "wake";
+  preserveAcceptance?: boolean;
   route?: string;
   acceptedStatus?: number;
   queueReceipt?: boolean;
@@ -52,6 +54,8 @@ const BOUNDED_ATTEMPTS = 30;
 async function deliver(
   update: TelegramUpdate,
   {
+    inputSource,
+    preserveAcceptance = false,
     route: requestedRoute,
     acceptedStatus,
     queueReceipt: requestedQueueReceipt,
@@ -92,6 +96,7 @@ async function deliver(
       const res = await fetch(route, {
         method: "POST",
         headers: {
+          ...(inputSource ? { "x-iva-input": inputSource } : {}),
           "Content-Type": "application/json",
           "X-Telegram-Bot-Api-Secret-Token": SECRET as string,
         },
@@ -116,7 +121,11 @@ async function deliver(
           acceptanceKind === "turn" ||
           acceptanceKind === "handled")
       ) {
-        return acceptanceKind === "handled" ? "handled" : true;
+        return acceptanceKind === "handled"
+          ? "handled"
+          : preserveAcceptance
+            ? "turn"
+            : true;
       }
       if (res.ok) {
         if (expectsAcceptance) {

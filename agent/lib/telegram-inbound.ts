@@ -37,6 +37,7 @@ const RICH_MEDIA_LIMIT = 10;
 
 // Структурная проекция входящего сообщения eve: пайплайну хватает этих полей.
 export type TelegramInboundMessage = {
+  readonly inputSource?: "owner" | "tap" | "wake";
   readonly attachments: readonly unknown[];
   readonly caption: string;
   readonly chat: {
@@ -317,6 +318,7 @@ function buildAuth(msg: TelegramInboundMessage): TelegramInboundAuth | null {
     message_id: msg.messageId,
     user_id: u.id,
   };
+  if (msg.inputSource) attributes.iva_input = msg.inputSource;
   if (msg.chat.title !== undefined) attributes.chat_title = msg.chat.title;
   if (msg.messageThreadId !== undefined)
     attributes.message_thread_id = String(msg.messageThreadId);
@@ -489,11 +491,12 @@ type CarrierTextEntries = {
 function carrierTextEntries(
   text: string,
   label: string | null,
+  wake = false,
 ): CarrierTextEntries {
   const userText = text.trim();
   if (!userText) return { entries: [], flagged: false };
   const labelled = label === null ? userText : `${label}\n${userText}`;
-  const dailyPath = appendDaily("[text]", labelled);
+  const dailyPath = wake ? undefined : appendDaily("[text]", labelled);
   const sanitized = sanitizeInbound(labelled);
   const flagged = logInboundFindings(sanitized);
   return {
@@ -563,7 +566,7 @@ export async function runTelegramInbound(
     readTelegramMessageText(raw, message.text, message.caption);
   const singleLocationContext =
     partsRaw.length === 1 ? telegramLocationContext(raw) : null;
-  appendNonFileParts(partsRaw);
+  if (message.inputSource !== "wake") appendNonFileParts(partsRaw);
 
   // The allowlist and dispatch decision are complete. Publish the one working
   // status before reply sanitization, media I/O, security scans or providers.
@@ -626,9 +629,10 @@ export async function runTelegramInbound(
     const rawItems = rawBuffered.filter(
       (s: unknown): s is string => typeof s === "string" && s.trim().length > 0,
     );
-    const dailyPath = rawItems.length
-      ? appendDaily("[queued]", rawItems.join("\n"))
-      : undefined;
+    const dailyPath =
+      message.inputSource !== "wake" && rawItems.length
+        ? appendDaily("[queued]", rawItems.join("\n"))
+        : undefined;
     const items = rawItems.map((text) => {
       const sanitized = sanitizeInbound(text);
       // Порядок и состав — как у свежей реплики (gatedTextEntries): предупреждение,
@@ -693,7 +697,7 @@ export async function runTelegramInbound(
     const cmd = cmdText.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
     const rest = cmdText.slice(cmdText.split(/\s+/)[0].length).trim();
     if (cmd === "/task") {
-      appendDaily("[text]", cmdText);
+      if (message.inputSource !== "wake") appendDaily("[text]", cmdText);
       await effects.startTyping();
       return withPre({
         auth: buildAuth(message),
@@ -708,7 +712,7 @@ export async function runTelegramInbound(
       });
     }
     if (cmd === "/tasks") {
-      appendDaily("[text]", cmdText);
+      if (message.inputSource !== "wake") appendDaily("[text]", cmdText);
       await effects.startTyping();
       return withPre({
         auth: buildAuth(message),
@@ -721,7 +725,7 @@ export async function runTelegramInbound(
       });
     }
     if (cmd === "/digest") {
-      appendDaily("[text]", cmdText);
+      if (message.inputSource !== "wake") appendDaily("[text]", cmdText);
       await effects.startTyping();
       return withPre({
         auth: buildAuth(message),
@@ -735,7 +739,11 @@ export async function runTelegramInbound(
   // uploadPolicy "disabled" → message.attachments пуст; берём ВСЁ из raw сами.
   if (singleReading?.rich) {
     await effects.startTyping();
-    const carrier = carrierTextEntries(singleReading.text, forwardLabel(raw));
+    const carrier = carrierTextEntries(
+      singleReading.text,
+      forwardLabel(raw),
+      message.inputSource === "wake",
+    );
     return withPre({
       auth: buildAuth(message),
       context: [
@@ -768,7 +776,11 @@ export async function runTelegramInbound(
   // 3. Текстовая реплика юзера → daily (verbatim) + inbound security-гейт.
   if (partsRaw.length === 1) {
     const label = forwardLabel(raw);
-    const carrier = carrierTextEntries(singleReading?.text ?? "", label);
+    const carrier = carrierTextEntries(
+      singleReading?.text ?? "",
+      label,
+      message.inputSource === "wake",
+    );
 
     await effects.startTyping();
 
@@ -787,7 +799,13 @@ export async function runTelegramInbound(
     const reading = readings[partIndex];
     const label = forwardLabel(partRaw);
     if (reading.rich) {
-      context.push(...carrierTextEntries(reading.text, label).entries);
+      context.push(
+        ...carrierTextEntries(
+          reading.text,
+          label,
+          message.inputSource === "wake",
+        ).entries,
+      );
       context.push(...(await richMediaEntries(effects, reading.rich)));
       continue;
     }
@@ -809,7 +827,11 @@ export async function runTelegramInbound(
       await unreadableNote(message, effects, [partRaw], [reading]); // как у одиночного
       continue;
     }
-    const carrier = carrierTextEntries(userText, label);
+    const carrier = carrierTextEntries(
+      userText,
+      label,
+      message.inputSource === "wake",
+    );
     const carrierText = carrierReading.text.trim();
     // Пересланная часть не «чистый носитель»: eve донесёт её текст без метки,
     // поэтому помеченную запись отдаём контекстом даже на нулевой части.

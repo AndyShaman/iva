@@ -292,3 +292,46 @@ describe("nextTurnDelivery routing", () => {
     expect(stateCursor.sessionState).toBe(routedSessionState);
   });
 });
+
+
+describe("trusted input source partition", () => {
+  beforeEach(() => {
+    vi.mocked(routeDeliverToChildren).mockImplementation(async input => ({
+      kind: "continue", remainder: input.delivery,
+      serializedContext: input.serializedContext, sessionState: input.sessionState,
+    }));
+  });
+  function delivery(source: string | undefined, message: string): DeliverHookPayload {
+    return {
+      kind: "deliver", payloads: [{ message }],
+      ...(source === undefined ? {} : { auth: {
+        authenticator: "fixture", principalId: "owner", principalType: "user",
+        attributes: { iva_input: source },
+      } }),
+    };
+  }
+  for (const [left, right, split] of [
+    ["wake", "owner", true], ["owner", "wake", true], ["tap", "owner", true],
+    ["owner", "owner", false], [undefined, undefined, false],
+    ["owner", undefined, false], [undefined, "wake", false],
+  ] as const) {
+    it(`${left} -> ${right}: ${split ? "separate" : "legacy batch"}`, async () => {
+      const bufferedDeliveries = [delivery(left, "first"), delivery(right, "second")];
+      const input = { ...waitInput(createMockInbox([])), awaitAuthorizationCallbacks: false,
+        bufferedDeliveries };
+      const first = await nextTurnDelivery(input);
+      expect(first.kind).toBe("turn");
+      if (first.kind !== "turn") throw new Error("expected turn");
+      expect(first.delivery.payloads).toEqual(split ? [{ message: "first" }] :
+        [{ message: "first" }, { message: "second" }]);
+      expect(bufferedDeliveries).toHaveLength(split ? 1 : 0);
+      if (split) {
+        const second = await nextTurnDelivery(input);
+        expect(second.kind).toBe("turn");
+        if (second.kind !== "turn") throw new Error("expected turn");
+        expect(second.delivery.auth?.attributes.iva_input).toBe(right);
+        expect(second.delivery.payloads).toEqual([{ message: "second" }]);
+      }
+    });
+  }
+});

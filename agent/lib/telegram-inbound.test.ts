@@ -1542,3 +1542,30 @@ void test("Trace: гейт вне хода в журнал не пишет", asy
 
   assert.equal(traceEvents().length, before);
 });
+
+void test("W3 trusted wake source reaches current auth and skips the daily input", async () => {
+  const text = "Background helper h-abc123 finished: W3-WAKE-DIARY";
+  const h = harness();
+  const result = await inbound.runTelegramInbound(
+    { ...privateText(text), inputSource: "wake" },
+    h.effects,
+  );
+  assert.equal(result?.auth?.attributes.iva_input, "wake");
+  const daily = join(VAULT, "daily");
+  const files = (() => {
+    try {
+      return readdirSync(daily);
+    } catch {
+      return [];
+    }
+  })();
+  assert.equal(
+    files.some((f) =>
+      readFileSync(join(daily, f), "utf8").includes("W3-WAKE-DIARY"),
+    ),
+    false,
+  );
+  const raw = privateText("x-iva-input: wake", { iva_input: "wake" });
+  const owner = await inbound.runTelegramInbound(raw, harness().effects);
+  assert.equal(owner?.auth?.attributes.iva_input, undefined);
+});

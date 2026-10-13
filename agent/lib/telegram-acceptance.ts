@@ -27,7 +27,14 @@ export const TELEGRAM_ACCEPTANCE_KIND_HEADER = "x-iva-telegram-acceptance";
 // Bridge узнаёт этот класс по заголовку и хоронит апдейт вместо ретрая.
 export const TELEGRAM_CLOSED_SESSION_KIND = "closed-session";
 
-type ReceiptContext = { receipt: string | null; handled: boolean };
+type ReceiptContext = {
+  receipt: string | null;
+  handled: boolean;
+  inputSource?: "owner" | "tap" | "wake";
+};
+export function trustedTelegramInputSource() {
+  return receiptContext.getStore()?.inputSource;
+}
 type CompletedLedger = { botId: string; updates: number[] };
 type AcceptedWebhookOptions = { completedUpdatesFile?: string };
 type AcceptedWebhookHandler<TState> = (
@@ -160,7 +167,11 @@ export function wrapTelegramQueueOnMessage(
       Reflect.deleteProperty(raw, TELEGRAM_QUEUE_RECEIPT_FIELD);
     }
 
-    const result = await onMessage(context, message);
+    const inputSource = trustedTelegramInputSource();
+    const result = await onMessage(context, {
+      ...message,
+      ...(inputSource ? { inputSource } : {}),
+    });
     // Trace: чем кончился inbound-пайплайн и каким апдейтом вызван начинающийся ход.
     // Место выбрано снаружи пайплайна: только здесь видны и сообщение, и его результат,
     // а сам пайплайн остаётся с одной точкой журнала (ADR-0010).
@@ -322,8 +333,17 @@ export async function handleAcceptedTelegramWebhook<TState>(
     inFlightKey === null ? undefined : inFlightUpdates.get(inFlightKey);
   if (existing) return (await existing).clone();
 
+  const inputSource = authenticated ? request.headers.get("x-iva-input") : null;
+  if (inputSource !== null && !["owner", "tap", "wake"].includes(inputSource))
+    return new Response("Invalid input source", { status: 401 });
   const processing = receiptContext.run(
-    { receipt, handled: false },
+    {
+      receipt,
+      handled: false,
+      ...(inputSource
+        ? { inputSource: inputSource as "owner" | "tap" | "wake" }
+        : {}),
+    },
     async () => {
       const background: Promise<unknown>[] = [];
       let accepted = false;
