@@ -1,15 +1,15 @@
 ---- MODULE GoalCheck ----
-\* Goal v3.1, §3.2–3.7, §4, §7; design before implementation.
+\* Goal v3.2, §3.2–3.7, §4, §7; design before implementation.
 \* All table changes are one Commit under the helpers.json lock. The two
-\* persistence clients read/rename outside that lock and mark saved afterwards.
-\* SPEC-FIX-1: serialize read/compare/rename per goal (a separate file lock).
+\* persistence clients model the stages of saving under that same table lock.
+\* SPEC-FIX-1: read/compare/rename and saved use the helpers.json lock, as does G9.
 \* SPEC-FIX-2: Due needs recurring-opportunity fairness (SF), because quiet hours,
 \* day normalization and competing rows can disable it between every pair of ticks.
 \* CheckReleased is per captured row, including removal by G9;
 \* immediate re-capture can keep the Boolean check != 0 true forever.
 \* DueServed counts OwnerNextCheck/WatchNudge as rescheduling;
 \* their permitted future deadline supersedes the previously due deadline.
-\* SPEC-FIX-3: OwnerNextKept covers rules 1–3; rule 4 sets default by §3.4.
+\* SPEC-FIX-3: rule 4 keeps the owner's next time; OwnerNextKept covers all rules.
 \* raw/client/session are observations of the helper lifecycle; durable outcome
 \* and the goal snapshot are written only by Settle (or pending owner cancel).
 \* Mode bounds environment input: capacity observes a finite disk outage and
@@ -34,7 +34,7 @@ Content == {"news", "question", "done"}
 SafetyNames == {"ClaimOnlyActive", "CancelChangesNothing", "OwnerNextKept",
      "ContentReportTold", "SilentBranches", "FailureCount", "NoStaleNotice",
      "ClosedMeansClosed", "NoSweepBeforeSaved", "LastSavedMonotone",
-     "GoalOutlivesRows", "OnlyOwnerActs", "DayCountBounded", "OwnerNextKeptLiteral"}
+     "GoalOutlivesRows", "OnlyOwnerActs", "DayCountBounded"}
 EmptyGoal == [status |-> "absent", rev |-> 1, check |-> 0, report |-> None, reportNext |-> FALSE,
      owes |-> 0, pause |-> None, due |-> "none", arrived |-> FALSE, ownerNext |-> FALSE,
      planBy |-> 0, overCeiling |-> FALSE, expired |-> FALSE, checksDay |-> 0,
@@ -76,8 +76,7 @@ Safe(x,y,a,g,r,n) ==
  [] n = "CancelChangesNothing" -> (a = "Settle" /\ Cancel(x,r) =>
        <<y.g[g].status,y.g[g].planBy,y.g[g].due,y.g[g].arrived,y.g[g].failures>> =
        <<x.g[g].status,x.g[g].planBy,x.g[g].due,x.g[g].arrived,x.g[g].failures>>)
- [] n = "OwnerNextKeptLiteral" -> (a = "Settle" /\ x.g[g].ownerNext /\ y.g[g].status = "active" => y.g[g].due = "owner")
- [] n = "OwnerNextKept" -> (a = "Settle" /\ Rule(x,r) \in {1,2,3} /\ x.g[g].ownerNext /\ y.g[g].status = "active" => y.g[g].due = "owner")
+ [] n = "OwnerNextKept" -> (a = "Settle" /\ x.g[g].ownerNext /\ y.g[g].status = "active" => y.g[g].due = "owner")
  [] n = "ContentReportTold" -> (a = "Settle" /\ Rule(x,r) = 1 =>
        y.r[r].phase = "outcome" /\ y.r[r].snapshot = Verdict(x,g))
  [] n = "SilentBranches" -> (a = "Settle" /\ (Rule(x,r) \in {0,2} \/
@@ -104,7 +103,7 @@ Safe(x,y,a,g,r,n) ==
 Commit(y,a,g,r) ==
  /\ s' = y
  /\ audit' = IF ~TrackSafety THEN audit ELSE IF a \notin {"Start","Due","Settle","CreateNotice","OwnerEdit","OwnerResume","OwnerClose","SweepRow","SweepGoal","PersistLast"} THEN audit ELSE
-     [n \in SafetyNames |-> audit[n] /\ (IF n="OwnerNextKeptLiteral" /\ Mode # "literal" THEN TRUE ELSE Safe(s,y,a,g,r,n))]
+     [n \in SafetyNames |-> audit[n] /\ Safe(s,y,a,g,r,n)]
 Init ==
  /\ s = [g |-> [g \in Goals |-> IF Mode="day" /\ g=1 THEN LoadedDayGoal ELSE EmptyGoal], r |-> [r \in RowIds |-> EmptyRow],
      writers |-> [c \in Clients |-> EmptyIO], day |-> 0, quietHour |-> FALSE, normal |-> 0,
@@ -217,9 +216,10 @@ Settle(r) ==
      !.g[g].pause=IF paused THEN "failures" ELSE @,
      !.g[g].pauseTicket=IF paused THEN @+1 ELSE @,
      !.g[g].due=IF k=0 THEN @ ELSE IF status # "active" THEN "none"
-        ELSE IF k=4 THEN "default" ELSE IF ownerDue THEN @
+        ELSE IF k=4 THEN IF ownerDue /\ Mutant # "fail-default" THEN @ ELSE "default"
+        ELSE IF ownerDue THEN @
      ELSE IF k \in {1,2} /\ s.g[g].reportNext THEN "helper" ELSE "default",
-     !.g[g].arrived=IF k=0 \/ (k \in {1,2,3} /\ ownerDue /\ status="active") THEN @ ELSE FALSE,
+     !.g[g].arrived=IF k=0 \/ (ownerDue /\ status="active") THEN @ ELSE FALSE,
      !.r[r].phase=IF content \/ paused THEN "outcome" ELSE "closed",
      !.r[r].outcome=s.r[r].raw, !.r[r].snapshot=snap,
      !.r[r].partial=content /\ s.r[r].raw \notin {"done","empty"},
@@ -394,7 +394,6 @@ RowsBounded == Cardinality(Rows(s))<=GoalRowsMax /\ Cardinality(Rows(s))+s.norma
 ClosedFinal == \A g \in ActiveGoals : s.g[g].status="closed" => Untold(s,g)={}
 ClaimOnlyActive == audit["ClaimOnlyActive"]
 CancelChangesNothing == audit["CancelChangesNothing"]
-OwnerNextKeptLiteral == audit["OwnerNextKeptLiteral"]
 OwnerNextKept == audit["OwnerNextKept"]
 ContentReportTold == audit["ContentReportTold"]
 SilentBranches == audit["SilentBranches"]

@@ -65,8 +65,8 @@ check GoalCheck-day-cap none || exit 2
 check GoalCheck-history none || exit 2
 check GoalCheck-day none || exit 2
 check GoalCheck-capacity-reach NoFullTable || exit 2
-# Literal design/specification diagnostics are retained as counterexamples.
-check GoalCheck-spec-owner-failure OwnerNextKeptLiteral || exit 2
+# Rejected designs are retained as counterexamples.
+check GoalCheck-fail-default OwnerNextKept || exit 2
 check GoalCheck-spec-file-race LastSavedMonotone || exit 2
 check GoalCheck-spec-weak-fair DueServed || exit 2
 check GoalCheck-norev CancelChangesNothing || exit 2
