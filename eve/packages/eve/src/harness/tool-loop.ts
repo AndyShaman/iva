@@ -2493,9 +2493,9 @@ function buildEmptyResponseNudge(emptyDeliveryEnabled: boolean): string {
 
 /**
  * Recovers a model call that completed without content (see
- * {@link EmptyModelResponseError}) by reissuing the same call once, with
+ * {@link EmptyModelResponseError}) by reissuing the same call up to three times, with
  * {@link EMPTY_RESPONSE_NUDGE} appended to the wire request. If the
- * reissue also fails, the caller's failure floor takes over.
+ * reissues remain empty, the caller's failure floor takes over.
  *
  * The reissue goes through `runOneModelCall` so it gets fresh step hooks;
  * the previous attempt's one-shot `stepResult` promise has already resolved
@@ -2524,21 +2524,25 @@ async function attemptEmptyResponseRecovery(input: {
     turnId: input.turnId,
   });
 
-  try {
-    const result = await input.runOneModelCall({
-      ...input.retryCallOptions,
-      retryReason: "empty-response",
-      suppressStepStartedEmission: true,
-      trailingUserNote: buildEmptyResponseNudge(input.emptyDeliveryEnabled),
-    });
-    return { outcome: "recovered", result };
-  } catch (retryError) {
-    return {
-      outcome: "failed",
-      error: retryError,
-      retryCallOptions: input.retryCallOptions,
-    };
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await input.runOneModelCall({
+        ...input.retryCallOptions,
+        retryReason: "empty-response",
+        suppressStepStartedEmission: true,
+        trailingUserNote: buildEmptyResponseNudge(input.emptyDeliveryEnabled),
+      });
+      return { outcome: "recovered", result };
+    } catch (retryError) {
+      if (retryError instanceof EmptyModelResponseError && attempt < 3) continue;
+      return {
+        outcome: "failed",
+        error: retryError,
+        retryCallOptions: input.retryCallOptions,
+      };
+    }
   }
+  throw new Error("Empty response recovery exhausted without a result.");
 }
 
 // ---------------------------------------------------------------------------

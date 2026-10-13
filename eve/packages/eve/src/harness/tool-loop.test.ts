@@ -4969,7 +4969,7 @@ describe("createToolLoopHarness", () => {
         const result = await runStep(session, { message: "Hi" });
 
         // Rejection, degraded retry, reissue: three calls, then the floor.
-        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(3);
+        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(5);
         expect(result.next).toBeNull();
 
         const types = events.map((event) => event.type);
@@ -5299,6 +5299,26 @@ describe("createToolLoopHarness", () => {
       vi.mocked(ToolLoopAgent).mockReset();
     });
 
+    for (const mode of ["conversation", "task"] as const) {
+      for (const empties of [2, 3]) {
+        it(`recovers after ${empties} empty responses in ${mode}`, async () => {
+          const implementations = [...Array.from({ length: empties }, () => emptyResult), successResult]
+            .map(result => { setupMockAgent(result); return vi.mocked(ToolLoopAgent).getMockImplementation()!; });
+          for (const implementation of implementations.slice(0, -1)) {
+            vi.mocked(ToolLoopAgent).mockImplementationOnce(implementation);
+          }
+          const { emit, events } = createEventCollector();
+          const runStep = createToolLoopHarness(createTestConfig(mode, emit));
+          const result = await runStep(createTestSession(), { message: "Hi" });
+          expect(vi.mocked(ToolLoopAgent).mock.calls).toHaveLength(empties + 1);
+          expect(events.filter(e => e.type === "step.started")).toHaveLength(1);
+          expect(events.some(e => e.type === "step.failed" || e.type === "turn.failed")).toBe(false);
+          expect(JSON.stringify(result.session.history)).toContain("Here is your answer.");
+          expect(result.session.state?.["eve.harness.modelCalls"]).toBe(1);
+        });
+      }
+    }
+
     it("reissues an empty 'other' response once within the same step and recovers", async () => {
       setupFirstThenAgent(emptyResult, successResult);
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -5551,7 +5571,7 @@ describe("createToolLoopHarness", () => {
         const result = await runStep(createTestSession(), { message: "Hi" });
 
         // Original attempt + one reissue, then bail to the recoverable floor.
-        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(2);
+        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(4);
         expect(result.next).toBeNull();
 
         const types = events.map((event) => event.type);
@@ -5581,7 +5601,7 @@ describe("createToolLoopHarness", () => {
         const result = await runStep(createTestSession(), { message: "Hi" });
 
         // Original attempt + one reissue, then bail to the recoverable floor.
-        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(2);
+        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(4);
         expect(result.next).toBeNull();
 
         const types = events.map((event) => event.type);
@@ -5608,7 +5628,7 @@ describe("createToolLoopHarness", () => {
       try {
         const result = await runStep(createTestSession(), { message: "Hi" });
 
-        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(2);
+        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(4);
         // A task cannot park for a user retry; the failure is the task's
         // terminal result instead of a `next: null` park that turnWorkflow
         // would reject.
