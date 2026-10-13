@@ -69,7 +69,7 @@ test("startFailed and concurrent ticks claim one row only once", async (t) => {
   assert.equal(starts, 1);
   assert.equal((await s.getHelper(b.id))?.outcome, "failed");
 });
-test("closed living owner kills only its child group and waits for known server end", async (t) => {
+test("closed living owner leaves its client to cancel and preserve partial text", async (t) => {
   await setup(t);
   const a = await row();
   await s.claimHelper(
@@ -81,6 +81,7 @@ test("closed living owner kills only its child group and waits for known server 
   await s.recordHelperSession(a.id, 2000, "server");
   await s.closeHelper(a.id, chat, 2100);
   const killed: number[] = [];
+  let cancels = 0;
   await runHelperTick({
     nowMs: 2200,
     bootAt: 0,
@@ -89,11 +90,29 @@ test("closed living owner kills only its child group and waits for known server 
     kill: (pid) => {
       killed.push(pid);
     },
-    cancel: () =>
-      Promise.resolve({ status: "accepted" as const, sessionId: "server" }),
+    cancel: () => {
+      cancels++;
+      return Promise.resolve({
+        status: "accepted" as const,
+        sessionId: "server",
+      });
+    },
+  });
+  assert.equal(killed.length, 0);
+  assert.equal(cancels, 0);
+  assert.ok((await s.getHelper(a.id))?.run);
+  await runHelperTick({
+    nowMs: 2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS,
+    bootAt: 0,
+    ownerDead: () => false,
+    alive: () => true,
+    kill: (pid) => {
+      killed.push(pid);
+    },
+    cancel: () => Promise.resolve({ status: "no_active_turn" as const }),
   });
   assert.deepEqual(killed, [-222]);
-  assert.ok((await s.getHelper(a.id))?.run);
+  assert.equal((await s.getHelper(a.id))?.outcome, "stopped");
 });
 test("corrupt table logs/Trace and exits without cleanup or child start", async (t) => {
   const dir = await setup(t);

@@ -329,7 +329,7 @@ NoActiveTurn(h) ==
 Tick(h) ==
   /\ runToken[h] # 0 /\ outcome[h] = "none"
   /\ LET orphan == ~serverAlive[runOwner[h]] \/ child[h] = "dead"
-         mustStop == stop[h] # "none" \/ age[h] = DeadlineTicks \/ orphan
+         mustStop == age[h] = DeadlineTicks \/ orphan
      IN
      \/ /\ orphan /\ ~ReapOrphans
         /\ tickPulse' = [tickPulse EXCEPT ![h] = ~@]
@@ -534,7 +534,7 @@ V6Init ==
        now |-> 0, finishedAt |-> 0, sweptEarly |-> FALSE,
        rejectedChanged |-> FALSE, invalidMay |-> FALSE,
        ownerAlive |-> TRUE, ownerIdentitySame |-> TRUE,
-       killedUnknown |-> FALSE, killedStale |-> FALSE, pidReused |-> FALSE,
+       killedUnknown |-> FALSE, killedStale |-> FALSE, killedOnStop |-> FALSE, pidReused |-> FALSE,
        changedClosedOutcome |-> FALSE,
        effect |-> "none", attempts |-> 0, accepted |-> 0,
        lostResponse |-> FALSE, lateEffect |-> FALSE, tailEffect |-> FALSE]
@@ -590,13 +590,19 @@ V6CancelAccepted ==
        !.slot = IF V6Mutant = "early-free" THEN FALSE ELSE @]
 \* Without durable pid the tick cannot pretend the physical child is dead.
 \* A live onSession client knows its id and must wait even when both T3 fail.
+\* Clock 2 represents deadline+GRACE. Stop alone leaves the live client to
+\* cancel, confirm the server end and save its completed text. A stuck live
+\* client retains the slot until its end or deadline+GRACE.
 V6KillKnownChild ==
-  /\ v6.slot /\ v6.stop = "closed" /\ (v6.physical = "live" \/ v6.pidReused)
+  /\ v6.slot /\ (v6.physical = "live" \/ v6.pidReused)
+  /\ v6.now = 2 \/ (v6.stop = "closed" /\
+       (V6Mutant = "stop-kill" \/ ~v6.ownerAlive \/ ~v6.ownerIdentitySame))
   /\ v6.pid \/ V6Mutant = "pid"
   /\ (v6.ownerAlive /\ v6.ownerIdentitySame) \/ V6Mutant = "owner-kill"
   /\ v6' = [v6 EXCEPT !.physical = "dead",
        !.killedUnknown = ~v6.pid,
-       !.killedStale = ~(v6.ownerAlive /\ v6.ownerIdentitySame)]
+       !.killedStale = ~(v6.ownerAlive /\ v6.ownerIdentitySame),
+       !.killedOnStop = v6.ownerAlive /\ v6.ownerIdentitySame /\ v6.now < 2]
 V6OwnerRestart ==
   /\ v6.ownerAlive /\ v6.slot
   /\ v6' = [v6 EXCEPT !.ownerAlive = FALSE, !.ownerIdentitySame = FALSE,
@@ -678,6 +684,7 @@ V6TypeOK ==
 V6Authorized == ~v6.rejectedChanged
 V6PidKnown == ~v6.killedUnknown
 V6OwnerKillSafe == ~v6.killedStale
+V6StopKillSafe == ~v6.killedOnStop
 V6MayRequired == ~v6.invalidMay
 V6MayUnchanged == v6.taskMay = "none" \/ v6.taskMay = v6.may
 V6OutcomeOnce == v6.finalized <= 1

@@ -23,7 +23,8 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
     log = options.log ?? console.error;
   const alive =
     options.alive ??
-    ((pid: number) => !reservationOwnerIsDead({ownerPid:pid,ownerStartedAt:0}));
+    ((pid: number) =>
+      !reservationOwnerIsDead({ ownerPid: pid, ownerStartedAt: 0 }));
   const cancel =
     options.cancel ??
     ((id: string) =>
@@ -57,7 +58,6 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
           const exited =
             completed || (run.childPid !== null && !alive(run.childPid));
           if (
-            row.stop ||
             !current ||
             exited ||
             now >= run.deadlineAtMs + s.HELPER_GRACE_MS
