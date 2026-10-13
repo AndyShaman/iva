@@ -2269,6 +2269,75 @@ for (const hash of ["absent", "valid"] as const)
     assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
   });
 
+void test("owner edit window: mismatch summary survives three nights while other days, CORE, periods and Report finish", async (t) => {
+  const fx = await fixture(t);
+  const older = "2026-09-23";
+  day(fx, "## 10:00 [text]\nПросто день\n", older);
+  reportsOn(fx, "ru");
+  const { summaryText } = await import("./night-input.ts");
+  const owner =
+    summaryText({ type: "daily-summary" }, "# Owner\n") + "\nOWNER_EDIT\n";
+  const periodInput = summary(fx, "2026-08-17");
+  mkdirSync(join(periodInput, ".."), { recursive: true });
+  writeFileSync(
+    periodInput,
+    summaryText({ description: "День", input_hash: "old" }, "# Day\n"),
+  );
+  commit(fx.vault);
+  const outcomes: Array<{ code: number | null; kept: boolean }> = [];
+  for (const [index, date] of [
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-26",
+  ].entries()) {
+    day(fx, "## 10:00 [text]\nКофе после четырёх не пью\n", date);
+    fx.model.replies = [
+      ...(index === 0
+        ? [periodReply("Готовая неделя"), periodReply("Готовый месяц"), A()]
+        : []),
+      A({ core: [{ text: "Не пьёт кофе после 16:00", src: "e1" }] }),
+      {
+        sections: [
+          { section: "Предпочтения", text: "- Не пьёт кофе после 16:00" },
+        ],
+      },
+    ];
+    const held = index === 0 ? fx.model.hold(3) : null;
+    const run = spawnNight(fx, null);
+    if (held) {
+      await held.reached;
+      writeFileSync(summary(fx, older), owner);
+      held.release();
+    }
+    const result = await run.result;
+    outcomes.push({
+      code: result.code,
+      kept: read(summary(fx, older)) === owner,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(existsSync(summary(fx, date)), true, result.stderr);
+    assert.match(read(join(fx.vault, "CORE.md")), /Не пьёт кофе после 16:00/u);
+    assert.match(
+      reportOf(result.stderr) ?? "",
+      new RegExp(`${24 + index} сентября:`, "u"),
+    );
+    assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  }
+  assert.match(read(join(fx.vault, "weekly/2026-W34.md")), /Готовая неделя/u);
+  assert.match(read(join(fx.vault, "monthly/2026-08.md")), /Готовый месяц/u);
+  assert.deepEqual(
+    outcomes,
+    Array.from({ length: 3 }, () => ({ code: 0, kept: true })),
+  );
+  fx.model.replies = [];
+  const calls = fx.model.prompts.length;
+  const manual = await night(fx, older);
+  assert.equal(manual.code, 0, manual.stderr);
+  assert.equal(read(summary(fx, older)), owner);
+  assert.equal(fx.model.prompts.length, calls);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+});
+
 for (const trigger of ["Day.draft", "Day.write", "applyCachePending"] as const)
   void test(`owner edit window: ${trigger} defers its day and finishes the other day, CORE, periods and Report`, async (t) => {
     const fx = await fixture(t);

@@ -840,9 +840,12 @@ async function finishDay(
   mkdirSync(dirname(summary), { recursive: true });
   const nextSummary = summaryOf(cache, entries, raw);
   const currentSummary = readIf(summary);
-  if (currentSummary !== expectedSummary)
+  if (
+    currentSummary !== expectedSummary ||
+    (currentSummary !== null && input.summaryEdited(currentSummary))
+  )
     throw new OwnerEditConflict(
-      `выжимка ${date} изменена вручную; день ждёт следующей ночи`,
+      `выжимка ${date} изменена вручную; день ждёт владельца`,
     );
   writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.

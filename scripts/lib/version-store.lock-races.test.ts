@@ -128,6 +128,40 @@ void test("an ownerless update lock becomes reclaimable after the short publicat
   lock.release();
 });
 
+void test("a fresh ownerless directory stays at its path without a takeover rename", (t) => {
+  const data = fs.mkdtempSync(join(tmpdir(), "iva-update-lock-unmoved-"));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const path = join(data, "update.lock");
+  fs.mkdirSync(path);
+  const now = Date.parse("2026-10-13T12:00:00Z");
+  const young = new Date(now - 1_000);
+  fs.utimesSync(path, young, young);
+  t.mock.method(Date, "now", () => now);
+  const rename = fs.renameSync;
+  const moved: string[] = [];
+  t.mock.method(
+    fs,
+    "renameSync",
+    (...args: Parameters<typeof fs.renameSync>) => {
+      if (String(args[0]) === path) moved.push(String(args[1]));
+      return rename(...args);
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    assert.equal(acquireUpdateLock(data), null);
+    assert.deepEqual(
+      moved,
+      [],
+      "the pending publisher keeps its directory at the original path",
+    );
+    assert.deepEqual(fs.readdirSync(data), ["update.lock"]);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 for (const kind of [
   "unreadable-owner",
   "owner-directory",

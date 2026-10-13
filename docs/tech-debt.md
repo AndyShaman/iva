@@ -278,3 +278,18 @@ The `ai` pin is gone: Iva used to override `ai` to 7.0.39 against eve 0.51.1's p
 `acquireUpdateLock` serializes two new contenders reclaiming an abandoned owner by rename and owner.json comparison. The ownerless `mkdir → owner.json` publication window has a five-second grace, checked both before and after rename: two null contents alone cannot identify an abandoned directory (`UpdateLock-ownerless.cfg`, `UpdateLock-ownerless-unsafe.cfg`). A publisher stalled beyond the grace can lose its ownerless directory. A third contender can claim the temporarily empty path before restoration, and a legacy updater still deletes a successor by path (`UpdateLock-three.cfg`, `UpdateLock-mixed.cfg`). A crash while a live successor's directory is displaced also leaves the original path available to another contender. A displaced live owner is kept in `update.lock.stale-*` and logged if restoration finds an occupied path; version sweep removes forgotten directories older than a day while retaining live owners. The mixed window lasts until old updaters are retired; the three-contender window remains part of the directory protocol.
 
 Startup recovery uses the same chat-status lock with a two-second stale threshold; ordinary chat writers retain their usual thirty-second threshold. A killed writer's fresh lock becomes reclaimable within two seconds. A live synchronous writer stalled beyond this recovery threshold can lose its lock (`FileLock-sync-slow.cfg`); normal writes must finish well within the threshold.
+
+## 19. Daily-summary conflicts with absent or matching body hashes
+
+A direct edit during the model's day response is kept by that night. A mismatching
+`body_hash` also keeps the edited summary on subsequent automatic and manual nights,
+including a cached open pass. If the edited summary has an absent or matching
+`body_hash`, the next night can overwrite it: the day cache retains the model answer
+and open pass, while the expected summary snapshot and detected conflict live only
+in the first process. Three-night process tests reproduce both cases. This data-loss
+finding remains a release blocker under ADR-0002.
+
+Persisting a summary-conflict flag in the existing day pass would carry the decision
+across processes. That changes the stored cache format and needs a separate decision;
+the narrow repair leaves this proposal for review. Existing Card-conflict deferrals
+continue to preserve pending facts while other days, CORE, periods and Report finish.

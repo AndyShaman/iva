@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns test registration promises. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -326,6 +326,44 @@ test("a fresh orphan lock fails within a bounded timeout", () => {
   assert.ok(Date.now() - started >= 100);
   assert.ok(Date.now() - started < 2_000);
   rmSync(lock, { force: true });
+});
+
+test("ordinary writers preserve an orphan lock older than recovery's threshold", () => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    IVA_RUN_STATUS_LOCK_TIMEOUT_MS: "150",
+  };
+  delete env.IVA_RUN_STATUS_LOCK_STALE_MS;
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from "node:assert/strict";
+    import fs from "node:fs";
+    import { join } from "node:path";
+    import { acquireFileLockSync } from ${JSON.stringify(new URL("./fs-atomic.ts", import.meta.url).href)};
+    const status = await import(${JSON.stringify(pathToFileURL(modulePath).href)});
+    const key = "ordinary-threshold:";
+    status.setChatStatus(key, { status: "running", sessionId: "ordinary" });
+    const file = join(${JSON.stringify(dataDir)}, "run-status.d", Buffer.from(key).toString("base64url") + ".json");
+    const before = fs.readFileSync(file, "utf8");
+    const lock = file + ".lock";
+    assert.ok(acquireFileLockSync(lock, { timeoutMs: 100, staleMs: 30_000 }));
+    const age = new Date(Date.now() - 3_000);
+    fs.utimesSync(lock, age, age);
+    try {
+      assert.throws(() => status.setChatStatus(key, { status: "idle" }), /run-status lock timeout/u);
+      assert.equal(fs.readFileSync(file, "utf8"), before);
+      assert.equal(fs.existsSync(lock), true);
+    } finally {
+      fs.rmSync(lock, { recursive: true, force: true });
+    }
+  `,
+    ],
+    { env, stdio: "pipe" },
+  );
 });
 
 test("one corrupt per-chat file is quarantined without blocking neighbors", () => {
