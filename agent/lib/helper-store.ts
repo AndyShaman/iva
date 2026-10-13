@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./data-dir.ts";
 import { acquireLock, releaseLock, saveJsonAtomic } from "./json-store.ts";
-import { traceHelper } from "./trace.ts";
 
 export const HELPER_MAX_OPEN = 3,
   HELPER_MAX_ROWS = 20;
@@ -160,10 +159,7 @@ async function change(
 ): Promise<HelperRow | null> {
   return locked(async (s) => {
     const r = s.rows.find((r) => r.id === id);
-    if (!r || !fn(r, s)) {
-      traceHelper("race_lost", id, {});
-      return null;
-    }
+    if (!r || !fn(r, s)) return null;
     await save(s);
     return r;
   });

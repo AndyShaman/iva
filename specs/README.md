@@ -137,7 +137,7 @@ specs/queue-drain-check.sh
 
 ## Helpers
 
-HelperRun.tla и HelperOutcome.tla проверяют v6.3. Run: CAS/первый stop, один слот,
+HelperRun.tla и HelperOutcome.tla проверяют v6.4. Run: CAS/первый stop, один слот,
 клиентский create→recordSession, owner epoch, отмена до подтверждённого конца,
 lost-id исключение, отказ клиентской записи, существующий runner timeout, partial последнего сообщения,
 close/read/KEEP, auth/may. Общие auth/Trace и applyTurnEvent равны базе.
@@ -152,10 +152,10 @@ capacity=1, clock 0..3, две завершённые реплики/дейст�
 две сессии, clock 0..2, KEEP=1, два чтения строки. Шаговый предел 2 и объём работы 3
 проверяются Run с формулой положительного прироста входа плюс выход;
 MAX_OPEN/MAX_ROWS проверяются продуктовым PBT. FairSpec требует fair Clock/Cancel/End/
-RunnerTimeout/T9; вечная тишина держит слот. Late/duplicate effect и lost-id tail
+RunnerTimeout/T9/CeilingStop; вечная тишина держит слот. Late/duplicate effect и lost-id tail
 имеют достижимые свидетели; качество пересказа остаётся решением модели.
 Удалены все прежние HelperRun cfg, в том числе dual writer/child pid/kill mutant;
-оставшиеся контракты и мутанты имеют префикс HelperRun-v63-.
+оставшиеся контракты и мутанты имеют префикс HelperRun-v64-.
 
 ```sh
 PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/helper-check.sh
@@ -169,33 +169,33 @@ simulation seed 20261011 отделён от BFS. Trap очищает metadir/st
 
 | Конфигурация                                                             | Ожидаемый результат      |
 | ------------------------------------------------------------------------ | ------------------------ |
-| [HelperRun-v63-auth.cfg](HelperRun-v63-auth.cfg)                         | PASS                     |
-| [HelperRun-v63-capacity.cfg](HelperRun-v63-capacity.cfg)                 | PASS                     |
-| [HelperRun-v63-run.cfg](HelperRun-v63-run.cfg)                           | PASS                     |
-| [HelperRun-v63-effects.cfg](HelperRun-v63-effects.cfg)                   | PASS                     |
-| [HelperRun-v63-live.cfg](HelperRun-v63-live.cfg)                         | PASS                     |
-| [HelperRun-v63-helper-start.cfg](HelperRun-v63-helper-start.cfg)         | RED: Authorized          |
-| [HelperRun-v63-may.cfg](HelperRun-v63-may.cfg)                           | RED: MayRequired         |
-| [HelperRun-v63-may-copy.cfg](HelperRun-v63-may-copy.cfg)                 | RED: MayUnchanged        |
-| [HelperRun-v63-no-capacity.cfg](HelperRun-v63-no-capacity.cfg)           | RED: OneRun              |
-| [HelperRun-v63-finalize-twice.cfg](HelperRun-v63-finalize-twice.cfg)     | RED: OutcomeOnce         |
-| [HelperRun-v63-stale-cas.cfg](HelperRun-v63-stale-cas.cfg)               | RED: SlotFreedAfterEnd   |
-| [HelperRun-v63-step-limit.cfg](HelperRun-v63-step-limit.cfg)             | RED: WithinLimits        |
-| [HelperRun-v63-work-output.cfg](HelperRun-v63-work-output.cfg)           | RED: WorkMeasured        |
-| [HelperRun-v63-work-stop.cfg](HelperRun-v63-work-stop.cfg)               | RED: WorkStops           |
-| [HelperRun-v63-stop-twice.cfg](HelperRun-v63-stop-twice.cfg)             | RED: StopOnce            |
-| [HelperRun-v63-question-done.cfg](HelperRun-v63-question-done.cfg)       | RED: QuestionFailed      |
-| [HelperRun-v63-early-free.cfg](HelperRun-v63-early-free.cfg)             | RED: SlotFreedAfterEnd   |
-| [HelperRun-v63-partial.cfg](HelperRun-v63-partial.cfg)                   | RED: PartialKept         |
-| [HelperRun-v63-sweep.cfg](HelperRun-v63-sweep.cfg)                       | RED: KeepClosed          |
-| [HelperRun-v63-read.cfg](HelperRun-v63-read.cfg)                         | RED: ClosedReadable      |
-| [HelperRun-v63-close-outcome.cfg](HelperRun-v63-close-outcome.cfg)       | RED: CloseKeepsOutcome   |
-| [HelperRun-v63-late-effect.cfg](HelperRun-v63-late-effect.cfg)           | RED: NoLateEffect        |
-| [HelperRun-v63-duplicate-effect.cfg](HelperRun-v63-duplicate-effect.cfg) | RED: NoDuplicateEffect   |
-| [HelperRun-v63-tail-effect.cfg](HelperRun-v63-tail-effect.cfg)           | RED: NoTailEffect        |
-| [HelperRun-v63-normal-waiting.cfg](HelperRun-v63-normal-waiting.cfg)     | RED: NoNormalWaiting     |
-| [HelperRun-v63-live-nofair.cfg](HelperRun-v63-live-nofair.cfg)           | RED: NoSilentEnd         |
-| [HelperRun-v63-restart-effect.cfg](HelperRun-v63-restart-effect.cfg)     | RED: NoRestartEffect     |
+| [HelperRun-v64-auth.cfg](HelperRun-v64-auth.cfg)                         | PASS                     |
+| [HelperRun-v64-capacity.cfg](HelperRun-v64-capacity.cfg)                 | PASS                     |
+| [HelperRun-v64-run.cfg](HelperRun-v64-run.cfg)                           | PASS                     |
+| [HelperRun-v64-effects.cfg](HelperRun-v64-effects.cfg)                   | PASS                     |
+| [HelperRun-v64-live.cfg](HelperRun-v64-live.cfg)                         | PASS                     |
+| [HelperRun-v64-helper-start.cfg](HelperRun-v64-helper-start.cfg)         | RED: Authorized          |
+| [HelperRun-v64-may.cfg](HelperRun-v64-may.cfg)                           | RED: MayRequired         |
+| [HelperRun-v64-may-copy.cfg](HelperRun-v64-may-copy.cfg)                 | RED: MayUnchanged        |
+| [HelperRun-v64-no-capacity.cfg](HelperRun-v64-no-capacity.cfg)           | RED: OneRun              |
+| [HelperRun-v64-finalize-twice.cfg](HelperRun-v64-finalize-twice.cfg)     | RED: OutcomeOnce         |
+| [HelperRun-v64-stale-cas.cfg](HelperRun-v64-stale-cas.cfg)               | RED: SlotFreedAfterEnd   |
+| [HelperRun-v64-step-limit.cfg](HelperRun-v64-step-limit.cfg)             | RED: WithinLimits        |
+| [HelperRun-v64-work-output.cfg](HelperRun-v64-work-output.cfg)           | RED: WorkMeasured        |
+| [HelperRun-v64-work-stop.cfg](HelperRun-v64-work-stop.cfg)               | RED: WorkStops           |
+| [HelperRun-v64-stop-twice.cfg](HelperRun-v64-stop-twice.cfg)             | RED: StopOnce            |
+| [HelperRun-v64-question-done.cfg](HelperRun-v64-question-done.cfg)       | RED: QuestionFailed      |
+| [HelperRun-v64-early-free.cfg](HelperRun-v64-early-free.cfg)             | RED: SlotFreedAfterEnd   |
+| [HelperRun-v64-partial.cfg](HelperRun-v64-partial.cfg)                   | RED: PartialKept         |
+| [HelperRun-v64-sweep.cfg](HelperRun-v64-sweep.cfg)                       | RED: KeepClosed          |
+| [HelperRun-v64-read.cfg](HelperRun-v64-read.cfg)                         | RED: ClosedReadable      |
+| [HelperRun-v64-close-outcome.cfg](HelperRun-v64-close-outcome.cfg)       | RED: CloseKeepsOutcome   |
+| [HelperRun-v64-late-effect.cfg](HelperRun-v64-late-effect.cfg)           | RED: NoLateEffect        |
+| [HelperRun-v64-duplicate-effect.cfg](HelperRun-v64-duplicate-effect.cfg) | RED: NoDuplicateEffect   |
+| [HelperRun-v64-tail-effect.cfg](HelperRun-v64-tail-effect.cfg)           | RED: NoTailEffect        |
+| [HelperRun-v64-normal-waiting.cfg](HelperRun-v64-normal-waiting.cfg)     | RED: NoNormalWaiting     |
+| [HelperRun-v64-live-nofair.cfg](HelperRun-v64-live-nofair.cfg)           | RED: NoSilentEnd         |
+| [HelperRun-v64-restart-effect.cfg](HelperRun-v64-restart-effect.cfg)     | RED: NoRestartEffect     |
 | [HelperOutcome-safety.cfg](HelperOutcome-safety.cfg)                     | PASS                     |
 | [HelperOutcome-finish-twice.cfg](HelperOutcome-finish-twice.cfg)         | RED: OutcomeOnce         |
 | [HelperOutcome-before-reply.cfg](HelperOutcome-before-reply.cfg)         | RED: DeliveredAfterReply |
@@ -320,3 +320,14 @@ PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/go
 Матрица `goalActor`, смешанные стороны сессии, данные на проводе, текст результата,
 реальные миллисекунды, права файлов и поведение Telegram проверяются при реализации.
 Модель абстрагирует отказ записи таблицы как шаг, сохраняющий всё состояние.
+
+Helpers v6.4: Usage и CeilingStop — отдельные операции. Естественный конец может выиграть гонку с запросом stop: done сохраняет весь итог, объём превышается на один шаг (HelperRun-v64-ceiling-race, RED NoCeilingRace). Finish(tick) сохраняет 0 текста; PartialKept относится к клиентскому концу, TickRetainsText — ожидаемый красный свидетель. Outcome Read допускает только owner, unknown/helper отвергаются (foreign-read — RED AuthorizedReads). BridgeDown/BridgeUp сохраняют исход без события: offline-event — RED OfflineEvent, Visible остаётся зелёным.
+
+| Проверка v6.4                                                      | Результат            |
+| ------------------------------------------------------------------ | -------------------- |
+| [HelperRun-v64-ceiling-race.cfg](HelperRun-v64-ceiling-race.cfg)   | RED: NoCeilingRace   |
+| [HelperRun-v64-tick-partial.cfg](HelperRun-v64-tick-partial.cfg)   | RED: TickRetainsText |
+| [HelperOutcome-foreign-read.cfg](HelperOutcome-foreign-read.cfg)   | RED: AuthorizedReads |
+| [HelperOutcome-offline-event.cfg](HelperOutcome-offline-event.cfg) | RED: OfflineEvent    |
+
+Bounds Usage: input 0..3 (effects 0..2), output 0..1. CeilingStop может проиграть естественному концу. Helper-check выполняет 43 ожидаемых проверки.

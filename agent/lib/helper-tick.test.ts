@@ -31,6 +31,44 @@ async function waitFor(fn: () => Promise<boolean>) {
   }
   assert.fail("completion did not finish");
 }
+test("R2 runner reports client exit once; later minute ticks repeat cancel before freeing the slot", async (t) => {
+  await setup(t);
+  const a = await row(),
+    pending = await row();
+  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT }, 2000);
+  await s.recordHelperSession(a.id, 2000, "server");
+  let cancels = 0,
+    starts = 0;
+  const cancel = (id: string) => {
+    assert.equal(id, "server");
+    return Promise.resolve(
+      ++cancels < 3
+        ? { status: "accepted" as const, sessionId: id }
+        : { status: "no_active_turn" as const },
+    );
+  };
+  const start: typeof runScheduledJob = () => {
+    starts++;
+    return new Promise(() => {});
+  };
+  await runHelperTick({
+    nowMs: 3000,
+    completed: { id: a.id, firedAt: 2000 },
+    cancel,
+    start,
+  });
+  assert.equal(cancels, 1);
+  assert.ok((await s.getHelper(a.id))?.run);
+  await runHelperTick({ nowMs: 63000, cancel, start });
+  assert.equal(cancels, 2);
+  assert.ok((await s.getHelper(a.id))?.run);
+  assert.equal(starts, 0);
+  await runHelperTick({ nowMs: 123000, cancel, start });
+  assert.equal(cancels, 3);
+  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
+  assert.equal(starts, 1);
+  assert.ok((await s.getHelper(pending.id))?.run);
+});
 test("different owner epoch after restart/reboot cancels known session; accepted retains slot", async (t) => {
   await setup(t);
   const a = await row();

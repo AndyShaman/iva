@@ -2,6 +2,7 @@ import { Client, type CancelSessionResult } from "eve/client";
 import { OWNER_STARTED_AT, runScheduledJob } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 import { traceHelper } from "./trace.ts";
+const exitedClients = new Map<string, number>();
 type TickOptions = {
   nowMs?: number;
   start?: typeof runScheduledJob;
@@ -33,11 +34,14 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
     for (const row of rows)
       try {
         const run = row.run;
+        if (!run) exitedClients.delete(row.id);
         if (run) {
           const current = run.ownerStartedAt === OWNER_STARTED_AT;
           const exited =
-            options.completed?.id === row.id &&
-            options.completed.firedAt === run.firedAt;
+            (options.completed?.id === row.id &&
+              options.completed.firedAt === run.firedAt) ||
+            exitedClients.get(row.id) === run.firedAt;
+          if (exited) exitedClients.set(row.id, run.firedAt);
           if (
             !current ||
             exited ||
@@ -60,7 +64,8 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
               },
               now,
             );
-            if (finished)
+            if (finished) {
+              exitedClients.delete(row.id);
               traceHelper("finished", row.id, {
                 session: run.sessionId ?? undefined,
                 data: {
@@ -70,6 +75,7 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
                   tokens: finished.tokens,
                 },
               });
+            }
           }
         } else if (row.status === "pending") {
           const claimed = await s.claimHelper(
