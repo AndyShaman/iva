@@ -906,10 +906,10 @@ function makeBareTextModel(model: string, sessionId?: string) {
 // eve хранит вывод модели в истории и реплеит его на каждом следующем шаге и ходе. Правило одно
 // на всех вендоров: replaysReasoning в MODEL_PROVIDERS (agent/lib/model-provider.ts) и протокол
 // Go выбираются вместе в withReplayableReasoning. 15.10.2026: Go chat/completions (16 моделей),
-// Ollama Cloud (оба DeepSeek) и custom Meta приняли второй запрос с reasoning_content и без.
+// Ollama Cloud (оба DeepSeek) приняли второй запрос с reasoning_content и без.
 // SDK openai-compatible сам возвращает полученное рассуждение этим полем; DeepSeek в thinking
 // mode требует возврат после инструмента (#296). Codex сохраняет encrypted_content, как прежде.
-// OpenRouter пока не проверен, Go Responses и Claude остаются без возврата: чистятся вывод
+// custom и OpenRouter ждут пробы возврата; Go Responses и Claude тоже чистят вывод
 // и промпт, включая историю, записанную до смены вендора в той же сессии.
 // Исходный дефект закрыт у всех: deepseek (openai-compatible) отдавал reasoning-часть без поля
 // `text`, а ai@7 ModelMessage-схема требует у reasoning string `text` → AI_InvalidPromptError в
@@ -939,6 +939,7 @@ function unreplayableOutput(part: StreamPart | ContentPart, replays: boolean) {
   return false;
 }
 
+// Принято: рассуждение прошлых ходов едет в запросы до свёртки, увеличивая входные токены; свёртка его вырезает.
 export function reasoningReplayMiddleware(
   replays: boolean,
 ): LanguageModelMiddleware {

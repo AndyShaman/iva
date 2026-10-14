@@ -1188,19 +1188,19 @@ void test("codex treats an id the SDK does not know as a reasoning model", async
 
 // --- Рассуждение в истории: возвращается там, где вендор его принимает ---------------------
 // Решение по вендору — в MODEL_PROVIDERS, по протоколу Go — в withReplayableReasoning.
-// 15.10.2026: chat/completions Go, Ollama Cloud и custom принимают reasoning_content.
+// 15.10.2026: chat/completions Go и Ollama Cloud принимают возврат; custom ждёт пробы.
 void test("proven chat vendors and codex replay reasoning", () => {
   assert.deepEqual(
     MODEL_PROVIDER_NAMES.filter(
       (name) => MODEL_PROVIDERS[name].replaysReasoning,
     ),
-    ["ollama", "opencode", "codex", "custom"],
+    ["ollama", "opencode", "codex"],
   );
 });
 
 async function loadReasoningProvider(
   name: "ollama" | "opencode" | "custom" | "openrouter",
-  protocol: "chat-completions" | "responses",
+  protocol: "chat-completions" | "responses" | undefined,
 ): Promise<ProviderModule> {
   const env = {
     MODEL_PROVIDER: name,
@@ -1211,7 +1211,10 @@ async function loadReasoningProvider(
   const previous = Object.fromEntries(
     Object.keys(env).map((key) => [key, process.env[key]]),
   );
-  Object.assign(process.env, env);
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   try {
     const specifier = `./provider.ts?reasoning-replay=${name}-${protocol}`;
     return (await import(specifier)) as ProviderModule;
@@ -1223,17 +1226,20 @@ async function loadReasoningProvider(
   }
 }
 
-for (const [name, protocol, replay] of [
+for (const [name, protocol, replay, stream = false] of [
   ["ollama", "chat-completions", true],
+  ["ollama", "chat-completions", true, true],
   ["opencode", "chat-completions", true],
-  ["custom", "chat-completions", true],
+  ["opencode", undefined, true],
+  ["custom", "chat-completions", false],
   ["openrouter", "chat-completions", false],
   ["opencode", "responses", false],
 ] as const) {
-  void test(`${name}/${protocol} sends the previous tool step's reasoning according to its replay rule`, async () => {
+  void test(`${name}/${protocol ?? "default"}${stream ? "/stream" : ""} sends the previous tool step's reasoning according to its replay rule`, async () => {
     const provider = await loadReasoningProvider(name, protocol);
     const bodies: {
       model: string;
+      stream?: boolean;
       messages: {
         role: string;
         reasoning_content?: string;
@@ -1249,8 +1255,12 @@ for (const [name, protocol, replay] of [
         bodies.push(
           JSON.parse(init?.body as string) as (typeof bodies)[number],
         );
+        const streaming = stream && bodies.length === 1;
+        const response = streaming
+          ? (chunk: unknown) => sse([chunk])
+          : (body: unknown) => Response.json(body);
         return Promise.resolve(
-          Response.json({
+          response({
             id: `chatcmpl-${bodies.length}`,
             object: "chat.completion",
             created: 0,
@@ -1258,7 +1268,7 @@ for (const [name, protocol, replay] of [
             choices: [
               {
                 index: 0,
-                message:
+                [streaming ? "delta" : "message"]:
                   bodies.length === 1
                     ? {
                         role: "assistant",
@@ -1266,6 +1276,7 @@ for (const [name, protocol, replay] of [
                         reasoning_content: "сначала вызову add",
                         tool_calls: [
                           {
+                            index: 0,
                             id: "call_1",
                             type: "function",
                             function: { name: "add", arguments: "{}" },
@@ -1280,19 +1291,22 @@ for (const [name, protocol, replay] of [
         );
       },
     });
-    const first = await generateText({
+    const first = await (stream ? streamText : generateText)({
       model: provider.withReplayableReasoning(compatible("step-one")),
       prompt: "сложи",
       tools: { add: { inputSchema: jsonSchema({ type: "object" }) } },
       maxRetries: 0,
     });
-    assert.equal(first.finishReason, "tool-calls");
-    const firstReasoning = reasoningParts(first.response.messages).map(
+    await first.text;
+    const firstResponse = await first.response;
+    assert.equal(await first.finishReason, "tool-calls");
+    assert.equal(bodies[0].stream, stream ? true : undefined);
+    const firstReasoning = reasoningParts(firstResponse.messages).map(
       (part) => part.text,
     );
     const history: ModelMessage[] = [
       { role: "user", content: "сложи" },
-      ...first.response.messages,
+      ...firstResponse.messages,
       {
         role: "tool",
         content: [
