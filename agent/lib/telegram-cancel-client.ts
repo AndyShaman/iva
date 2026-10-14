@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion -- conversion keeps the injectable fetch boundary source-compatible. */
 // Клиент cancel-роута канала. Живёт в authored tree, потому что потребителей два и они
 // по разные стороны шва: мост (scripts/poller/control.ts, long-poll) и сам канал
-// (кнопка ⏹ Стоп в webhook-режиме, где моста нет). Третьей копии POST-а быть не должно.
+// (нативная ■ в webhook-режиме, где моста нет). Третьей копии POST-а быть не должно.
 
 type FetchResponse = {
   ok: boolean;
@@ -11,7 +11,7 @@ type FetchResponse = {
 type FetchImpl = (url: string, init: RequestInit) => Promise<FetchResponse>;
 
 /**
- * Calls Iva's Telegram-owned cancel route (кнопка ⏹ Стоп и /stop). Both statuses
+ * Calls Iva's Telegram-owned cancel route (нативная ■ и /stop). Both statuses
  * are success: `accepted` — отмена принята, `no_active_turn` — отменять уже нечего
  * (ход финишировал между чтением статуса и запросом).
  */

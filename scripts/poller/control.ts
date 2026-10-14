@@ -351,10 +351,8 @@ function fullQuestion(
 
 const PRIVATE_ONLY_COMMANDS = new Set(["/menu", "/model", "/think"]);
 
-// он перехватывает апдейт раньше любой доставки, поэтому «Стоп» доходит и до занятого
-// агента. Решение «есть ли что останавливать» и сам POST на cancel-роут живут в
-// agent/lib/telegram-stop.ts — там же, где второй вход (onCallbackQuery канала для
-// webhook-режима), чтобы политика не разъехалась между режимами.
+// Мост ловит /stop и ■ до доставки в eve, поэтому отмена доходит до занятого агента.
+// Проверка пары и POST общие с webhook, в agent/lib/telegram-stop.ts.
 async function requestTurnStop(
   update: TelegramUpdate,
   {
@@ -648,6 +646,12 @@ async function handleControl(
   deps: ControlDeps = {},
 ): Promise<ControlResult> {
   const io = controlIo(deps);
+  const callback = update.callback_query;
+  if (callback?.data === "iva_cancel" && ownerPrivateMessage(callback)) {
+    await io.ackImpl(callback.id).catch(() => {});
+    await requestTurnStop(update, { cancelImpl: io.cancelImpl });
+    return true;
+  }
   if (update.stopped_message_generation) {
     await handleTelegramDraftStop(update.stopped_message_generation, {
       allowedImpl: () => ALLOWED,
@@ -840,7 +844,7 @@ async function handleGotItTap({ update, callback, io }: CallbackContext) {
 
 /** Сообщение с кнопкой, нажатой владельцем в личном чате; иначе null. */
 function ownerPrivateMessage(
-  callback: ControlCallbackQuery,
+  callback: TelegramCallbackQuery,
 ): { chatId: number; messageId: number } | null {
   const chat = callbackChat(callback);
   const messageId = callback.message?.message_id;

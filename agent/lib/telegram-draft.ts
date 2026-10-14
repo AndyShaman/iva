@@ -59,9 +59,16 @@ export function draftText(text: string, complete: boolean): string {
   text = text
     .replace(/<tg-button(?=[\s>])[^>]*>([\s\S]*?)<\/tg-button>/gi, "[$1]")
     .replace(/<\/?tg-button-row\b[^>]*>/gi, "");
-  // Even the first '<' of a delivery marker stays hidden until the entire marker arrives.
-  const unfinished = text.search(/<[^>]*$|<tg-button\b[\s\S]*$/iu);
+  const unfinished = text.search(/<tg-button\b[\s\S]*$/iu);
   if (unfinished >= 0) text = text.slice(0, unfinished);
+  const start = text.lastIndexOf("<");
+  if (
+    start >= 0 &&
+    ["<!-- iva:silent -->", "<tg-button", "<tg-button-row"].some((marker) =>
+      marker.startsWith(text.slice(start)),
+    )
+  )
+    text = text.slice(0, start);
   if (text.length > 3500) {
     let cut = text.length - 3500;
     if (/[\uDC00-\uDFFF]/u.test(text[cut] ?? "")) cut++;
@@ -95,11 +102,12 @@ function toolHint(action: Action, cleanArgs: string): string {
   const detail = ["command", "path", "pattern", "url", "query"]
     .map((k) => args?.[k])
     .find((v) => typeof v === "string" && v.trim());
-  const line =
+  let line =
     `${action.toolName ?? action.kind ?? "tool"}${typeof detail === "string" ? `: ${detail.split("\n")[0]}` : ""}`
       .replace(/\s+/gu, " ")
       .trim()
       .slice(0, 60);
+  if (/[\uD800-\uDBFF]$/u.test(line)) line = line.slice(0, -1);
   const escaped = line
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -109,6 +117,7 @@ function toolHint(action: Action, cleanArgs: string): string {
 }
 
 export class TelegramDraftStream {
+  readonly chatKey: string;
   readonly #tg: TelegramDraftHandle;
   readonly #matches: (status: Status) => boolean;
   readonly #getStatus: () => Status;
@@ -144,6 +153,7 @@ export class TelegramDraftStream {
     },
   ) {
     this.#tg = tg;
+    this.chatKey = chatKeyOf(tg.chatId, tg.messageThreadId);
     this.#identity = options.identity;
     this.#enabled = options.enabled === true;
     this.#matches = options.matches;
@@ -230,7 +240,12 @@ export class TelegramDraftStream {
     for (const action of actions)
       this.#tools.set(
         action.callId,
-        toolHint(action, this.#guard(JSON.stringify(action.input ?? {}))),
+        toolHint(
+          action,
+          JSON.stringify(action.input ?? {}, (_key, value: unknown) =>
+            typeof value === "string" ? this.#guard(value) : value,
+          ),
+        ),
       );
     this.#push();
   }
@@ -290,10 +305,12 @@ export class TelegramDraftStream {
         this.#failures = 0;
         this.#sent = markdown;
       } else if (body?.error_code === 429) {
+        this.#sent = undefined;
         this.#pauseUntil =
           this.#now() + Math.max(1, body.parameters?.retry_after ?? 1) * 1000;
       } else if (!this.#shown || ++this.#failures >= 3) this.#enabled = false;
     } catch {
+      this.#sent = undefined;
       /* A network failure skips this frame; the deadline is on api.fetch. */
     }
   }
@@ -365,6 +382,7 @@ export function telegramDraftTurn(
   turnId: string,
   enabled: boolean,
   identity?: Identity,
+  published = true,
 ): TelegramDraftStream | undefined {
   const key = turnKey(sessionId, turnId);
   const known = turns.get(key);
@@ -391,17 +409,30 @@ export function telegramDraftTurn(
   }
   closeTelegramAcceptedTyping(tg);
   const pair = identity;
+  const snapshot = published ? undefined : getChatStatus(chatKey);
   const stream = new TelegramDraftStream(tg, {
     identity: pair,
     enabled,
     onLost: () => {
-      turns.delete(key);
+      const lost = turns.get(key);
+      void lost?.close().then(() => {
+        if (turns.get(key) === lost) turns.delete(key);
+      });
     },
     matches: (st) =>
-      st?.status === "running" &&
-      st.sessionId === pair.sessionId &&
-      st.turnId === pair.turnId &&
-      st.draftId === pair.draftId,
+      published
+        ? st?.status === "running" &&
+          st.sessionId === pair.sessionId &&
+          st.turnId === pair.turnId &&
+          st.draftId === pair.draftId
+        : [
+            "status",
+            "sessionId",
+            "turnId",
+            "draftId",
+            "resetAt",
+            "ingressId",
+          ].every((field) => st?.[field] === snapshot?.[field]),
   });
   if (!stream.closed) turns.set(key, stream);
   return stream;
@@ -418,8 +449,34 @@ export async function closeTelegramDraftTurn(
     if (session !== sessionId || (turnId !== undefined && turn !== turnId))
       continue;
     const pauseUntil = await stream.close(waitMs);
-    if (forget) turns.delete(key);
+    if (forget) {
+      if (waitMs < DRAFT_TIMEOUT_MS)
+        void stream.close().then(() => {
+          if (turns.get(key) === stream) turns.delete(key);
+        });
+      else turns.delete(key);
+    }
     if (waitMs === DRAFT_TIMEOUT_MS && pauseUntil > Date.now())
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, pauseUntil - Date.now()),
+      );
+  }
+}
+
+export async function closeTelegramDraftChat(
+  tg: TelegramDraftHandle,
+  sessionId: string,
+  turnId: string,
+): Promise<void> {
+  await closeTelegramDraftTurn(sessionId, turnId);
+  for (const stream of turns.values()) {
+    if (
+      stream.chatKey !== chatKeyOf(tg.chatId, tg.messageThreadId) ||
+      !stream.closed
+    )
+      continue;
+    const pauseUntil = await stream.close();
+    if (pauseUntil > Date.now())
       await new Promise<void>((resolve) =>
         setTimeout(resolve, pauseUntil - Date.now()),
       );

@@ -5,7 +5,7 @@ import { cancelEveTurn } from "./eve-cancel.ts";
 export const TELEGRAM_CANCEL_ROUTE = "/eve/v1/telegram/cancel";
 
 /**
- * Собственный адрес cancel-роута для самовызова из канала (кнопка ⏹ Стоп в
+ * Собственный адрес cancel-роута для самовызова из канала (нативная ■ в
  * webhook-режиме). Правило хоста — копия `scripts/poller/config.ts`: authored tree не
  * может импортировать из `scripts/`, поэтому копии пришпилены тестом
  * (`scripts/poller/config.test.ts`), как и остальные общие константы шва.
@@ -26,7 +26,7 @@ export function localChannelUrl(
 }
 
 /**
- * Authenticated Telegram-owned turn cancellation endpoint — путь кнопки ⏹ Стоп
+ * Authenticated Telegram-owned turn cancellation endpoint — путь нативной ■
  * и команды /stop. `attachSession` pins the request to the exact session that
  * wrote the current run status.
  *

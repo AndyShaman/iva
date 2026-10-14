@@ -71,6 +71,18 @@ test("default language is ru without settings or env", () => {
   assert.equal(r.word, "RU");
 });
 
+test("the bot command menu describes /stop through the native draft control", () => {
+  const r = probe();
+  assert.equal(
+    r.botEn.find((command) => command.command === "stop")?.description,
+    "interrupt the current turn (same as ■ in the draft)",
+  );
+  assert.equal(
+    r.botRu.find((command) => command.command === "stop")?.description,
+    "прервать текущий ход (как ■ в черновике)",
+  );
+});
+
 test("AGENT_LANGUAGE=en selects English when settings are absent", () => {
   const r = probe({ agentLanguage: "en" });
   assert.equal(r.lang, "en");

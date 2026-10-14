@@ -77,8 +77,8 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   {
     command: "stop",
-    en: "interrupt the current turn (same as the ⏹ Stop button)",
-    ru: "прервать текущий ход (как кнопка ⏹ Стоп)",
+    en: "interrupt the current turn (same as ■ in the draft)",
+    ru: "прервать текущий ход (как ■ в черновике)",
   },
   {
     command: "new",

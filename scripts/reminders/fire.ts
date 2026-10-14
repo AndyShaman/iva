@@ -89,7 +89,7 @@ const CANCELLED_BY_OWNER = "cancelled by owner";
 type Outcome = {
   readonly text: string;
   readonly error: string | null;
-  /** Ход погашен снаружи (⏹ или /stop): отправлять нечего и не нужно. */
+  /** Ход погашен снаружи (/stop): отправлять нечего и не нужно. */
   readonly cancelled?: boolean;
 };
 
@@ -115,7 +115,7 @@ function writeQuietly(
 /**
  * Взять чат под ход напоминания — тем же путём, что и канал
  * (agent/lib/telegram-turn-start.ts). Живой чужой ход не трогаем вовсе: напоминание тогда
- * идёт без присмотра, зато ⏹ владельца продолжает бить по его же сессии. Не взяли — false.
+ * идёт без присмотра, зато /stop владельца продолжает бить по его же сессии. Не взяли — false.
  * Запись напоминания — это запись с ЕГО sessionId, другого признака у неё нет: клейм чата
  * под чужим ходом остался бы в run-status неотличим от чужого.
  */
@@ -305,7 +305,7 @@ async function agentOutcome(
   try {
     const turn = await deps.runTurn(prompt, clientFor(row, deps.env), {
       log: deps.log,
-      // Пока ход идёт, чат и тема строки видят его сессию: по ней ⏹ и /stop гасят её.
+      // Пока ход идёт, чат и тема строки видят его сессию: по ней /stop гасит её.
       watch: chatWatch(row, target, deps),
     });
     return replyOf(turn, row.text, sessionLimitText(row.text, tr));

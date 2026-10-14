@@ -174,6 +174,72 @@ void test("partial silent marker and buttons stay hidden; tail reopens a code fe
   assert.equal(draftText("tail", true), "tail");
 });
 
+void test("quoted secrets in decoded tool arguments are redacted before the hint reaches Telegram", async (t) => {
+  const f = setup(t);
+  await f.advance(0);
+  for (const command of [
+    'export DB_PASSWORD="hunter2hunter2" && psql',
+    'curl -d api_key="abcdefghijklmnopqrstuvwxyz0123" x',
+  ]) {
+    f.stream.requested(0, [
+      { callId: "quoted", toolName: "bash", input: { command } },
+    ]);
+    await f.advance(1000);
+    assert.doesNotMatch(f.text(), /hunter2hunter2|abcdefghijklmnopqrstuvwxyz/u);
+    assert.match(f.text(), /REDACTED/u);
+  }
+});
+
+void test("ordinary less-than signs and entities survive partial and completed frames", () => {
+  for (const text of ["If x < 5 then retry ", "If x &lt; 5 then retry "]) {
+    assert.equal(draftText(text, false), text.trim());
+    assert.equal(draftText(text, true), text.trim());
+  }
+  for (const marker of [
+    "<!-- iva:silent -->",
+    "<tg-button",
+    "<tg-button-row",
+  ]) {
+    for (let i = 1; i < marker.length; i++) {
+      assert.equal(draftText(`hello ${marker.slice(0, i)}`, false), "hello");
+      assert.equal(draftText(`hello ${marker.slice(0, i)}`, true), "hello");
+    }
+  }
+});
+
+void test("a tool hint keeps whole Unicode characters at its 60-unit boundary", async (t) => {
+  const f = setup(t);
+  await f.advance(0);
+  f.stream.requested(0, [
+    {
+      callId: "unicode",
+      toolName: "bash",
+      input: { command: "a".repeat(53) + "😀 tail" },
+    },
+  ]);
+  await f.advance(1000);
+  assert.doesNotMatch(f.text(), /[\uD800-\uDFFF]/u);
+  assert.match(f.text(), /bash: a+<\/code>$/u);
+});
+
+void test("an unchanged refresh rejected with 429 repeats at retry_after", async (t) => {
+  const times: number[] = [];
+  const f = setup(t, async (c) => {
+    if (c.method !== "sendRichMessageDraft")
+      return { ok: true, body: { ok: true } };
+    times.push(Date.now() - 100_000);
+    return times.length === 2
+      ? { ok: false, body: { error_code: 429, parameters: { retry_after: 2 } } }
+      : { ok: true, body: { ok: true } };
+  });
+  await f.advance(0);
+  await f.advance(20_000);
+  await f.advance(1_999);
+  assert.deepEqual(times, [0, 20_000]);
+  await f.advance(1);
+  assert.deepEqual(times, [0, 20_000, 22_000]);
+});
+
 for (const code of [400, 403, 404])
   void test(`first draft ${code} disables drafts while typing survives`, async (t) => {
     const f = setup(t, async (c) =>

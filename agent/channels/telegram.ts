@@ -47,6 +47,7 @@ import {
   telegramDraftFetch,
   telegramDraftTurn,
   closeTelegramDraftTurn,
+  closeTelegramDraftChat,
   startTelegramAcceptedTyping,
   closeTelegramAcceptedTyping,
 } from "../lib/telegram-draft.ts";
@@ -375,17 +376,16 @@ const telegram = telegramChannel({
         onWorkingStatusError: (error) =>
           console.error("[telegram] turn claim failed:", error),
       });
-      if (published)
-        telegramDraftTurn(
-          tg,
-          ctx.session.id,
-          data.turnId,
-          published &&
-            channel.state.chatType === "private" &&
-            tg.messageThreadId === undefined,
-          { sessionId: ctx.session.id, turnId: data.turnId, draftId },
-        );
-      if (!published) void tg.startTyping().catch(() => {});
+      telegramDraftTurn(
+        tg,
+        ctx.session.id,
+        data.turnId,
+        published &&
+          channel.state.chatType === "private" &&
+          tg.messageThreadId === undefined,
+        { sessionId: ctx.session.id, turnId: data.turnId, draftId },
+        published,
+      );
       await flushSettledTelegramQuestions(channel.state, channel.telegram);
     },
     async "turn.completed"(_data, channel, ctx) {
@@ -517,7 +517,11 @@ const telegram = telegramChannel({
         )?.completeStep(data.stepIndex, data.message ?? "");
         return;
       }
-      await closeTelegramDraftTurn(ctx.session.id, data.turnId);
+      await closeTelegramDraftChat(
+        channel.telegram,
+        ctx.session.id,
+        data.turnId,
+      );
       if (!data.message) return;
       const { text: message, silent } = parseTelegramDelivery(data.message);
       const recordDelivery = (delivered: boolean) =>

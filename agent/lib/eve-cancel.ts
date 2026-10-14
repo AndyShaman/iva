@@ -2,7 +2,7 @@ import type { AttachSessionFn, CancelTurnResult } from "eve/channels";
 
 /**
  * Единственное место КАНАЛЬНОЙ отмены: отмены хода, пришедшей снаружи по
- * sessionId (кнопка ⏹ Стоп и /stop). Маршрут, статус хода и кнопка про способ
+ * sessionId (нативная ■ и /stop). Маршрут, статус хода и кнопка про способ
  * отмены не знают.
  *
  * `attachSession` приходит из RouteHandlerArgs, поэтому вызывающий обязан быть

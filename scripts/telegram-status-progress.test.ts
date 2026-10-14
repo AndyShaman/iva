@@ -152,6 +152,163 @@ async function emit(
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+test("a cancelled in-flight draft drains before the next session's final in the same chat", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "setInterval", "Date"],
+    now: 200_000,
+  });
+  const chatId = "91";
+  const oldSession = "repair-old";
+  const newSession = "repair-new";
+  const { closeTelegramDraftTurn } = await import("#lib/telegram-draft.ts");
+  const applied: string[] = [];
+  let release!: (response: Response) => void;
+  const held = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  apiCalls.length = 0;
+  setChatStatus(chatKeyOf(chatId), {
+    status: "idle",
+    sessionId: null,
+    turnId: null,
+    draftId: null,
+    resetAt: null,
+  });
+  telegramReply = async (call) => {
+    if (call.method === "sendRichMessageDraft" && first) {
+      first = false;
+      const response = await held;
+      applied.push(call.method);
+      return response;
+    }
+    applied.push(call.method);
+    return Response.json({
+      ok: true,
+      result: { message_id: 1, chat: { id: 91, type: "private" } },
+    });
+  };
+  t.after(async () => {
+    release(Response.json({ ok: true, result: true }));
+    await closeTelegramDraftTurn(oldSession, undefined, 0, true);
+    await closeTelegramDraftTurn(newSession, undefined, 0, true);
+    telegramReply = () => null;
+    t.mock.timers.reset();
+  });
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  await emit(
+    "turn.started",
+    { turnId: "old" },
+    { chatId, sessionId: oldSession },
+  );
+  t.mock.timers.tick(0);
+  await flush();
+  const cancel = emit(
+    "turn.cancelled",
+    { turnId: "old" },
+    { chatId, sessionId: oldSession },
+  );
+  await flush();
+  t.mock.timers.tick(1_999);
+  await flush();
+  t.mock.timers.tick(1);
+  await flush();
+  await cancel;
+  assert.equal(
+    Date.now(),
+    202_000,
+    "cancellation still releases the chat within two seconds",
+  );
+  await emit(
+    "turn.started",
+    { turnId: "new" },
+    { chatId, sessionId: newSession },
+  );
+  const final = emit(
+    "message.completed",
+    { turnId: "new", stepIndex: 0, message: "new final", finishReason: "stop" },
+    { chatId, sessionId: newSession },
+  );
+  await flush();
+  const beforeDrain = applied.filter((method) => method !== "sendChatAction");
+  t.mock.timers.tick(1_000);
+  await flush();
+  release(Response.json({ ok: true, result: true }));
+  await flush();
+  await final;
+  await emit(
+    "turn.completed",
+    { turnId: "new" },
+    { chatId, sessionId: newSession },
+  );
+  assert.deepEqual(
+    beforeDrain,
+    [],
+    "final waits for the previous cancelled draft request",
+  );
+  assert.deepEqual(
+    applied.filter((method) => method !== "sendChatAction"),
+    ["sendRichMessageDraft", "sendMessage"],
+  );
+});
+
+test("a refused turn claim keeps typing every 4.5 seconds and closes at the terminal event or takeover", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "setInterval", "Date"],
+    now: 300_000,
+  });
+  const chatId = "92";
+  const sessionId = "repair-refused";
+  const { closeTelegramDraftTurn } = await import("#lib/telegram-draft.ts");
+  t.after(async () => {
+    await closeTelegramDraftTurn(sessionId, undefined, 0, true);
+    t.mock.timers.reset();
+  });
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  apiCalls.length = 0;
+  setChatStatus(chatKeyOf(chatId), {
+    status: "idle",
+    sessionId: null,
+    turnId: null,
+    draftId: null,
+    resetAt: 1,
+  });
+  await emit("turn.started", { turnId: "refused" }, { chatId, sessionId });
+  t.mock.timers.tick(4_500);
+  await flush();
+  t.mock.timers.tick(4_500);
+  await flush();
+  const count = apiCalls.filter(
+    (call) => call.method === "sendChatAction",
+  ).length;
+  assert.equal(
+    apiCalls.filter((call) => call.method === "sendRichMessageDraft").length,
+    0,
+  );
+  await emit("turn.completed", { turnId: "refused" }, { chatId, sessionId });
+  t.mock.timers.tick(9_000);
+  await flush();
+  assert.equal(
+    apiCalls.filter((call) => call.method === "sendChatAction").length,
+    count,
+  );
+  assert.equal(count, 3);
+  await emit(
+    "turn.started",
+    { turnId: "refused-again" },
+    { chatId, sessionId },
+  );
+  setChatStatus(chatKeyOf(chatId), {
+    status: "running",
+    sessionId: "takeover",
+    turnId: "takeover",
+  });
+  const beforeTakeover = apiCalls.length;
+  t.mock.timers.tick(9_000);
+  await flush();
+  assert.equal(apiCalls.length, beforeTakeover);
+});
+
 test("сломанный модуль гейта не мешает мосту стартовать, а статус без гейта не грузится", () => {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const childData = mkdtempSync(join(tmpdir(), "iva-status-progress-bridge-"));

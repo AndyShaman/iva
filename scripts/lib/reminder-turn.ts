@@ -4,7 +4,7 @@
 // too — the turn has no wall-clock cap, and only the silence watchdog or the owner ends it.
 // The one exception is a caller that passes a signal: the proactive tick ends its turns at
 // the run's IVA_JOB_STOP_AT, cancelling them on the server.
-// The turn posts no working-status message, so the chat has no ⏹ button of its own there.
+// The reminder turn is stopped with /stop in its originating chat.
 // It lives on the CLI half, not in `agent/`, and imports nothing from there: `iva remind`
 // has to load on an install whose authored tree is missing or half-written, and the delivery
 // child process runs the same turn.
@@ -84,7 +84,7 @@ export type CreateClient = (
 
 export type ReminderTurn = {
   readonly status: "completed" | "failed" | "waiting";
-  /** Ход погашен снаружи (⏹ или /stop): текста от него не ждут. */
+  /** Ход погашен снаружи (/stop): текста от него не ждут. */
   readonly cancelled?: boolean;
   /**
    * Ход упёрся в лимит токенов сессии eve и встал на вопрос «Approve/Stop», который в фоне
@@ -106,8 +106,7 @@ const SESSION_LIMIT_CANCEL_MS = 30_000;
 
 /**
  * Присмотр чата за ходом: пока запись есть, `/stop` из этого чата гасит его сессию тем же
- * единственным путём, что и ход канала. Кнопки ⏹ у хода напоминания нет: сообщения
- * «Работаю…» он не публикует. Запись живёт в agent/lib и передаётся зависимостью: этот
+ * единственным путём, что и ход канала. Запись живёт в agent/lib и передаётся зависимостью: этот
  * модуль обязан грузиться и на установке без agent/ (`iva remind`), поэтому ни одного
  * статического импорта оттуда у него нет.
  */
@@ -224,7 +223,7 @@ function applyTurnMark(state: TurnState, event: TurnStreamEvent): TurnState {
   switch (event.type) {
     case "input.requested":
       return asksSessionLimit(event) ? { ...state, sessionLimit: true } : state;
-    // Гасят ход снаружи (⏹, /stop): eve всегда доводит такой ход до session.waiting, но
+    // Гасят ход снаружи (/stop): eve всегда доводит такой ход до session.waiting, но
     // для вызывающего это не «ход поработал и припарковался», а отмена.
     case "turn.cancelled":
       return { ...state, cancelled: true };
