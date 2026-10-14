@@ -1,7 +1,9 @@
 #!/bin/sh
-# Helpers v6.5: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
+# Helpers v7.3: tick-owned outcomes, bounded finish, adversarial durable kernel. BFS, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
+JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--Xmx3g}
+export JAVA_TOOL_OPTIONS
 cd "$(dirname "$0")" || exit 2
 ROOT=$(cd .. && pwd) || exit 2
 TLC=${TLC:-$(command -v tlc || printf '%s/.local/bin/tlc' "$HOME")}
@@ -69,7 +71,9 @@ check() {
   valid=false
   [ "$got" = none ] && [ "$code" -eq 0 ] && valid=true
   [ -n "$got" ] && [ "$got" != none ] && [ "$code" -eq 12 ] && valid=true
-  [ -n "$got" ] && [ "$code" -eq 13 ] && valid=true
+  [ -n "$got" ] && [ "$code" -eq 13 ] &&
+    grep -q '^Error: Temporal properties were violated' "$log" &&
+    [ "$(sed -n 's/^PROPERTY \([A-Za-z0-9_]*\)$/\1/p' "$cfg.cfg")" = "$got" ] && valid=true
   if [ "$got" = "$expect" ] && [ "$valid" = true ]; then
     echo "OK $cfg: $got; mode=$CHECK_MODE; exit=$code; distinct=${states:-unknown}; checked=${checked:-unknown}; time=${elapsed:-unknown}"
     ok=$((ok+1))
@@ -80,37 +84,30 @@ check() {
     [ -n "$got" ] || return 2
   fi
 }
-check HelperRun-v65-reset none || exit 2
-check HelperRun-v65-accepted-finish SlotFreedAfterEnd || exit 2
-check HelperRun-v64-auth none || exit 2
-check HelperRun-v64-capacity none || exit 2
-check HelperRun-v64-run none || exit 2
-check HelperRun-v64-effects none || exit 2
-check HelperRun-v64-live none || exit 2
-check HelperRun-v64-helper-start Authorized || exit 2
-check HelperRun-v64-may MayRequired || exit 2
-check HelperRun-v64-may-copy MayUnchanged || exit 2
-check HelperRun-v64-no-capacity OneRun || exit 2
-check HelperRun-v64-finalize-twice OutcomeOnce || exit 2
-check HelperRun-v64-stale-cas SlotFreedAfterEnd || exit 2
-check HelperRun-v64-stop-twice StopOnce || exit 2
-check HelperRun-v64-step-limit WithinLimits || exit 2
-check HelperRun-v64-work-output WorkMeasured || exit 2
-check HelperRun-v64-work-stop WorkStops || exit 2
-check HelperRun-v64-question-done QuestionFailed || exit 2
-check HelperRun-v64-early-free SlotFreedAfterEnd || exit 2
-check HelperRun-v64-partial PartialKept || exit 2
-check HelperRun-v64-sweep KeepClosed || exit 2
-check HelperRun-v64-read ClosedReadable || exit 2
-check HelperRun-v64-close-outcome CloseKeepsOutcome || exit 2
-check HelperRun-v64-late-effect NoLateEffect || exit 2
-check HelperRun-v64-duplicate-effect NoDuplicateEffect || exit 2
-check HelperRun-v64-tail-effect NoTailEffect || exit 2
-check HelperRun-v64-normal-waiting NoNormalWaiting || exit 2
-check HelperRun-v64-live-nofair NoSilentEnd || exit 2
-check HelperRun-v64-restart-effect NoRestartEffect || exit 2
-check HelperRun-v64-ceiling-race NoCeilingRace || exit 2
-check HelperRun-v64-tick-partial TickRetainsText || exit 2
+check HelperRun-v73-stop-before-end StopOnlyWhileRunning || exit 2
+check HelperRun-v73-stop-needs-snapshot StopCancelSent || exit 2
+check HelperRun-v73-end-cutoff SnapshotFolded || exit 2
+check HelperRun-v72-run none || exit 2
+check HelperRun-v72-silent none || exit 2
+check HelperRun-v72-restart none || exit 2
+check HelperRun-v72-quarantine none || exit 2
+check HelperRun-v72-cancel-failure none || exit 2
+check HelperRun-v72-snapshot-failure none || exit 2
+check HelperRun-v72-lost-id none || exit 2
+check HelperRun-v72-record-failure none || exit 2
+check HelperRun-v72-capacity none || exit 2
+check HelperRun-v72-reminder-busy none || exit 2
+check HelperRun-v72-cancel-finish OutcomeJustified || exit 2
+check HelperRun-v72-no-ceiling BoundedEnd || exit 2
+check HelperRun-v72-restart-undelivered RestartDelivered || exit 2
+check HelperRun-v72-finalize-twice OutcomeOnce || exit 2
+check HelperRun-v72-stop-overwrite StopOnce || exit 2
+check HelperRun-v72-wrong-event OutcomeMatches || exit 2
+check HelperRun-v72-drop-text PartialKept || exit 2
+check HelperRun-v72-work-output WorkMeasured || exit 2
+check HelperRun-v72-no-ceiling-live NoSilentEnd || exit 2
+check HelperRun-v72-shared-schedule NoSilentEnd || exit 2
+check HelperRun-v72-detached-work NoDetachedWork || exit 2
 check HelperOutcome-foreign-read AuthorizedReads || exit 2
 check HelperOutcome-offline-event OfflineEvent || exit 2
 check HelperOutcome-bridge-recovery none || exit 2

@@ -163,77 +163,111 @@ specs/queue-drain-check.sh
 
 ## Helpers
 
-HelperRun.tla и HelperOutcome.tla проверяют v6.4. Run: CAS/первый stop, один слот,
-клиентский create→recordSession, owner epoch, отмена до подтверждённого конца,
-lost-id исключение, отказ клиентской записи, существующий runner timeout, partial последнего сообщения,
-close/read/KEEP, auth/may. Общие auth/Trace и applyTurnEvent равны базе.
+`HelperRun.tla` описывает узел конца по v7.3 §2 и §7: один писатель исхода —
+минутный тик, durable-события ядра — среда. `cancel` доставляет команду и
+сохраняет возможность продолжения ядра. `resetQueued` обозначает cancel/reset по известному id после
+исхода; успех reset для finalize не требуется.
 
-Outcome: finish-once, чистое чтение нескольких исходов, память полной пары
-session/turn у потребителя, durable deliveredAt после подтверждённого непустого
-ответа, retention/visibility. Две сессии имеют turn_0; Restart стирает read marker.
-NoTwoReads/NoRepeatedRead — ожидаемые красные свидетели принятых последствий.
+Граф состоит из claim, HTTP create, T3, событий ядра, смены owner/карантина,
+close и последовательного прохода тика. Окончательный отказ HTTP даёт failed;
+сеть/срок после отправки оставляет lost-id. Отказ T3 отправляет отмену и уборку
+по известному локально id, затем делает failed по CAS. Конечный снимок либо
+ошибка/срок/мусор/404 — отдельные ответы среды. Тик сначала использует первое
+терминальное событие; затем смену owner с подтверждённой доставкой отмены либо
+неизвестным id; затем безусловную границу часов. Только продолжающаяся строка
+до этой границы получает новый stop по объёму/сроку. При записанном stop отмена
+отправляется и при ошибке чтения снимка. Первый конец фиксирует исход, а текст
+и usage сворачиваются из всего снимка, включая события после первого конца.
 
-Единственный Run граф без VIEW/legacy. Bounds: один helper (capacity — два),
-capacity=1, clock 0..3, две завершённые реплики/действия. Outcome: две строки,
-две сессии, clock 0..2, KEEP=1, два чтения строки. Шаговый предел 2 и объём работы 3
-проверяются Run с формулой положительного прироста входа плюс выход;
-MAX_OPEN/MAX_ROWS проверяются продуктовым PBT. FairSpec требует fair Clock/Cancel/End/
-RunnerTimeout/T9/CeilingStop; вечная тишина держит слот. Late/duplicate effect и lost-id tail
-имеют достижимые свидетели; качество пересказа остаётся решением модели.
-Удалены все прежние HelperRun cfg, в том числе dual writer/child pid/kill mutant;
-оставшиеся контракты и мутанты имеют префикс HelperRun-v64-.
+`Claim` разрешён в начальную минуту; время относительно firedAt нормализовано:
+deadline=2, grace=1. `TickStart` фиксирует строки прохода, `TickRow` исполняет
+одну строку, `TickDone` публикует завершённую минуту. Clock допускает следующий
+проход после текущего. `BoundedEnd` требует исход у каждого claim после первого
+завершённого прохода на deadline+grace; это Ф16 «граница + минута + один проход»,
+а не безусловное eventual завершение ядра. Отдельное `NoSilentEnd` проверяется
+под справедливостью Clock и действий тика помощников, независимо от хода напоминания.
+`reminderBusy = TRUE` остаётся во всех состояниях: задача напоминаний может
+ожидать бесконечно, а отдельное расписание `agent/schedules/helpers.ts`
+продолжает исполнять тик. `shared-schedule` возвращает ожидание напоминания
+и нарушает `NoSilentEnd` даже со справедливостью доступных действий. Справедливость End, успешного снимка,
+доставки cancel, reset или появления событий не предполагается.
+
+`TickRow` атомарно абстрагирует конечную последовательность HTTP-вызовов:
+каждый возвращает ответ или достигает HELPER_CHECK_MS.
+Перекрытие трёх тиков, гонку тика с перезапуском и замок/CAS проверяют тесты
+`agent/lib/helper-tick.test.ts`; модель представляет последовательные проходы.
+Реальные 15 секунд и порядок отдельных awaits относятся к проверкам реализации.
+Один слот относится к строкам таблицы: `OneRun` считает `run`, а не durable
+сессии. Durable work после interrupted/границы/lost-id — принятое следствие;
+`NoDetachedWork` даёт ожидаемый красный свидетель на обычной модели.
+
+Свойства `HelperRun` читают состояние и независимую историю входов CAS:
+`OutcomeOnce` — число commits; `StopOnce` — первый stop в журнале просьб;
+`OutcomeJustified` — событие, отказ старта/T3, доставленная отмена при смене
+owner или часы; `OutcomeMatches` — таблица исходов v7.3; `RestartDelivered` —
+доставка перед interrupted при известном id; `PartialKept` и `WorkMeasured` —
+текст и формула по данным снимка; `RowConsistent` — исход/claim.
+`StopOnlyWhileRunning` читает наблюдатель назначения нового stop на финализирующем
+тике; `StopCancelSent` читает наблюдатель пропущенной отмены при известном id
+и записанном stop. Оба наблюдателя вычисляются из фактического перехода.
+`SnapshotFolded` сравнивает свёрнутые поля с полным журналом текста и usage,
+который продолжает обновляться после первого конца. Имена мутантов
+в свойствах отсутствуют. Мутанты меняют только переходы/запись результатов.
+Bounds: один helper, в capacity — два; 0..4 минуты, две завершённые реплики,
+две usage-записи, input 0..2/output 0..1, нормированный предел работы 3.
+Порядок исходов, last string/null/дельты и реальные токены дополнительно держит
+property-based проверка foldHelperSnapshot в продукте.
+
+`HelperOutcome.tla` сохраняет прежний отдельный контракт чтения/пересказа:
+несколько исходов, память полной пары session/turn у потребителя,
+durable deliveredAt после непустого подтверждённого ответа, retention/visibility,
+owner access и восстановление Bridge. NoTwoReads/NoRepeatedRead и потеря
+offline-события — ожидаемые красные свидетели принятых последствий. Bounds:
+две строки, две сессии, clock 0..2, KEEP=1, два чтения строки. Переписывание
+свойств чтения по находкам FN4–FN5 ночи остаётся отдельной работой этой модели.
 
 ```sh
 PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/helper-check.sh
 ```
 
-Load <20 перед каждым cfg, workers 1..4, BFS seed 20261013/fingerprint 1;
-simulation seed 20261011 отделён от BFS. Trap очищает metadir/states.
-Ожидаемая invariant ошибка — exit12 и точное имя; temporal witness — exit13.
-Инфраструктурная ошибка красного мутанта не доказывает. LOG_DIR хранит результаты.
-Проверки идут на Mac mini с Node24 и OpenJDK25.
+Load <20 перед каждым cfg, workers 1..4, heap по умолчанию 3 GiB; BFS
+seed 20261013/fingerprint 1. Simulation отделена от полного перебора.
+Trap удаляет metadir/states; LOG_DIR сохраняет журналы и results.tsv.
+Ожидаемый invariant отказ требует exit12 и точное имя; temporal отказ — exit13
+и единственное свойство конфигурации. Инфраструктурная ошибка не убивает мутант.
+Всего 41 конфигурация: 24 HelperRun (10 зелёных, 12 разных мутантов,
+дополнительная temporal проверка «нет потолка», свидетель durable-хвоста)
+и 17 прежних HelperOutcome. Все прогоны выполняются на Mac mini.
 
-| Конфигурация                                                             | Ожидаемый результат      |
-| ------------------------------------------------------------------------ | ------------------------ |
-| [HelperRun-v64-auth.cfg](HelperRun-v64-auth.cfg)                         | PASS                     |
-| [HelperRun-v64-capacity.cfg](HelperRun-v64-capacity.cfg)                 | PASS                     |
-| [HelperRun-v64-run.cfg](HelperRun-v64-run.cfg)                           | PASS                     |
-| [HelperRun-v64-effects.cfg](HelperRun-v64-effects.cfg)                   | PASS                     |
-| [HelperRun-v64-live.cfg](HelperRun-v64-live.cfg)                         | PASS                     |
-| [HelperRun-v64-helper-start.cfg](HelperRun-v64-helper-start.cfg)         | RED: Authorized          |
-| [HelperRun-v64-may.cfg](HelperRun-v64-may.cfg)                           | RED: MayRequired         |
-| [HelperRun-v64-may-copy.cfg](HelperRun-v64-may-copy.cfg)                 | RED: MayUnchanged        |
-| [HelperRun-v64-no-capacity.cfg](HelperRun-v64-no-capacity.cfg)           | RED: OneRun              |
-| [HelperRun-v64-finalize-twice.cfg](HelperRun-v64-finalize-twice.cfg)     | RED: OutcomeOnce         |
-| [HelperRun-v64-stale-cas.cfg](HelperRun-v64-stale-cas.cfg)               | RED: SlotFreedAfterEnd   |
-| [HelperRun-v64-step-limit.cfg](HelperRun-v64-step-limit.cfg)             | RED: WithinLimits        |
-| [HelperRun-v64-work-output.cfg](HelperRun-v64-work-output.cfg)           | RED: WorkMeasured        |
-| [HelperRun-v64-work-stop.cfg](HelperRun-v64-work-stop.cfg)               | RED: WorkStops           |
-| [HelperRun-v64-stop-twice.cfg](HelperRun-v64-stop-twice.cfg)             | RED: StopOnce            |
-| [HelperRun-v64-question-done.cfg](HelperRun-v64-question-done.cfg)       | RED: QuestionFailed      |
-| [HelperRun-v64-early-free.cfg](HelperRun-v64-early-free.cfg)             | RED: SlotFreedAfterEnd   |
-| [HelperRun-v64-partial.cfg](HelperRun-v64-partial.cfg)                   | RED: PartialKept         |
-| [HelperRun-v64-sweep.cfg](HelperRun-v64-sweep.cfg)                       | RED: KeepClosed          |
-| [HelperRun-v64-read.cfg](HelperRun-v64-read.cfg)                         | RED: ClosedReadable      |
-| [HelperRun-v64-close-outcome.cfg](HelperRun-v64-close-outcome.cfg)       | RED: CloseKeepsOutcome   |
-| [HelperRun-v64-late-effect.cfg](HelperRun-v64-late-effect.cfg)           | RED: NoLateEffect        |
-| [HelperRun-v64-duplicate-effect.cfg](HelperRun-v64-duplicate-effect.cfg) | RED: NoDuplicateEffect   |
-| [HelperRun-v64-tail-effect.cfg](HelperRun-v64-tail-effect.cfg)           | RED: NoTailEffect        |
-| [HelperRun-v64-normal-waiting.cfg](HelperRun-v64-normal-waiting.cfg)     | RED: NoNormalWaiting     |
-| [HelperRun-v64-live-nofair.cfg](HelperRun-v64-live-nofair.cfg)           | RED: NoSilentEnd         |
-| [HelperRun-v64-restart-effect.cfg](HelperRun-v64-restart-effect.cfg)     | RED: NoRestartEffect     |
-| [HelperOutcome-safety.cfg](HelperOutcome-safety.cfg)                     | PASS                     |
-| [HelperOutcome-finish-twice.cfg](HelperOutcome-finish-twice.cfg)         | RED: OutcomeOnce         |
-| [HelperOutcome-before-reply.cfg](HelperOutcome-before-reply.cfg)         | RED: DeliveredAfterReply |
-| [HelperOutcome-empty-reply.cfg](HelperOutcome-empty-reply.cfg)           | RED: DeliveredAfterReply |
-| [HelperOutcome-without-read.cfg](HelperOutcome-without-read.cfg)         | RED: DeliveredAfterReply |
-| [HelperOutcome-turn-only.cfg](HelperOutcome-turn-only.cfg)               | RED: DeliveredAfterReply |
-| [HelperOutcome-lose-unread.cfg](HelperOutcome-lose-unread.cfg)           | RED: UndeliveredKept     |
-| [HelperOutcome-hide-unread.cfg](HelperOutcome-hide-unread.cfg)           | RED: Visible             |
-| [HelperOutcome-early-close.cfg](HelperOutcome-early-close.cfg)           | RED: ClosedKept          |
-| [HelperOutcome-read-write.cfg](HelperOutcome-read-write.cfg)             | RED: ReadPure            |
-| [HelperOutcome-multiple.cfg](HelperOutcome-multiple.cfg)                 | RED: NoTwoReads          |
-| [HelperOutcome-restart.cfg](HelperOutcome-restart.cfg)                   | RED: NoRepeatedRead      |
+| Конфигурация                                                                   | Ожидаемый результат       |
+| ------------------------------------------------------------------------------ | ------------------------- |
+| [HelperRun-v72-run.cfg](HelperRun-v72-run.cfg)                                 | PASS                      |
+| [HelperRun-v72-silent.cfg](HelperRun-v72-silent.cfg)                           | PASS                      |
+| [HelperRun-v72-restart.cfg](HelperRun-v72-restart.cfg)                         | PASS                      |
+| [HelperRun-v72-quarantine.cfg](HelperRun-v72-quarantine.cfg)                   | PASS                      |
+| [HelperRun-v72-cancel-failure.cfg](HelperRun-v72-cancel-failure.cfg)           | PASS                      |
+| [HelperRun-v72-snapshot-failure.cfg](HelperRun-v72-snapshot-failure.cfg)       | PASS                      |
+| [HelperRun-v72-lost-id.cfg](HelperRun-v72-lost-id.cfg)                         | PASS                      |
+| [HelperRun-v72-record-failure.cfg](HelperRun-v72-record-failure.cfg)           | PASS                      |
+| [HelperRun-v72-reminder-busy.cfg](HelperRun-v72-reminder-busy.cfg)             | PASS                      |
+| [HelperRun-v72-capacity.cfg](HelperRun-v72-capacity.cfg)                       | PASS                      |
+| [HelperRun-v72-cancel-finish.cfg](HelperRun-v72-cancel-finish.cfg)             | RED: OutcomeJustified     |
+| [HelperRun-v72-no-ceiling.cfg](HelperRun-v72-no-ceiling.cfg)                   | RED: BoundedEnd           |
+| [HelperRun-v72-restart-undelivered.cfg](HelperRun-v72-restart-undelivered.cfg) | RED: RestartDelivered     |
+| [HelperRun-v72-finalize-twice.cfg](HelperRun-v72-finalize-twice.cfg)           | RED: OutcomeOnce          |
+| [HelperRun-v72-stop-overwrite.cfg](HelperRun-v72-stop-overwrite.cfg)           | RED: StopOnce             |
+| [HelperRun-v72-wrong-event.cfg](HelperRun-v72-wrong-event.cfg)                 | RED: OutcomeMatches       |
+| [HelperRun-v72-drop-text.cfg](HelperRun-v72-drop-text.cfg)                     | RED: PartialKept          |
+| [HelperRun-v72-work-output.cfg](HelperRun-v72-work-output.cfg)                 | RED: WorkMeasured         |
+| [HelperRun-v72-no-ceiling-live.cfg](HelperRun-v72-no-ceiling-live.cfg)         | RED: NoSilentEnd          |
+| [HelperRun-v72-shared-schedule.cfg](HelperRun-v72-shared-schedule.cfg)         | RED: NoSilentEnd          |
+| [HelperRun-v72-detached-work.cfg](HelperRun-v72-detached-work.cfg)             | RED: NoDetachedWork       |
+| [HelperRun-v73-stop-before-end.cfg](HelperRun-v73-stop-before-end.cfg)         | RED: StopOnlyWhileRunning |
+| [HelperRun-v73-stop-needs-snapshot.cfg](HelperRun-v73-stop-needs-snapshot.cfg) | RED: StopCancelSent       |
+| [HelperRun-v73-end-cutoff.cfg](HelperRun-v73-end-cutoff.cfg)                   | RED: SnapshotFolded       |
+
+HelperOutcome: `-safety`, `-bridge-recovery` — PASS; остальные конфиги
+проверяют прежние отрицательные свидетели, перечисленные в `helper-check.sh`.
 
 ## GoalCheck
 
@@ -319,7 +353,7 @@ PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/go
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `Start`                                                    | `goal start` → `goalActor(ctx)` → стор `helpers.json`, G1                        |
 | `NormalizeDay`, `Due`                                      | `runHelperTick()`, нормализация дня и атомарный G2                               |
-| `Claim`, `RecordSession`                                   | T2/T3 помощников: тик создаёт сессию и записывает id                             |
+| `Claim`, `RecordSession`                                   | T2/T3 помощников, HTTP create и запись sessionId в `helper-tick.ts`              |
 | `Report(v)`                                                | `goal report`, текущая сессия проверки, CAS G3                                   |
 | `StopByDeadline`, `StopByCeiling`                          | процесс хода проверки, T5; `GOAL_CHECK_DEADLINE_MS`                              |
 | `ProcessDies`, `ServerRestart`, `ConfirmEnd`               | durable-снимок/доставка отмены после рестарта/потолок, тик помощников            |
@@ -347,15 +381,10 @@ PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/go
 реальные миллисекунды, права файлов и поведение Telegram проверяются при реализации.
 Модель абстрагирует отказ записи таблицы как шаг, сохраняющий всё состояние.
 
-Helpers v6.4: Usage и CeilingStop — отдельные операции. Естественный конец может выиграть гонку с запросом stop: done сохраняет весь итог, объём превышается на один шаг (HelperRun-v64-ceiling-race, RED NoCeilingRace). Finish(tick) сохраняет 0 текста; PartialKept относится к клиентскому концу, TickRetainsText — ожидаемый красный свидетель. Outcome Read допускает только owner, unknown/helper отвергаются (foreign-read — RED AuthorizedReads). BridgeDown/BridgeUp сохраняют исход без события: offline-event — RED OfflineEvent, Visible остаётся зелёным.
-
-| Проверка v6.4                                                      | Результат            |
-| ------------------------------------------------------------------ | -------------------- |
-| [HelperRun-v64-ceiling-race.cfg](HelperRun-v64-ceiling-race.cfg)   | RED: NoCeilingRace   |
-| [HelperRun-v64-tick-partial.cfg](HelperRun-v64-tick-partial.cfg)   | RED: TickRetainsText |
-| [HelperOutcome-foreign-read.cfg](HelperOutcome-foreign-read.cfg)   | RED: AuthorizedReads |
-| [HelperOutcome-offline-event.cfg](HelperOutcome-offline-event.cfg) | RED: OfflineEvent    |
-
-Bounds Usage: input 0..3 (effects 0..2), output 0..1. CeilingStop может проиграть естественному концу. Helper-check выполняет 46 ожидаемых проверок.
-
-BridgeUp возвращает мост в online. HelperOutcome-bridge-recovery проходит сценарий: старый исход a заканчивается offline и остаётся без события, после подъёма новый исход b получает событие. bridge-stays-down — RED BridgeRecovered; recovery-complete — RED NoRecoveryComplete, свидетель достижения нового события при сохранённом старом исходе.
+HelperRun v7.2 заменяет клиентский цикл: Usage хранится в durable-снимке,
+stop по объёму исполняет ближайший тик. Finish всегда исполняет тик и сохраняет
+завершённый текст доступного снимка. Outcome Read сохраняет одно правило owner;
+BridgeDown/BridgeUp сохраняют исход, доступный динамически, при потере события
+о завершении offline. После подъёма новый исход получает событие: старый исход
+автоматически не переигрывается (`HelperOutcome-bridge-recovery` — PASS,
+`bridge-stays-down` — RED BridgeRecovered, `recovery-complete` — RED NoRecoveryComplete).
