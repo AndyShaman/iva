@@ -384,7 +384,11 @@ export async function publishTelegramTurnStarted({
           compacting: null,
           turnAt: now(),
           latencyLogged: null,
-          ...queuedStatusOf(current, sessionId),
+          ...(early
+            ? current.queuedIngressId === undefined
+              ? {}
+              : QUEUED_STATUS_CLEARED
+            : queuedStatusOf(current, sessionId)),
         },
       ),
     );

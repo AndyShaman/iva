@@ -65,12 +65,22 @@ export function draftText(text: string, complete: boolean): string {
   if (text.length > 3500) {
     let cut = text.length - 3500;
     if (/[\uDC00-\uDFFF]/u.test(text[cut] ?? "")) cut++;
-    let fence: string | undefined;
+    let fence: { line: string; marker: string } | undefined;
     for (const line of text.slice(0, cut).split("\n")) {
-      const match = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line);
-      if (match) fence = fence === undefined ? line.trim() : undefined;
+      const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+      if (!match) continue;
+      const marker = match[1];
+      if (fence === undefined) {
+        if (marker[0] === "`" && match[2].includes("`")) continue;
+        fence = { line: line.trim(), marker };
+      } else if (
+        marker[0] === fence.marker[0] &&
+        marker.length >= fence.marker.length &&
+        match[2].trim() === ""
+      )
+        fence = undefined;
     }
-    text = `${fence === undefined ? "" : `${fence}\n`}…${text.slice(cut)}`;
+    text = `${fence === undefined ? "" : `${fence.line}\n`}…${text.slice(cut)}`;
   }
   return text.trim();
 }
@@ -86,10 +96,10 @@ function toolHint(action: Action, cleanArgs: string): string {
     .map((k) => args?.[k])
     .find((v) => typeof v === "string" && v.trim());
   const line =
-    `${action.toolName ?? action.kind ?? "tool"}${typeof detail === "string" ? `: ${detail.split("\n")[0]}` : ""}`.slice(
-      0,
-      60,
-    );
+    `${action.toolName ?? action.kind ?? "tool"}${typeof detail === "string" ? `: ${detail.split("\n")[0]}` : ""}`
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 60);
   const escaped = line
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

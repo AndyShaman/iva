@@ -901,3 +901,27 @@ void test("a reset-refused turn whose sign cleanup throws reports the error inst
   );
   assert.deepEqual(errors, ["run-status lock timeout"]);
 });
+
+void test("early ingress time survives adoption when the same session also owns queued ingress", async () => {
+  const store = statusStore({
+    status: "running",
+    ingressId: "early",
+    ingressAt: 1000,
+    queuedIngressId: "queued",
+    queuedIngressAt: 2000,
+    queuedSessionId: "same",
+  });
+  assert.equal(
+    await publishTelegramTurnStarted({
+      chatKey: "1:",
+      sessionId: "same",
+      turnId: "t",
+      draftId: 21,
+      getStatusImpl: store.get,
+      setStatusIfImpl: store.cas,
+    }),
+    true,
+  );
+  assert.equal(store.get().ingressAt, 1000);
+  assert.equal(store.get().queuedIngressId, undefined);
+});

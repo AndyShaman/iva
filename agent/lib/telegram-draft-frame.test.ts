@@ -421,3 +421,70 @@ void test("typing repeats every 4.5 seconds while its preceding request is still
   await f.advance(40_000);
   assert.equal(f.calls.length, count);
 });
+
+void test("tool hint is one escaped line after CR, tabs and repeated spaces", async (t) => {
+  const f = setup(t);
+  await f.advance(0);
+  f.stream.requested(0, [
+    {
+      callId: "a",
+      toolName: "bash",
+      input: { command: "\t<evil>  ` &\r something\nignored" },
+    },
+  ]);
+  await f.advance(1000);
+  assert.equal(
+    f.text(),
+    "⚙ <code>bash: &lt;evil&gt; &#96; &amp; something</code>",
+  );
+});
+
+void test("quoted and backslash-containing installation secrets are redacted from full tool arguments", async (t) => {
+  const previous = process.env.ASSISTANT_BEARER;
+  const credential = 'installation"key\\value-' + "Q".repeat(40);
+  process.env.ASSISTANT_BEARER = credential;
+  t.after(() => {
+    if (previous === undefined) delete process.env.ASSISTANT_BEARER;
+    else process.env.ASSISTANT_BEARER = previous;
+  });
+  const f = setup(t);
+  await f.advance(0);
+  f.stream.requested(0, [
+    {
+      callId: "a",
+      toolName: "bash",
+      input: { command: `echo "${credential}"`, nested: { credential } },
+    },
+  ]);
+  await f.advance(1000);
+  assert.doesNotMatch(f.text(), /installation/u);
+  assert.match(f.text(), /REDACTED/u);
+});
+
+void test("PBT tail preserves fence type and width (seed 101417)", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 3, max: 8 }),
+      fc.constantFrom("`", "~"),
+      (width, mark) => {
+        const opener = mark.repeat(width) + "ts";
+        const wrongType = (mark === "`" ? "~" : "`").repeat(width);
+        for (const content of [wrongType, mark.repeat(width - 1)]) {
+          assert.ok(
+            draftText(
+              `${opener}\n${content}\n${"x".repeat(4000)} `,
+              false,
+            ).startsWith(`${opener}\n…`),
+          );
+        }
+        assert.ok(
+          draftText(
+            `${opener}\nx\n${mark.repeat(width)}\n${"x".repeat(4000)} `,
+            false,
+          ).startsWith("…"),
+        );
+      },
+    ),
+    { seed: 101417, numRuns: 100 },
+  );
+});
