@@ -78,7 +78,9 @@ SendFrame(d) ==
   /\ s.streams[d].turn # 0
   /\ ~s.streams[d].disabled /\ ~s.streams[d].inFlight /\ ~s.streams[d].pause
   /\ ((~s.streams[d].closed /\ s.streams[d].pending)
-     \/ (Mutant = "frame-after-final" /\ s.finals[s.streams[d].turn] = "sent"))
+     \/ (Mutant = "frame-after-final" /\ s.finals[s.streams[d].turn] = "sent")
+     \/ (Mutant = "older-frame-after-final" /\
+         \E t \in Turns : s.streams[d].turn < t /\ s.finals[t] = "sent"))
   /\ s' = [s EXCEPT !.streams[d].inFlight = TRUE, !.streams[d].pending = FALSE,
        !.afterClose = @ \/ s.streams[d].closed,
        !.afterFinal = @ \/ (s.finals[s.streams[d].turn] = "sent")]

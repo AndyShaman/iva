@@ -137,13 +137,14 @@ The final answer can receive another 429 after restart; Outbox retries it.
 Draft ids are abstract fresh values, so random
 collisions and clock durations require implementation tests.
 
-The main BFS configuration checks two turns and one restart. Eight mutants must
+The main BFS configuration checks two turns and one restart. Nine mutants must
 violate their named state invariant: missing draft comparison (`StopOwnDraft`),
 cancel with a null turn (`StopHasTurn`), a frame after final delivery
 (`NoFrameAfterFinal`), a missing record check (`SelfCheckCloses`), resetting the
 rejection count on a 429 or timeout (`FailurePolicy`), releasing another owner's
 record at turn completion or compaction end (two mutants, `ForeignRecordPreserved`),
-and retaining a pre-restart pause (`RestartForgetsPause`). The main
+retaining a pre-restart pause (`RestartForgetsPause`), and starting an older
+turn's frame after a newer final answer (`NoOlderInFlightAfterFinal`). The main
 configuration also checks `StopOnce`, `FramesOnlyWhileOpen`, `FinalAfterClose`
 and `TypeOK`. `NoOlderInFlightAfterFinal` checks the whole chat: after a turn's
 final answer, requests from earlier turns must have settled. It also covers
