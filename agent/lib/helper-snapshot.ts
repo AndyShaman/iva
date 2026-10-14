@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { type HelperOutcome, HELPER_SUMMARY_MAX } from "./helper-store.ts";
 export function isQuietReply(text: string): boolean {
   return /^[\s\u200B-\u200D\u2060\uFEFF*_`"'«».!]*quiet[\s\u200B-\u200D\u2060\uFEFF*_`"'«».!]*$/iu.test(
@@ -13,11 +14,6 @@ export function helperSummary(text: string): string | null {
         .replace(/[\uD800-\uDBFF]$/u, "") + "…";
 }
 type Usage = { inputTokens?: number; outputTokens?: number };
-export function helperWork(previous: number, usage: Usage): number {
-  return (
-    Math.max(0, (usage.inputTokens ?? 0) - previous) + (usage.outputTokens ?? 0)
-  );
-}
 const ends: Record<string, HelperOutcome> = {
   "turn.completed": "done",
   "session.completed": "done",
@@ -43,23 +39,34 @@ export function foldHelperSnapshot(
     if (!event || typeof event.type !== "string")
       throw Error("invalid helper snapshot");
     const d = (event.data ?? {}) as Record<string, unknown>;
+    if (Object.hasOwn(ends, event.type) && event.type !== "session.completed") {
+      assert.equal(Object.getPrototypeOf(event.data), Object.prototype);
+      if (event.type !== "session.failed")
+        assert.ok(Number.isFinite(d.sequence));
+      if (d.reason !== undefined) assert.equal(typeof d.reason, "string");
+      if (event.type.endsWith(".failed"))
+        assert.equal(typeof d.message, "string");
+    }
     if (event.type === "message.completed" && typeof d.message === "string")
       text = d.message;
     if (event.type === "step.started" && typeof d.modelId === "string")
       started = d.modelId;
     if (event.type === "step.completed") {
-      const usage = (d.usage ?? {}) as Usage;
+      assert.equal(Object.getPrototypeOf(event.data), Object.prototype);
+      const usage = (d.usage === undefined ? {} : d.usage) as Usage;
+      assert.equal(Object.getPrototypeOf(usage), Object.prototype);
+      assert.ok(Object.values(usage).every(Number.isFinite));
       steps++;
-      tokens += helperWork(previous, usage);
+      tokens +=
+        Math.max(0, (usage.inputTokens ?? 0) - previous) +
+        (usage.outputTokens ?? 0);
       previous = usage.inputTokens ?? 0;
       model = typeof d.providerModelId === "string" ? d.providerModelId : null;
     }
     if (!ended && Object.hasOwn(ends, event.type)) {
       ended = true;
       outcome = ends[event.type];
-      if (outcome === "failed")
-        reason =
-          typeof d.message === "string" ? d.message : "ход помощника упал";
+      if (outcome === "failed") reason = d.message as string;
       if (event.type === "input.requested") reason = "помощник ждал ответа";
       if (event.type === "authorization.required")
         reason = "помощник ждал авторизации";

@@ -56,7 +56,18 @@ test(`v7 snapshot fold: first terminal, last string, exact usage and model; seed
               : r.kind === "start"
                 ? { type: "step.started", data: { modelId: r.value } }
                 : r.kind === "end"
-                  ? { type: r.value, data: { message: "failure cause" } }
+                  ? {
+                      type: r.value,
+                      ...(r.value === "session.completed"
+                        ? {}
+                        : {
+                            data: {
+                              sequence: 1,
+                              turnId: "turn",
+                              message: "failure cause",
+                            },
+                          }),
+                    }
                   : {
                       type: "message.appended",
                       data: { messageDelta: r.value },
@@ -122,15 +133,103 @@ test(`v7 quiet check equals the original for Unicode and decorated QUIET; summar
   );
   assert.equal(helperSummary("x\n\n" + "😀".repeat(1500))?.endsWith("…"), true);
   const f = foldHelperSnapshot([
-    { type: "turn.completed", data: { reason: "step-limit" } },
+    {
+      type: "turn.completed",
+      data: { sequence: 1, turnId: "turn", reason: "step-limit" },
+    },
   ]);
   assert.equal(f.outcome, "ceiling");
   assert.equal(
-    foldHelperSnapshot([{ type: "authorization.required" }]).reason,
+    foldHelperSnapshot([
+      { type: "authorization.required", data: { sequence: 1, turnId: "turn" } },
+    ]).reason,
     "помощник ждал авторизации",
   );
   assert.equal(
-    foldHelperSnapshot([{ type: "input.requested" }]).reason,
+    foldHelperSnapshot([
+      { type: "input.requested", data: { sequence: 1, turnId: "turn" } },
+    ]).reason,
     "помощник ждал ответа",
   );
+});
+
+test(`v7 K1: malformed consumed event fields reject the snapshot; seed ${seed}`, async () => {
+  const { foldHelperSnapshot } = await import("./helper-snapshot.ts");
+  const ends = [
+    "turn.completed",
+    "turn.cancelled",
+    "turn.failed",
+    "session.failed",
+    "input.requested",
+    "authorization.required",
+  ];
+  fc.assert(
+    fc.property(
+      fc.constantFrom(...ends),
+      fc.oneof(
+        fc.integer(),
+        fc.string(),
+        fc.boolean(),
+        fc.constant(null),
+        fc.constant(undefined),
+        fc.array(fc.integer()),
+      ),
+      (type, data) => {
+        assert.throws(() => foldHelperSnapshot([{ type, data }]));
+      },
+    ),
+    { seed, numRuns: 500 },
+  );
+  fc.assert(
+    fc.property(
+      fc.oneof(
+        fc.string(),
+        fc.boolean(),
+        fc.constant(null),
+        fc.constant(undefined),
+        fc.array(fc.integer()),
+      ),
+      (wrong) => {
+        assert.throws(() =>
+          foldHelperSnapshot([
+            {
+              type: "turn.completed",
+              data: { sequence: wrong, turnId: "turn" },
+            },
+          ]),
+        );
+        assert.throws(() =>
+          foldHelperSnapshot([
+            {
+              type: "turn.completed",
+              data: {
+                sequence: 1,
+                turnId: "turn",
+                reason:
+                  typeof wrong === "string" || wrong === undefined ? 7 : wrong,
+              },
+            },
+          ]),
+        );
+        for (const field of ["inputTokens", "outputTokens"])
+          assert.throws(() =>
+            foldHelperSnapshot([
+              {
+                type: "step.completed",
+                data: { usage: { [field]: wrong === undefined ? "7" : wrong } },
+              },
+            ]),
+          );
+      },
+    ),
+    { seed, numRuns: 500 },
+  );
+  for (const type of ["turn.failed", "session.failed"])
+    assert.throws(() =>
+      foldHelperSnapshot([{ type, data: { sequence: 1, message: 7 } }]),
+    );
+  assert.throws(() =>
+    foldHelperSnapshot([{ type: "step.completed", data: { usage: null } }]),
+  );
+  assert.equal(foldHelperSnapshot([{ type: "session.completed" }]).ended, true);
 });

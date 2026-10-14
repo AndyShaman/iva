@@ -15,7 +15,7 @@ import { runHelperTick } from "./helper-tick.ts";
 import { OWNER_STARTED_AT } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 const chat = { id: "42", threadId: null };
-type Event = { type: string; data?: Record<string, unknown> };
+type Event = { type: string; data?: unknown };
 async function setup(t: test.TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "iva-helper-v7-")),
     prev = { ...process.env };
@@ -56,6 +56,13 @@ async function setup(t: test.TestContext) {
     if (init.signal) state.signals.push(init.signal);
     if (path === "session") {
       if (state.create === "network") throw Error("network lost after send");
+      if (state.create.startsWith("empty-")) {
+        const status = Number(state.create.slice(6));
+        state.create = "ok";
+        return new Response(null, { status });
+      }
+      if (state.create === "server-error")
+        return Response.json({ error: "Unavailable" }, { status: 503 });
       if (state.create === "error")
         return Response.json({ error: "Unauthorized" }, { status: 401 });
       await state.onCreate();
@@ -176,7 +183,7 @@ test("v7 close: cancel leaves durable snapshot unchanged; terminal event preserv
   assert.ok((await s.getHelper(a.id))?.run);
   f.state.events.push(
     { type: "message.completed", data: { message: null } },
-    { type: "turn.cancelled" },
+    { type: "turn.cancelled", data: { sequence: 1, turnId: "turn" } },
   );
   await f.tick();
   const row = await s.getHelper(a.id);
@@ -286,7 +293,7 @@ test("v7 overlapping ticks: one claim, one result writer and one finished trace;
   assert.equal(f.state.calls.filter((x) => x === "session").length, 1);
   f.state.events = [
     { type: "message.completed", data: { message: "result" } },
-    { type: "turn.completed" },
+    { type: "turn.completed", data: { sequence: 1, turnId: "turn" } },
   ];
   const writes: string[] = [],
     rename = fs.rename.bind(fs);
@@ -322,7 +329,10 @@ test("v7 volume and deadline request stop on the next tick; first reason survive
   assert.equal((await s.getHelper(a.id))?.stop, "ceiling");
   await f.tick(2000 + s.HELPER_DEADLINE_MS);
   assert.equal((await s.getHelper(a.id))?.stop, "ceiling");
-  f.state.events.push({ type: "turn.completed" });
+  f.state.events.push({
+    type: "turn.completed",
+    data: { sequence: 1, turnId: "turn" },
+  });
   await f.tick();
   assert.equal((await s.getHelper(a.id))?.outcome, "ceiling");
 });
@@ -338,3 +348,54 @@ test("v7 corrupt table preserves bytes and emits store_broken", async (t) => {
     /store_broken/,
   );
 });
+
+test("v7 K1: valid JSON with malformed turn.completed keeps run", async (t) => {
+  const f = await setup(t),
+    a = await f.running();
+  f.state.events = [{ type: "turn.completed", data: 7 }];
+  const before = await s.getHelper(a.id);
+  await f.tick();
+  assert.deepEqual(await s.getHelper(a.id), before);
+  assert.deepEqual(f.state.calls, ["stream"]);
+});
+
+for (const status of [401, 403, 429, 503])
+  test(`v7 K2: empty HTTP ${status} is definitive only for 4xx`, async (t) => {
+    const f = await setup(t),
+      a = await f.add(),
+      b = await f.add();
+    f.state.create = `empty-${status}`;
+    await f.tick();
+    const row = await s.getHelper(a.id);
+    if (status < 500) {
+      assert.equal(row?.outcome, "failed");
+      assert.equal(row?.reason, "помощник не смог начать");
+      assert.equal(row?.run, null);
+      assert.equal((await s.getHelper(b.id))?.run?.sessionId, "server");
+    } else {
+      assert.ok(row?.run);
+      assert.equal(row?.outcome, null);
+      assert.equal((await s.getHelper(b.id))?.run, null);
+    }
+  });
+test("v7 K2: HTTP 503 with a body is definitive", async (t) => {
+  const f = await setup(t),
+    a = await f.add();
+  f.state.create = "server-error";
+  await f.tick();
+  assert.equal((await s.getHelper(a.id))?.outcome, "failed");
+});
+for (const snapshot of ["error", "garbage"])
+  test(`v7 K3: closed stop sends cancel despite ${snapshot} snapshot`, async (t) => {
+    const f = await setup(t),
+      a = await f.running();
+    await s.closeHelper(a.id, chat, 2100);
+    const before = await s.getHelper(a.id);
+    f.state.snapshot = snapshot;
+    await f.tick();
+    assert.deepEqual(await s.getHelper(a.id), before);
+    assert.equal(f.state.calls.filter((x) => x === "cancel").length, 1);
+    await f.tick();
+    assert.deepEqual(await s.getHelper(a.id), before);
+    assert.equal(f.state.calls.filter((x) => x === "cancel").length, 2);
+  });

@@ -137,8 +137,8 @@ export async function runHelperTick(
                   : null;
             if (stop)
               row = (await s.stopHelper(row.id, run.firedAt, stop)) ?? row;
-            if (row.stop && session) await cancel(session);
           }
+          if (!old && row.stop && session) await cancel(session);
         } else if (row.status === "pending") {
           const claimed = await s.claimHelper(
             row.id,
@@ -154,7 +154,10 @@ export async function runHelperTick(
             }));
           } catch (error) {
             log("helper create:", row.id, error);
-            if (error instanceof ClientError && error.body)
+            if (
+              error instanceof ClientError &&
+              ((error.status >= 400 && error.status < 500) || error.body)
+            )
               await finish(
                 claimed,
                 foldHelperSnapshot([]),
