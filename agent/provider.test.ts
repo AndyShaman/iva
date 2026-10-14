@@ -15,8 +15,10 @@ import { basename, join } from "node:path";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import fc from "fast-check";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   generateText,
+  jsonSchema,
   streamText,
   wrapLanguageModel,
   type ModelMessage,
@@ -1185,16 +1187,156 @@ void test("codex treats an id the SDK does not know as a reasoning model", async
 });
 
 // --- Рассуждение в истории: возвращается там, где вендор его принимает ---------------------
-// Решение по вендору — одна строка в MODEL_PROVIDERS. Возврат доказан живьём только у codex
-// (gpt-6-sol, 23.09.2026: второй запрос несёт reasoning-item с encrypted_content, ход без 400).
-void test("only codex replays reasoning; every other vendor keeps it stripped", () => {
+// Решение по вендору — в MODEL_PROVIDERS, по протоколу Go — в withReplayableReasoning.
+// 15.10.2026: chat/completions Go, Ollama Cloud и custom принимают reasoning_content.
+void test("proven chat vendors and codex replay reasoning", () => {
   assert.deepEqual(
     MODEL_PROVIDER_NAMES.filter(
       (name) => MODEL_PROVIDERS[name].replaysReasoning,
     ),
-    ["codex"],
+    ["ollama", "opencode", "codex", "custom"],
   );
 });
+
+async function loadReasoningProvider(
+  name: "ollama" | "opencode" | "custom" | "openrouter",
+  protocol: "chat-completions" | "responses",
+): Promise<ProviderModule> {
+  const env = {
+    MODEL_PROVIDER: name,
+    OPENCODE_PROTOCOL: protocol,
+    CUSTOM_MODEL: "reasoning-fixture",
+    CUSTOM_BASE_URL: "https://custom.example/v1",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, env);
+  try {
+    const specifier = `./provider.ts?reasoning-replay=${name}-${protocol}`;
+    return (await import(specifier)) as ProviderModule;
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+for (const [name, protocol, replay] of [
+  ["ollama", "chat-completions", true],
+  ["opencode", "chat-completions", true],
+  ["custom", "chat-completions", true],
+  ["openrouter", "chat-completions", false],
+  ["opencode", "responses", false],
+] as const) {
+  void test(`${name}/${protocol} sends the previous tool step's reasoning according to its replay rule`, async () => {
+    const provider = await loadReasoningProvider(name, protocol);
+    const bodies: {
+      model: string;
+      messages: {
+        role: string;
+        reasoning_content?: string;
+        tool_calls?: { id: string }[];
+        tool_call_id?: string;
+      }[];
+    }[] = [];
+    const compatible = createOpenAICompatible({
+      name: "reasoning-fixture",
+      baseURL: "https://provider.example/v1",
+      apiKey: "test-only",
+      fetch: (_input, init) => {
+        bodies.push(
+          JSON.parse(init?.body as string) as (typeof bodies)[number],
+        );
+        return Promise.resolve(
+          Response.json({
+            id: `chatcmpl-${bodies.length}`,
+            object: "chat.completion",
+            created: 0,
+            model: bodies.at(-1)!.model,
+            choices: [
+              {
+                index: 0,
+                message:
+                  bodies.length === 1
+                    ? {
+                        role: "assistant",
+                        content: null,
+                        reasoning_content: "сначала вызову add",
+                        tool_calls: [
+                          {
+                            id: "call_1",
+                            type: "function",
+                            function: { name: "add", arguments: "{}" },
+                          },
+                        ],
+                      }
+                    : { role: "assistant", content: "3" },
+                finish_reason: bodies.length === 1 ? "tool_calls" : "stop",
+              },
+            ],
+          }),
+        );
+      },
+    });
+    const first = await generateText({
+      model: provider.withReplayableReasoning(compatible("step-one")),
+      prompt: "сложи",
+      tools: { add: { inputSchema: jsonSchema({ type: "object" }) } },
+      maxRetries: 0,
+    });
+    assert.equal(first.finishReason, "tool-calls");
+    const firstReasoning = reasoningParts(first.response.messages).map(
+      (part) => part.text,
+    );
+    const history: ModelMessage[] = [
+      { role: "user", content: "сложи" },
+      ...first.response.messages,
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "add",
+            output: { type: "json", value: { sum: 3 } },
+          },
+        ],
+      },
+    ];
+    // История от прежнего вендора тоже проходит через правило нового вендора.
+    if (!replay) {
+      const assistant = history.find((message) => message.role === "assistant");
+      assert.ok(assistant && Array.isArray(assistant.content));
+      assistant.content.unshift({
+        type: "reasoning",
+        text: "старое рассуждение",
+      });
+    }
+    const second = await generateText({
+      model: provider.withReplayableReasoning(compatible("step-two")),
+      messages: history,
+      maxRetries: 0,
+    });
+    assert.equal(second.text, "3");
+    assert.deepEqual(
+      bodies.map((body) => body.model),
+      ["step-one", "step-two"],
+    );
+    const messages = bodies[1].messages;
+    const assistant = messages.find((message) => message.role === "assistant");
+    assert.ok(assistant);
+    if (replay) assert.equal(assistant.reasoning_content, "сначала вызову add");
+    else assert.equal("reasoning_content" in assistant, false);
+    assert.deepEqual(firstReasoning, replay ? ["сначала вызову add"] : []);
+    assert.equal(assistant.tool_calls?.[0]?.id, "call_1");
+    assert.equal(
+      messages.find((message) => message.role === "tool")?.tool_call_id,
+      "call_1",
+    );
+  });
+}
 
 const REPLAY_USAGE = {
   inputTokens: 1,

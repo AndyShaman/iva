@@ -61,9 +61,9 @@ export const MODEL_PROVIDERS = {
     defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
-    // Рассуждение прошлых шагов обратно не шлём, как и у остальных OpenAI-совместимых:
-    // вернулось бы полем reasoning_content, а принимает ли его бэкенд, живьём не доказано.
-    replaysReasoning: false,
+    // 15.10.2026, Ollama Cloud: deepseek-v4-pro/v4.1-flash принимают reasoning_content
+    // после инструмента (200 с полем и без); ответное reasoning SDK возвращает этим полем.
+    replaysReasoning: true,
     toolNameMax: TOOL_NAME_MAX,
     // Дешёвая мультимодалка того же провайдера (проверено на проде: принимает image_url,
     // http 200). Ollama Cloud снимает теги с раздачи: gemma3:12b отвечает
@@ -78,7 +78,9 @@ export const MODEL_PROVIDERS = {
     defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
-    replaysReasoning: false,
+    // 15.10.2026, Go chat/completions: все 16 проверенных моделей принимают возврат (200).
+    // DeepSeek в thinking mode требует его (#296); Responses исключён в provider.ts.
+    replaysReasoning: true,
     toolNameMax: TOOL_NAME_MAX,
     // Живая проверка 2026-08-18, картинка через POST /chat/completions: qwen3.7-plus
     // отвечает 200 и кладёт в message.content чистое описание с OCR (4-6 с) — он и дефолт.
@@ -129,6 +131,7 @@ export const MODEL_PROVIDERS = {
     defaultHelperModel: null,
     defaultModel: "openai/gpt-5.1",
     compatibleReasoning: false,
+    // Приём reasoning_content на OpenRouter живьём ещё не проверен, 15.10.2026.
     replaysReasoning: false,
     toolNameMax: TOOL_NAME_MAX,
     // Дешёвая гарантированно-мультимодальная модель для картинок: vision работает независимо
@@ -148,7 +151,9 @@ export const MODEL_PROVIDERS = {
     // reasoning_effort незнакомому эндпоинту не шлём: OpenAI-совместимость этого поля не
     // обещает, а лишний параметр — HTTP 400 на каждом ходу.
     compatibleReasoning: false,
-    replaysReasoning: false,
+    // 15.10.2026, custom Meta muse-spark-1.3-contributor: 200 с полем и без.
+    // SDK возвращает только полученное рассуждение; Meta его не отдаёт — возвращать нечего.
+    replaysReasoning: true,
     toolNameMax: TOOL_NAME_MAX,
     // Vision-модель необязательна: с 0.3.34 картинку сначала предлагают самой модели чата
     // (ADR-0012). Пусто — дефолта нет, и картинку смотрит выбранная текстовая модель.
@@ -163,8 +168,8 @@ export const MODEL_PROVIDERS = {
     defaultHelperModel: string | null;
     defaultModel: string | null;
     compatibleReasoning: boolean;
-    // Рассуждение прошлых шагов возвращается модели в истории хода. false — вырезается и из
-    // вывода, и из промпта: вендор его не принимает или это не доказано живьём.
+    // Рассуждение прошлых шагов возвращается модели в истории хода. У Go это только
+    // chat/completions (выбор в provider.ts); false чистит и вывод, и старую историю.
     replaysReasoning: boolean;
     // Максимальная длина имени до обращения к провайдеру; у claude зарезервирован префикс.
     toolNameMax: number;
