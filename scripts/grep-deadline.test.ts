@@ -1,5 +1,8 @@
 import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { PassThrough } from "node:stream";
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +14,70 @@ import { Worker } from "node:worker_threads";
 import test from "node:test";
 import type { ToolContext } from "eve/tools";
 const { default: grep } = await import("../agent/tools/grep.ts");
+
+await test("grep abort closes an unfinished line and its worker before more input arrives", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-grep-held-line-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "held.txt");
+  writeFileSync(path, "fixture");
+  const stream = new PassThrough();
+  stream.setEncoding("utf8");
+  let readStarted = () => {};
+  const reading = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  const originalRead = fs.createReadStream;
+  t.mock.method(
+    fs,
+    "createReadStream",
+    (...args: Parameters<typeof fs.createReadStream>) => {
+      if (args[0] !== path) return originalRead(...args);
+      readStarted();
+      return stream;
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const originalTerminate: unknown = Reflect.get(Worker.prototype, "terminate");
+  assert.ok(typeof originalTerminate === "function");
+  let terminated = false;
+  t.mock.method(Worker.prototype, "terminate", async function (this: Worker) {
+    const code: unknown = await Reflect.apply(originalTerminate, this, []);
+    terminated = true;
+    return code;
+  });
+  const controller = new AbortController();
+  let settled = false;
+  const work = Promise.resolve(
+    grep.execute({ path, pattern: "abc" }, {
+      abortSignal: controller.signal,
+    } as ToolContext),
+  ).then((answer) => {
+    settled = true;
+    return answer;
+  });
+  try {
+    await reading;
+    stream.write("x".repeat(65536));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(
+      settled,
+      true,
+      "abort must finish while the line remains incomplete",
+    );
+    assert.equal(stream.destroyed, true);
+    assert.equal(terminated, true);
+    assert.equal(((await work) as { error?: string }).error, "поиск отменён");
+  } finally {
+    if (!stream.destroyed) stream.end("\n");
+    await work;
+  }
+});
 for (const mode of ["deadline", "abort"]) {
   await test(`grep hears ${mode} while a hostile expression runs`, async (t) => {
     const dir = mkdtempSync(join(tmpdir(), "iva-grep-deadline-"));

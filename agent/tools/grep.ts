@@ -3,6 +3,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+import { addAbortSignal } from "node:stream";
 import { relative, sep } from "node:path";
 import {
   globToRegExp,
@@ -32,11 +33,15 @@ async function* filesAt(
   else yield* eachFile(root, bound);
 }
 
-async function* lineBatches(file: string): AsyncGenerator<string[]> {
+async function* lineBatches(
+  file: string,
+  signal?: AbortSignal,
+): AsyncGenerator<string[]> {
   const stream = createReadStream(file, {
     encoding: "utf8",
     highWaterMark: 64 * 1024,
   });
+  if (signal) addAbortSignal(signal, stream);
   let pending: string[] = [];
   try {
     for await (const chunk of stream) {
@@ -52,6 +57,7 @@ async function* lineBatches(file: string): AsyncGenerator<string[]> {
     // split("\\n") includes an empty final line after a trailing newline, including an empty file.
     yield [pending.join("")];
   } catch {
+    if (signal?.aborted) throw new Error("поиск отменён");
     return;
   } finally {
     stream.destroy();
@@ -141,7 +147,7 @@ async function matchesInFile(
 ): Promise<Match[]> {
   const matches: Match[] = [];
   let offset = 0;
-  for await (const lines of lineBatches(file)) {
+  for await (const lines of lineBatches(file, signal)) {
     const found = await matchLines(
       worker,
       lines,
