@@ -225,7 +225,7 @@ await test("принятое сообщение видит typing в течен�
     setStatusIfImpl: runStatus.setChatStatusIf,
   });
   assert.equal(ingressId, "accepted-20s");
-  startTelegramAcceptedTyping(tg, ingressId!);
+  startTelegramAcceptedTyping(tg, ingressId);
   const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
   await flush();
   for (let i = 0; i < 4; i++) {

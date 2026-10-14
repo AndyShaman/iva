@@ -119,7 +119,6 @@ export class TelegramDraftStream {
   #sentAt = -Infinity;
   #pauseUntil = 0;
   #inFlight?: Promise<void>;
-  #typingFlight?: Promise<unknown>;
   #typing?: ReturnType<typeof setInterval>;
   #timer?: ReturnType<typeof setTimeout>;
 
@@ -166,8 +165,7 @@ export class TelegramDraftStream {
       void this.close(0);
       return;
     }
-    if (this.#typingFlight) return;
-    this.#typingFlight = this.#tg
+    void this.#tg
       .request("sendChatAction", {
         chat_id: this.#tg.chatId,
         action: "typing",
@@ -175,10 +173,7 @@ export class TelegramDraftStream {
           ? {}
           : { message_thread_id: this.#tg.messageThreadId }),
       })
-      .catch(() => {})
-      .finally(() => {
-        this.#typingFlight = undefined;
-      });
+      .catch(() => {});
   }
 
   #guard(text: string): string {

@@ -402,3 +402,22 @@ void test("PBT alternating steps, deltas, tools, final and reset preserves curre
     { seed: 101414, numRuns: 100 },
   );
 });
+
+void test("typing repeats every 4.5 seconds while its preceding request is still pending", async (t) => {
+  const f = setup(t, (call) =>
+    call.method === "sendChatAction"
+      ? new Promise(() => {})
+      : Promise.resolve({ ok: true, body: { ok: true } }),
+  );
+  await f.advance(0);
+  await f.advance(4500);
+  await f.advance(4500);
+  assert.equal(
+    f.calls.filter((call) => call.method === "sendChatAction").length,
+    3,
+  );
+  await f.stream.close(0);
+  const count = f.calls.length;
+  await f.advance(40_000);
+  assert.equal(f.calls.length, count);
+});
