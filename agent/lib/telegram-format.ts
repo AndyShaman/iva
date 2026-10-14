@@ -71,14 +71,19 @@ function inlineHtml(text: unknown): string {
     match;
   while ((match = link.exec(s))) {
     let end = link.lastIndex,
-      depth = 0;
+      depth = 0,
+      firstClose = -1;
     for (; end < s.length && end < link.lastIndex + 2048; end++) {
       const char = s[end];
       if (/\s/.test(char) || (char === ")" && depth === 0)) break;
       if (char === "(") depth++;
-      if (char === ")") depth--;
+      if (char === ")") {
+        if (firstClose < 0) firstClose = end;
+        depth--;
+      }
     }
-    if (end === link.lastIndex || s[end] !== ")" || depth !== 0) continue;
+    if (s[end] !== ")" || depth !== 0) end = firstClose;
+    if (end <= link.lastIndex) continue;
     // Открывающий тег хранится в spans, подпись проходит правила разметки.
     spans.push(
       `<a href="${escAttr(match[2] + s.slice(link.lastIndex, end))}">`,

@@ -55,13 +55,31 @@ await test("Wikipedia links retain underscores and balanced parentheses", () => 
   );
 });
 
+await test("link parsing keeps the first closing parenthesis when the URL is unbalanced", () => {
+  assert.equal(
+    mdToTelegramHtml("(see [docs](https://a.com))"),
+    '(see <a href="https://a.com">docs</a>)',
+  );
+  assert.equal(
+    mdToTelegramHtml("[q](https://e.com/search?q=(foo)"),
+    '<a href="https://e.com/search?q=(foo">q</a>',
+  );
+  assert.equal(
+    mdToTelegramHtml("[x](https://x.test/(open)"),
+    '<a href="https://x.test/(open">x</a>',
+  );
+  assert.equal(
+    mdToTelegramHtml("[a](https://a.com/(x) tail) more"),
+    '<a href="https://a.com/(x">a</a> tail) more',
+  );
+});
+
 await test("link parsing retains its label and URL work bounds", () => {
   const url = `https://${"a".repeat(2048)}`;
   assert.equal(mdToTelegramHtml(`[x](${url})`), `<a href="${url}">x</a>`);
   for (const markdown of [
     `[x](${url}a)`,
     `[${"x".repeat(201)}](https://x.test)`,
-    "[x](https://x.test/(open)",
     `[x](https://${"(".repeat(100_000)})`,
     "[".repeat(100_000),
   ]) {
