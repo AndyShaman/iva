@@ -8,7 +8,7 @@
 \* Start: publishTelegramTurnStarted + one CAS of sessionId/turnId/draft_id.
 \* MessageCompleted: final message.completed, separate from TurnEnded.
 \* Close: stop timers; RequestDone may still settle an earlier HTTP request.
-\* SendFinal: Outbox waits for that request and for the 429 pause.
+\* SendFinal: closeTelegramDraftChat also drains closed streams of the same chat.
 \* StopRead/StopCancel: native update, checked snapshot, pair-scoped cancel.
 \* OtherProcess: reset/takeover writes the chat record without a local signal.
 \* Tick: one 4.5 s typing tick reads that record and closes stale streams.
@@ -110,8 +110,11 @@ MessageCompleted ==
        !.streams = ClosePair(@, s.session, s.turn)]
 Drained(t) == \A d \in Drafts : s.streams[d].turn = t =>
   s.streams[d].closed /\ ~s.streams[d].inFlight /\ ~s.streams[d].pause
+\* closeTelegramDraftChat keeps unrelated open turns intact and waits for closed ones.
+ClosedStreamsDrained == \A d \in Drafts : s.streams[d].closed =>
+  ~s.streams[d].inFlight /\ ~s.streams[d].pause
 SendFinal(t) ==
-  /\ s.finals[t] = "pending" /\ Drained(t)
+  /\ s.finals[t] = "pending" /\ Drained(t) /\ ClosedStreamsDrained
   /\ s' = [s EXCEPT !.finals[t] = "sent"]
 \* All terminal/parking/input-requested safety closures use the same Close.
 TurnEnded ==

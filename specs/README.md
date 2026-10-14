@@ -151,6 +151,11 @@ final answer, requests from earlier turns must have settled. It also covers
 earlier turns in another session, and retains that requirement after the chat
 record changes. A cancelled turn's request surviving into the next turn's final
 answer violates this invariant even when both per-turn final invariants hold.
+Final delivery drains its own turn and every closed stream still known in the
+same chat. A cancelled stream stays known until its request settles, while the
+cancellation handler keeps its two-second wait limit. Other open turns retain
+their streams. The earlier per-turn-only guard has a recorded counterexample
+to `NoOlderInFlightAfterFinal`.
 Frame closure forbids new requests; an earlier in-flight request
 can still finish before the final answer. HTTP wire shapes, redaction, authorization
 parsing, real timer deadlines and the live Telegram client have separate checks.
