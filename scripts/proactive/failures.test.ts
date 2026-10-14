@@ -122,8 +122,66 @@ test("exit time: @seconds and the plain systemd format with UTC or an offset; em
     Date.UTC(2026, 9, 4, 3, 30, 47),
   );
   assert.equal(exitTime(""), null);
-  for (const bad of ["Sat 2026-10-04 03:30:47 MSK", "yesterday", "@", "n/a"])
+  assert.equal(exitTime("n/a"), null);
+  for (const bad of ["Sat 2026-10-04 03:30:47 MSK", "yesterday", "@"])
     assert.throws(() => exitTime(bad), /exit time not understood/u);
+});
+
+test(`#292: Watch and Brief preserve neighbouring failures across n/a and malformed unit timestamps (seed ${SEED})`, async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.oneof(
+        fc.constant("n/a"),
+        fc.string().map((s) => `bad-${s}`),
+      ),
+      fc.boolean(),
+      async (exited, neighbourFirst) => {
+        const healthy = "iva-telegram-userbot.service";
+        const broken = "iva-plugin-broken.service";
+        const plugins = neighbourFirst
+          ? { [healthy]: "active", [broken]: "failed" }
+          : { [broken]: "failed", [healthy]: "active" };
+        const run = fakeSystemctl({
+          timers: { "backup.timer": "backup.service" },
+          plugins,
+          units: {
+            "backup.service": {
+              status: "1",
+              result: "exit-code",
+              exited: sec(NOON - HOUR),
+            },
+            [healthy]: { exited },
+            [broken]: {
+              status: "2",
+              result: "exit-code",
+              exited: sec(NOON - HOUR),
+            },
+          },
+        });
+        const result = await failuresSource(dir(), run).check(since());
+        assert.deepEqual(
+          result.items.map((item) => item.key),
+          ["failure:backup.service", `failure:${broken}`],
+        );
+        const lines = await unfixedFailures(dir(), NOON, run);
+        assert.match(
+          lines[0] ?? "",
+          /^a regular job failed: backup\.service:/u,
+        );
+        if (exited === "n/a") {
+          assert.equal(result.error, null);
+          assert.equal(lines.length, 1);
+        } else {
+          assert.match(result.error ?? "", /exit time not understood/u);
+          assert.match(
+            lines[1] ?? "",
+            /^failures check failed:.*exit time not understood/u,
+          );
+        }
+      },
+    ),
+    { seed: SEED, numRuns: 60, examples: [["n/a", true]] },
+  );
 });
 
 test(`PBT: exit time round-trips both formats; garbage is null, a number or an Error — never a crash (seed ${SEED})`, () => {

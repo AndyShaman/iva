@@ -388,11 +388,11 @@ const tokens = (out: string) =>
 /**
  * Время выхода из `systemctl show`: обычный формат «Sat 2026-10-04 03:30:47 UTC» / «… +05» (вызов
  * идёт с TZ=UTC) или `@<секунды>` (`--timestamp=unix`; до systemd 251 значения нет и systemctl
- * отвергает флаг, поэтому вызов его не передаёт). Пусто — не выходил. Иное — ошибка: источник
+ * отвергает флаг, поэтому вызов его не передаёт). Пусто или n/a — не выходил. Иное — ошибка: источник
  * `error`, пункт `check:timers`.
  */
 export function exitTime(value: string): number | null {
-  if (value === "") return null;
+  if (value === "" || value === "n/a") return null;
   const unix = /^@(\d{1,12})$/u.exec(value);
   if (unix) return Number(unix[1]) * 1000;
   const m =
@@ -424,7 +424,7 @@ async function unitStates(run: Systemctl) {
   );
   const plugins = tokens(await systemctl(run, ...PLUGIN_UNITS.split(" ")));
   const names = [...new Set([...timers, ...plugins.map((row) => row[0])])];
-  if (names.length === 0) return [];
+  if (names.length === 0) return { units: [], error: null };
   const shown = await systemctl(run, ...SHOW.split(" "), ...names);
   // Блоки `show` разделены пустой строкой, свойство — `Имя=значение`.
   const blocks = new Map(
@@ -435,7 +435,8 @@ async function unitStates(run: Systemctl) {
       return [p.Id, p];
     }),
   );
-  return names.map((unit) => {
+  const errors: string[] = [];
+  const units = names.flatMap((unit) => {
     const p = blocks.get(unit) ?? {};
     const timer = timers.has(unit);
     const [status = "", result = ""] = [p.ExecMainStatus, p.Result];
@@ -443,16 +444,26 @@ async function unitStates(run: Systemctl) {
     // Сервис с Restart= падает по кругу в «activating auto-restart» и до `failed` не доходит:
     // упавшим его делает и Result последнего запуска.
     const crashed = result !== "" && result !== "success";
-    return {
-      unit,
-      timer,
-      failing: timer
-        ? !["", "0"].includes(status)
-        : plugins.some(failed) || crashed,
-      essence: timer ? status : result,
-      ...exitNote(unit, status, result, p.ExecMainExitTimestamp),
-    };
+    let note;
+    try {
+      note = exitNote(unit, status, result, p.ExecMainExitTimestamp);
+    } catch (error) {
+      errors.push(message(error));
+      return [];
+    }
+    return [
+      {
+        unit,
+        timer,
+        failing: timer
+          ? !["", "0"].includes(status)
+          : plugins.some(failed) || crashed,
+        essence: timer ? status : result,
+        ...note,
+      },
+    ];
   });
+  return { units, error: errors.join("; ") || null };
 }
 
 /** Время выхода и строка пункта: что упало, код, Result, когда. */
@@ -474,15 +485,15 @@ export function failuresSource(
 ): Source {
   const check: Source["check"] = async (since) => {
     const { now = Date.now(), failuresSeenUpToMs = 0 } = since ?? {};
-    let units;
+    let states;
     try {
-      units = await unitStates(run);
+      states = await unitStates(run);
     } catch (error) {
       const silent = error instanceof SystemctlFailed;
       return { items: [], error: message(error), silent };
     }
     const items: WatchItem[] = [];
-    for (const { unit, timer, failing, essence, at, note } of units) {
+    for (const { unit, timer, failing, essence, at, note } of states.units) {
       const key = `failure:${unit}`;
       if (!failing) alertResolved(dataDir, key);
       else if (
@@ -497,7 +508,7 @@ export function failuresSource(
           failure: { essence, at },
         });
     }
-    return { items, error: null };
+    return { items, error: states.error };
   };
   return { name: "timers", prefix: "failure:", always: true, check };
 }
@@ -512,8 +523,9 @@ export async function unfixedFailures(
   try {
     for (const f of await openFailures({ dir: dataDir, now }))
       lines.push(`${f.source} ${f.name}: ${f.reason}`);
-    for (const u of await unitStates(run))
-      if (u.timer && u.failing) lines.push(u.note);
+    const { units, error } = await unitStates(run);
+    for (const u of units) if (u.timer && u.failing) lines.push(u.note);
+    if (error) lines.push(`failures check failed: ${error}`);
   } catch (error) {
     // Нет systemctl (macOS) — таймеров нет, это не сбой проверки.
     if (!(error instanceof SystemctlMissing))
