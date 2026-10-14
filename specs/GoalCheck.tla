@@ -3,6 +3,16 @@
 \* HelperRun supplies bounded termination; HelperOutcome supplies Tell fairness.
 \* Row ids are used once. Allocation/edit bounds restrict finite input prefixes.
 \* bornEdit, claimed, actual and audit are independent observations, not CAS keys.
+\* Environment assumption (ADR-0026): Watch/Brief/Insight/Reminder/Signal/Alert
+\* follow the goal skill. A service request uses the owner's action authority
+\* and is represented by WatchNudge/Owner* only when the skill permits it,
+\* with every existing action guard preserved. Watch uses WatchNudge on an
+\* active goal with check=0; Brief reads and other service turns preserve Goals
+\* through stuttering steps. Owner* mutations require the owner's instruction
+\* or tap. Caller role and skill compliance are assumptions of this boundary;
+\* OnlyOwnerActs proves the resulting transitions under these assumptions.
+\* Verdict's claimed guard assumes the ordinary tick creates its session after
+\* Claim. Claim's ownerPending=0 guard remains a requirement on the code.
 EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS ActiveGoals, RowIds, MaxAlloc, MaxEdits, MaxOpen, MaxRows,
           Mode, Mutant, OpportunityFair, TrackSafety
