@@ -4,7 +4,7 @@ CONSTANTS Case, Mutant, Helpers
 VARIABLE s
 vars == <<s>>
 Empty == [status |-> "absent", run |-> FALSE, owner |-> 0, fired |-> 0,
-  known |-> FALSE, clientId |-> FALSE, recordFailed |-> FALSE, client |-> FALSE, active |-> FALSE, cancel |-> FALSE,
+  known |-> FALSE, clientId |-> FALSE, recordFailed |-> FALSE, client |-> FALSE, active |-> FALSE, inbox |-> FALSE, reset |-> FALSE, cancel |-> FALSE,
   stop |-> "none", outcome |-> "none", partial |-> 0, saved |-> 0,
   steps |-> 0, previous |-> 0, work |-> 0, workProof |-> TRUE,
   ceilingPending |-> FALSE, ceilingLost |-> FALSE, finishedByTick |-> FALSE,
@@ -32,7 +32,7 @@ Claim(h) ==
 Create(h) ==
   /\ s.rows[h].run /\ s.rows[h].client /\ ~s.rows[h].active /\ ~s.rows[h].known
   /\ s.rows[h].stop = "none" /\ s.now = 0
-  /\ s' = [s EXCEPT !.rows[h].active = TRUE, !.rows[h].clientId = TRUE]
+  /\ s' = [s EXCEPT !.rows[h].active = TRUE, !.rows[h].inbox = TRUE, !.rows[h].clientId = TRUE]
 RecordSession(h) ==
   /\ s.rows[h].run /\ s.rows[h].client /\ s.rows[h].active /\ ~s.rows[h].known
   /\ s' = [s EXCEPT !.rows[h].known = TRUE]
@@ -88,10 +88,16 @@ RunnerTimeout(h) ==
 Eligible(h,tick) ==
   IF tick THEN s.rows[h].owner # s.owner \/ ~s.rows[h].client \/ s.now >= 3
   ELSE s.rows[h].client /\ (s.rows[h].known \/ ~s.rows[h].active)
+\* Reset succeeds only once the turn ends; failures/timeouts leave the inbox alive.
+Reset(h) ==
+  /\ s.rows[h].run /\ s.rows[h].known /\ s.rows[h].inbox
+  /\ Eligible(h,TRUE) /\ s.rows[h].cancel /\ ~s.rows[h].active
+  /\ s' = [s EXCEPT !.rows[h].inbox = FALSE, !.rows[h].reset = TRUE]
 CanFinish(h,tick) ==
   /\ s.rows[h].run /\ Eligible(h,tick)
-  /\ (~s.rows[h].active) \/ (tick /\ ~s.rows[h].known /\ ~s.rows[h].client)
-     \/ Mutant = "early-free"
+  /\ (IF tick THEN s.rows[h].reset \/ (~s.rows[h].known /\ ~s.rows[h].client)
+      ELSE ~s.rows[h].active) \/ Mutant = "early-free"
+     \/ (tick /\ Mutant = "accepted-finish" /\ s.rows[h].cancel)
 Result(h,tick) ==
   IF s.rows[h].stop = "closed" THEN "stopped"
   ELSE IF s.rows[h].stop # "none" THEN s.rows[h].stop
@@ -109,7 +115,8 @@ Finish(h,tick) ==
        !.rows[h].finishedByTick = tick,
        !.rows[h].ceilingLost = ~tick /\ Result(h,tick) = "done" /\ s.rows[h].work > 3,
        !.rows[h].finishedAt = s.now,
-       !.rows[h].endedProof = ~s.rows[h].active \/ (~s.rows[h].known /\ ~s.rows[h].client)]
+       !.rows[h].endedProof = (IF tick /\ s.rows[h].known THEN s.rows[h].reset
+          ELSE ~s.rows[h].active \/ (~s.rows[h].known /\ ~s.rows[h].client))]
 StaleFinish(h) ==
   /\ Mutant = "stale-cas" /\ s.rows[h].run
   /\ s' = [s EXCEPT !.rows[h].run = FALSE, !.rows[h].outcome = "done",
@@ -155,7 +162,7 @@ Lifecycle(h) == Claim(h) \/ Create(h) \/ RecordSession(h) \/ RecordFailure(h) \/
   \/ (\E why \in {"closed","ceiling","deadline"}: Stop(h,why)) \/ OverwriteStop(h)
   \/ (\E input \in 0..(IF Case = "effects" THEN 2 ELSE 3), output \in 0..1 : Usage(h,input,output))
   \/ CeilingStop(h)
-  \/ Question(h) \/ Cancel(h) \/ End(h) \/ ClientExit(h) \/ RunnerTimeout(h)
+  \/ Question(h) \/ Cancel(h) \/ End(h) \/ Reset(h) \/ ClientExit(h) \/ RunnerTimeout(h)
   \/ Finish(h,TRUE) \/ Finish(h,FALSE) \/ StaleFinish(h) \/ StartFailed(h)
   \/ Close(h) \/ ReadClosed(h) \/ Sweep(h)
 Next == (\E h \in Helpers :
@@ -164,7 +171,7 @@ Next == (\E h \in Helpers :
   \/ (Case # "auth" /\ (Clock \/ Restart)) \/ (\E h \in Helpers : NormalWaiting(h))
 Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ WF_vars(Clock) /\ \A h \in Helpers :
-  WF_vars(Cancel(h)) /\ WF_vars(End(h)) /\ WF_vars(RunnerTimeout(h)) /\ WF_vars(Finish(h,TRUE))
+  WF_vars(Cancel(h)) /\ WF_vars(End(h)) /\ WF_vars(Reset(h)) /\ WF_vars(RunnerTimeout(h)) /\ WF_vars(Finish(h,TRUE))
   /\ WF_vars(CeilingStop(h))
 TypeOK == /\ s.now \in 0..3 /\ s.owner \in {1,2}
   /\ \A h \in Helpers : s.rows[h].status \in {"absent","pending","finished","closed"}

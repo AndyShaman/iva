@@ -1,4 +1,4 @@
-import { Client, type CancelSessionResult } from "eve/client";
+import { Client, type CancelSessionResult, type ResetResult } from "eve/client";
 import { OWNER_STARTED_AT, runScheduledJob } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 import { traceHelper } from "./trace.ts";
@@ -7,26 +7,31 @@ type TickOptions = {
   nowMs?: number;
   start?: typeof runScheduledJob;
   cancel?: (id: string) => Promise<CancelSessionResult>;
+  reset?: (id: string) => Promise<ResetResult>;
   completed?: { id: string; firedAt: number };
   log?: (...args: unknown[]) => void;
 };
 export async function runHelperTick(options: TickOptions = {}): Promise<void> {
   const now = options.nowMs ?? Date.now(),
     log = options.log ?? console.error;
+  const session = (id: string) =>
+    new Client({
+      host:
+        process.env.ASSISTANT_HOST ??
+        `http://127.0.0.1:${process.env.IVA_PORT ?? "8723"}`,
+      auth: { bearer: process.env.ASSISTANT_BEARER ?? "" },
+    }).sessions.attach(id);
   const cancel =
     options.cancel ??
     ((id: string) =>
-      new Client({
-        host:
-          process.env.ASSISTANT_HOST ??
-          `http://127.0.0.1:${process.env.IVA_PORT ?? "8723"}`,
-        auth: { bearer: process.env.ASSISTANT_BEARER ?? "" },
-      }).sessions
-        .attach(id)
-        .cancel({
-          tasks: true,
-          signal: AbortSignal.timeout(s.HELPER_CHECK_MS),
-        }));
+      session(id).cancel({
+        tasks: true,
+        signal: AbortSignal.timeout(s.HELPER_CHECK_MS),
+      }));
+  const reset =
+    options.reset ??
+    ((id: string) =>
+      session(id).reset({ signal: AbortSignal.timeout(s.HELPER_CHECK_MS) }));
   try {
     const rows = (await s.readHelpers()).rows.sort(
       (a, b) => Number(!a.run) - Number(!b.run) || a.createdAt - b.createdAt,
@@ -48,8 +53,8 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
             now >= run.deadlineAtMs + s.HELPER_GRACE_MS
           ) {
             if (run.sessionId) {
-              if ((await cancel(run.sessionId)).status !== "no_active_turn")
-                continue;
+              await cancel(run.sessionId);
+              await reset(run.sessionId);
             } else if (!exited && current) continue;
             const finished = await s.finalizeHelper(
               row.id,

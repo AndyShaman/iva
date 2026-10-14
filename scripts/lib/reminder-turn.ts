@@ -683,7 +683,7 @@ async function runHelperClient(
     } catch (error) {
       failure ??= String(error);
       next = null;
-      pending = new Promise(() => {});
+      pending = Promise.resolve({ done: true, value: undefined });
     } finally {
       clearTimeout(timer);
     }
@@ -694,23 +694,17 @@ async function runHelperClient(
       stopping ||= !!failure || deps.signal?.aborted === true;
       if (stopping) {
         try {
-          const result = await answeredInTime(
+          await answeredInTime(
             session.cancel({ tasks: true }),
             "helper cancel",
           );
-          ended =
-            (result as { status?: string } | null)?.status === "no_active_turn";
         } catch (error) {
           log("helper cancel failed:", error);
         }
       }
       if (next === null) continue;
     }
-    if (next.done) {
-      if (!stopping) break;
-      pending = new Promise(() => {});
-      continue;
-    }
+    if (next.done) break;
     lastEvent = Date.now();
     const event = next.value,
       data = (event.data ?? {}) as Record<string, unknown>;

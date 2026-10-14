@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers v6.4: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
+# Helpers v6.5: оставшиеся контракты и свидетели принятых последствий. BFS, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
 cd "$(dirname "$0")" || exit 2
@@ -80,6 +80,8 @@ check() {
     [ -n "$got" ] || return 2
   fi
 }
+check HelperRun-v65-reset none || exit 2
+check HelperRun-v65-accepted-finish SlotFreedAfterEnd || exit 2
 check HelperRun-v64-auth none || exit 2
 check HelperRun-v64-capacity none || exit 2
 check HelperRun-v64-run none || exit 2

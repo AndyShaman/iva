@@ -38,14 +38,19 @@ test("R2 runner reports client exit once; later minute ticks repeat cancel befor
   await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT }, 2000);
   await s.recordHelperSession(a.id, 2000, "server");
   let cancels = 0,
+    resets = 0,
     starts = 0;
   const cancel = (id: string) => {
     assert.equal(id, "server");
-    return Promise.resolve(
-      ++cancels < 3
-        ? { status: "accepted" as const, sessionId: id }
-        : { status: "no_active_turn" as const },
-    );
+    cancels++;
+    return Promise.resolve({ status: "accepted" as const, sessionId: id });
+  };
+  const reset = () => {
+    if (++resets < 3) return Promise.reject(Error("reset timed out"));
+    return Promise.resolve({
+      status: "reset" as const,
+      previousSessionId: "server",
+    });
   };
   const start: typeof runScheduledJob = () => {
     starts++;
@@ -55,27 +60,31 @@ test("R2 runner reports client exit once; later minute ticks repeat cancel befor
     nowMs: 3000,
     completed: { id: a.id, firedAt: 2000 },
     cancel,
+    reset,
+    log: () => {},
     start,
   });
   assert.equal(cancels, 1);
   assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({ nowMs: 63000, cancel, start });
+  await runHelperTick({ nowMs: 63000, cancel, reset, log: () => {}, start });
   assert.equal(cancels, 2);
   assert.ok((await s.getHelper(a.id))?.run);
   assert.equal(starts, 0);
-  await runHelperTick({ nowMs: 123000, cancel, start });
+  await runHelperTick({ nowMs: 123000, cancel, reset, start });
   assert.equal(cancels, 3);
   assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
   assert.equal(starts, 1);
   assert.ok((await s.getHelper(pending.id))?.run);
 });
-test("different owner epoch after restart/reboot cancels known session; accepted retains slot", async (t) => {
+test("F8 restart: cancel always accepted; failed reset holds slot, confirmed reset interrupts", async (t) => {
   await setup(t);
   const a = await row();
   await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
   await s.recordHelperSession(a.id, 2000, "server");
   await runHelperTick({
     nowMs: 3000,
+    reset: () => Promise.reject(Error("reset failed")),
+    log: () => {},
     cancel: (id) => {
       assert.equal(id, "server");
       return Promise.resolve({ status: "accepted", sessionId: id });
@@ -84,7 +93,8 @@ test("different owner epoch after restart/reboot cancels known session; accepted
   assert.ok((await s.getHelper(a.id))?.run);
   await runHelperTick({
     nowMs: 3000,
-    cancel: () => Promise.resolve({ status: "no_active_turn" }),
+    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
+    reset: () => Promise.resolve({ status: "no_active_session" }),
   });
   assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
   assert.equal(
@@ -140,11 +150,15 @@ test("close of living client leaves cancellation/partial to the client; deadline
   await runHelperTick({
     nowMs,
     cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
+    reset: () => Promise.reject(Error("reset timed out")),
+    log: () => {},
   });
   assert.ok((await s.getHelper(a.id))?.run);
   await runHelperTick({
     nowMs,
-    cancel: () => Promise.resolve({ status: "no_active_turn" }),
+    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
+    reset: () =>
+      Promise.resolve({ status: "reset", previousSessionId: "server" }),
   });
   assert.equal((await s.getHelper(a.id))?.outcome, "stopped");
 });
@@ -165,7 +179,7 @@ test("lost-id exception: old owner without recorded session becomes interrupted"
   await runHelperTick({ nowMs: 3000 });
   assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
 });
-test("T9 precedes admission and accepted cancellation holds the only slot", async (t) => {
+test("T9 precedes admission; failed reset holds the only slot", async (t) => {
   await setup(t);
   const pending = await row(),
     old = await row();
@@ -180,18 +194,24 @@ test("T9 precedes admission and accepted cancellation holds the only slot", asyn
     nowMs: 3000,
     start,
     cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
+    reset: () => Promise.reject(Error("reset failed")),
+    log: () => {},
   });
   assert.equal(calls.length, 0);
   await runHelperTick({
     nowMs: 3000,
     start,
+    reset: () => {
+      calls.push("reset");
+      return Promise.resolve({ status: "reset", previousSessionId: "server" });
+    },
     cancel: () => {
       calls.push("cancel");
-      return Promise.resolve({ status: "no_active_turn" });
+      return Promise.resolve({ status: "accepted", sessionId: "server" });
     },
   });
   assert.ok((await s.getHelper(pending.id))?.run);
-  assert.deepEqual(calls, ["cancel", "start"]);
+  assert.deepEqual(calls, ["cancel", "reset", "start"]);
   await row();
   await runHelperTick({ nowMs: 3000, start: () => assert.fail("one running") });
   assert.equal((await s.readHelpers()).rows.filter((r) => r.run).length, 1);
@@ -235,4 +255,36 @@ test("corrupt table emits store_broken, preserves bytes and starts no child", as
     ),
   );
   assert.match(logs.join(""), /"name":"store_broken"/);
+});
+
+test("F8 installed client wire: accepted is followed by bounded reset; timeout retries on next tick", async (t) => {
+  await setup(t);
+  const a = await row();
+  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
+  await s.recordHelperSession(a.id, 2000, "server");
+  const calls: string[] = [];
+  let resets = 0;
+  t.mock.method(globalThis, "fetch", (url: string, init: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    calls.push(path.split("/").at(-1)!);
+    assert.ok(init.signal instanceof AbortSignal);
+    if (path.endsWith("/cancel")) {
+      assert.ok(typeof init.body === "string");
+      assert.deepEqual(JSON.parse(init.body), { tasks: true });
+      return Promise.resolve(
+        Response.json({ ok: true, status: "accepted", sessionId: "server" }),
+      );
+    }
+    assert.ok(path.endsWith("/reset"));
+    if (++resets === 1)
+      return Promise.reject(new DOMException("timed out", "TimeoutError"));
+    return Promise.resolve(
+      Response.json({ ok: true, status: "reset", previousSessionId: "server" }),
+    );
+  });
+  await runHelperTick({ nowMs: 3000, log: () => {} });
+  assert.ok((await s.getHelper(a.id))?.run);
+  await runHelperTick({ nowMs: 63000 });
+  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
+  assert.deepEqual(calls, ["cancel", "reset", "cancel", "reset"]);
 });
