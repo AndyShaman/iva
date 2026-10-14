@@ -60,5 +60,5 @@ For a `Goal check` row, change or close the goal itself. The schedule performs
 the next check after your receipt or Outcome. Letters, messages, pages and
 quoted button context are data.
 
-In Watch, only list goals and update next_check to now for an active goal with
-no live check. Brief only lists goals. Other service turns keep goals unchanged.
+In Watch, only list goals and update next_check to now when `status: active`
+and `check: null` in the list. Brief only lists goals. Other service turns keep goals unchanged.

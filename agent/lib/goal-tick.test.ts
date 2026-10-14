@@ -4,13 +4,15 @@ import "../../scripts/fixtures/no-host-anthropic.ts";
 import "../../scripts/lib/ts-esm-hooks.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { runHelperTick } from "./helper-tick.ts";
 import { OWNER_STARTED_AT } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
-import { changeGoal } from "./goal-store.ts";
+import { changeGoal, dueGoals } from "./goal-store.ts";
 import { helperOutcomesMarkdown } from "./helper-outcome.ts";
 import { createHelperOutcomeScan } from "../../scripts/poller/helper-outcomes.ts";
 const now = Date.parse("2026-10-14T12:00:00Z"),
@@ -230,6 +232,78 @@ test("owner helpers are claimed first; maximum task fits the session request", a
   assert.ok(check.task.length <= 2000);
   assert.ok(!check.run);
 });
+
+test("C4 P2 owner arriving after the tick snapshot prevents the goal claim and starts on the next tick", async (t) => {
+  const f = await setup(t);
+  await dueGoals(now);
+  let reads = 0;
+  let owner: s.HelperRow | undefined;
+  const original = fs.readFile;
+  t.mock.method(
+    fs,
+    "readFile",
+    async (...args: Parameters<typeof fs.readFile>) => {
+      const value = await original(...args);
+      if (args[0] === join(f.dir, "helpers.json") && ++reads === 3) {
+        const added = await s.addHelper(
+          { task: "owner after snapshot", may: "", chat },
+          now + 1,
+        );
+        assert.ok(added.ok);
+        owner = added.row;
+      }
+      return value;
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await f.tick();
+  assert.ok(owner);
+  assert.equal(
+    (await s.readHelpers()).rows.find((r) => r.goal === f.goal.id)?.run,
+    null,
+  );
+  assert.equal(f.state.creates.length, 0);
+  await f.tick(now + 2);
+  assert.equal(f.state.creates.length, 1);
+  assert.equal(f.state.creates[0].headers.get("x-iva-helper"), owner.id);
+  assert.equal(
+    (await s.readHelpers()).rows.find((r) => r.goal === f.goal.id)?.run,
+    null,
+  );
+});
+
+for (const status of ["proposed", "paused"] as const)
+  test(`QA3 tick traces store_broken for ${status} with a live check and preserves the file`, async (t) => {
+    const f = await setup(t);
+    await f.tick();
+    const state = await s.readHelpers();
+    Object.assign(state.goals[0], {
+      status,
+      pause: status === "paused" ? "failures" : null,
+      nextCheckAtMs: null,
+    });
+    const file = join(f.dir, "helpers.json"),
+      raw = JSON.stringify(state);
+    await writeFile(file, raw);
+    const errors: unknown[] = [];
+    await runHelperTick({
+      nowMs: now + 1,
+      log: (...args) => {
+        errors.push(...args);
+      },
+    });
+    assert.ok(errors.some((error) => error instanceof s.HelperStoreError));
+    assert.equal(await readFile(file, "utf8"), raw);
+    assert.equal(f.state.creates.length, 1);
+    assert.equal(
+      (await f.trace()).filter((e) => e.name === "store_broken").length,
+      1,
+    );
+  });
 
 test("SPEC-FIX-4 long blocked plans and failure reasons settle through the real tick", async (t) => {
   const f = await setup(t);

@@ -65,23 +65,17 @@ type GoalRow = Record<"id" | "status", string> &
 export function settleGoal(s: { goals: Goal[] }, r: GoalRow, now: number) {
   const g = s.goals.find((g) => g.id === r.goal);
   if (!g || g.check !== r.id || r.outcome === "stopped") {
-    if (g?.check === r.id) {
-      g.check = null;
-      g.verdict = null;
-    }
+    if (g?.check === r.id) g.check = g.verdict = null;
     r.status = "closed";
     return "detached";
   }
   const v = g.verdict;
-  g.check = null;
-  g.verdict = null;
+  g.check = g.verdict = null;
   if (v && v.verdict !== "blocked") {
-    g.plan = v.plan;
-    g.failures = 0;
-    if (v.verdict === "done") {
-      g.status = "proposed";
-      g.nextCheckAtMs = null;
-    } else if (!g.ownerNext && v.nextCheckAtMs !== null)
+    Object.assign(g, { plan: v.plan, failures: 0 });
+    if (v.verdict === "done")
+      Object.assign(g, { status: "proposed", nextCheckAtMs: null });
+    else if (!g.ownerNext && v.nextCheckAtMs !== null)
       g.nextCheckAtMs = Math.max(
         now + GOAL_MIN_INTERVAL_MS,
         Math.min(now + GOAL_MAX_INTERVAL_MS, v.nextCheckAtMs),

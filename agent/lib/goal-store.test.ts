@@ -124,6 +124,85 @@ async function check(at = now) {
   assert.ok(row);
   return { goal, row };
 }
+
+test("S1 owner, Watch and Brief can distinguish a live check from a quiet settled check", async (t) => {
+  await setup(t);
+  const { goal, row } = await check();
+  for (const reader of [chat, null])
+    assert.equal((await g.listGoals(reader, now))[0].check, row.id);
+  await s.claimHelper(row.id, { ownerStartedAt: now }, now);
+  await store.changeGoal(
+    { action: "verdict", id: goal.id, verdict: "quiet", plan: "mail" },
+    null,
+    row.id,
+    now,
+  );
+  await s.finalizeHelper(
+    row.id,
+    { kind: "running", firedAt: now },
+    finish,
+    now,
+  );
+  for (const reader of [chat, null])
+    assert.equal((await g.listGoals(reader, now))[0].check, null);
+});
+
+test("P1 delivered rows block the next due check until swept, preserving the saved row bound", async (t) => {
+  await setup(t);
+  await start();
+  await start();
+  await g.dueGoals(now);
+  for (const row of (await s.readHelpers()).rows) {
+    await s.claimHelper(row.id, { ownerStartedAt: now }, now);
+    await store.changeGoal(
+      { action: "verdict", id: row.goal!, verdict: "news", plan: "observed" },
+      null,
+      row.id,
+      now,
+    );
+    await s.finalizeHelper(
+      row.id,
+      { kind: "running", firedAt: now },
+      finish,
+      now,
+    );
+    await s.markHelperDelivered(row.id, chat, now + 1);
+  }
+  await g.dueGoals(now + 7200000);
+  const saved = await s.readHelpers();
+  assert.ok(
+    saved.rows.filter((r) => r.goal !== null && r.status !== "closed").length <=
+      saved.goals.length + 1,
+  );
+  assert.equal(saved.rows.filter((r) => r.status === "pending").length, 0);
+  assert.equal((await s.sweepHelpers(now + 7200000)).length, 2);
+  await g.dueGoals(now + 7200000);
+  assert.equal(
+    (await s.readHelpers()).rows.filter((r) => r.status === "pending").length,
+    2,
+  );
+});
+
+for (const status of ["proposed", "paused"] as const)
+  test(`QA3 ${status} with a live check is store corruption before settlement`, async (t) => {
+    const { file } = await setup(t);
+    const { row } = await check();
+    await s.claimHelper(row.id, { ownerStartedAt: now }, now);
+    const state = await s.readHelpers();
+    Object.assign(state.goals[0], {
+      status,
+      pause: status === "paused" ? "failures" : null,
+      nextCheckAtMs: null,
+    });
+    const raw = JSON.stringify(state);
+    await writeFile(file, raw);
+    await assert.rejects(s.readHelpers(), s.HelperStoreError);
+    await assert.rejects(
+      s.finalizeHelper(row.id, { kind: "running", firedAt: now }, finish, now),
+      s.HelperStoreError,
+    );
+    assert.equal(await readFile(file, "utf8"), raw);
+  });
 test("legacy defaults, corruption and cross-links preserve stored bytes", async (t) => {
   const { file } = await setup(t);
   await writeFile(file, JSON.stringify({ schemaVersion: 1, rows: [] }));

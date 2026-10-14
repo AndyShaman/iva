@@ -4,6 +4,7 @@ import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { wireTurn } from "./fixtures/helper-turn.test-fixture.ts";
 import {
   eventCases,
   eventProbe,
@@ -23,12 +24,15 @@ const base = JSON.parse(
 };
 assert.equal(base.base, "21f447ed");
 assert.equal(base.archive, "0.51.1-iva.1");
+test("L3 the extra goal tool is present on the wire", async () => {
+  assert.ok((await wireTurn()).wire.tools.some((tool) => tool.name === "goal"));
+});
 for (const mode of ["conversation", "task"] as const)
   for (const scenario of eventCases)
     test(`L3 unlimited ${mode}/${scenario} preserves base events and outcome`, async () => {
       const expected = base.cases[`${mode}/${scenario}`];
       assert.deepEqual(await eventProbe(mode, scenario), {
         ...expected,
-        tools: expected.tools.map((n) => (n ? n - 3 : 0)),
+        tools: expected.tools.map((n) => (n ? n - 2 : 0)),
       });
     });

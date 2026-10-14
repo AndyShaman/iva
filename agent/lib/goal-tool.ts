@@ -45,6 +45,8 @@ export async function goalExecute(
     const goal = await changeGoal(v, chat, helper, now);
     if (v.action !== "verdict")
       void (deps.tick ?? runHelperTick)({ nowMs: now }).catch(console.error);
+    if (v.action === "close")
+      return JSON.stringify({ id: goal.id, closed: true });
     const config = parseProactive(readSettings());
     return JSON.stringify({
       id: goal.id,

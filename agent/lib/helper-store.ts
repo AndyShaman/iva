@@ -85,10 +85,11 @@ const stateSchema = z
           (g.pause !== null) === (g.status === "paused") &&
           (g.verdict === null || g.check !== null) &&
           (g.check === null ||
-            s.rows.some(
-              (r) =>
-                r.id === g.check && r.goal === g.id && r.status === "pending",
-            )),
+            (g.status === "active" &&
+              s.rows.some(
+                (r) =>
+                  r.id === g.check && r.goal === g.id && r.status === "pending",
+              ))),
       ),
     "inconsistent goal links",
   );
@@ -260,6 +261,10 @@ export const claimHelper = (
       r.status !== "pending" ||
       r.run ||
       r.stop ||
+      (r.goal !== null &&
+        s.rows.some(
+          (row) => row.goal === null && row.status === "pending" && !row.run,
+        )) ||
       s.rows.filter((r) => r.run).length >= HELPER_MAX_RUNNING
     )
       return false;

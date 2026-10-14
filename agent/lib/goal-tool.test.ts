@@ -2,7 +2,8 @@
 import "../../scripts/fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import fc from "fast-check";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { goalExecute } from "./goal-tool.ts";
@@ -167,5 +168,148 @@ test("unauthenticated and group calls return text without changing data; stale b
       deps,
     ),
     /уже закрыт/,
+  );
+});
+
+test("QA2 close and resume ignore irrelevant invalid next_check", async (t) => {
+  await setup(t);
+  const deps = { now, tick: () => Promise.resolve() };
+  for (const next_check of ["завтра", "2026-10-13T12:00:00Z", "in 10d"]) {
+    const goal = await g.changeGoal(
+      { action: "start", text: "answer", may: "" },
+      { id: "42", threadId: null },
+      null,
+      now,
+    );
+    await s.mutateHelpers((state) => {
+      Object.assign(state.goals[0], {
+        status: "paused",
+        pause: "expired",
+        nextCheckAtMs: null,
+      });
+      return { save: true, value: null };
+    });
+    const resumed = JSON.parse(
+      await goalExecute(
+        { action: "resume", id: goal.id, next_check },
+        context("owner"),
+        deps,
+      ),
+    ) as Record<string, unknown>;
+    assert.equal(resumed.nextCheckAtMs, now);
+    assert.equal((await s.readHelpers()).goals[0].status, "active");
+    await goalExecute(
+      { action: "close", id: goal.id, next_check },
+      context("owner"),
+      deps,
+    );
+    assert.equal((await s.readHelpers()).goals.length, 0);
+  }
+});
+
+test("QA5 verdict beyond seven days is accepted and clamped on settlement", async (t) => {
+  await setup(t);
+  const goal = await g.changeGoal(
+    { action: "start", text: "answer", may: "" },
+    { id: "42", threadId: null },
+    null,
+    now,
+  );
+  await g.dueGoals(now);
+  const row = (await s.readHelpers()).rows[0];
+  await s.claimHelper(row.id, { ownerStartedAt: now }, now);
+  const receipt = JSON.parse(
+    await goalExecute(
+      {
+        action: "verdict",
+        id: goal.id,
+        verdict: "quiet",
+        plan: "observed",
+        next_check: "in 10d",
+      },
+      context("helper", row.id),
+      { now },
+    ),
+  ) as Record<string, unknown>;
+  assert.equal(receipt.id, goal.id);
+  assert.ok((await s.readHelpers()).goals[0].verdict);
+  await s.finalizeHelper(
+    row.id,
+    { kind: "running", firedAt: now },
+    {
+      outcome: "done",
+      summary: null,
+      reason: null,
+      model: "fixture",
+      steps: 1,
+      tokens: 1,
+    },
+    now + 1,
+  );
+  assert.equal(
+    (await s.readHelpers()).goals[0].nextCheckAtMs,
+    now + 1 + 604800000,
+  );
+});
+
+test("QA5 close receipt confirms closure without the removed goal's schedule", async (t) => {
+  await setup(t);
+  const deps = { now, tick: () => Promise.resolve() };
+  const goal = await g.changeGoal(
+    { action: "start", text: "answer", may: "", next_check: "in 3h" },
+    { id: "42", threadId: null },
+    null,
+    now,
+  );
+  const receipt = JSON.parse(
+    await goalExecute({ action: "close", id: goal.id }, context("owner"), deps),
+  ) as Record<string, unknown>;
+  assert.deepEqual(receipt, { id: goal.id, closed: true });
+  assert.equal((await s.readHelpers()).goals.length, 0);
+});
+
+test("QA5 generated verdict horizons over seven days remain valid tool inputs", async (t) => {
+  await setup(t);
+  const goal = await g.changeGoal(
+    { action: "start", text: "answer", may: "" },
+    { id: "42", threadId: null },
+    null,
+    now,
+  );
+  await g.dueGoals(now);
+  const row = (await s.readHelpers()).rows[0];
+  await s.claimHelper(row.id, { ownerStartedAt: now }, now);
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 169, max: 720 }), async (hours) => {
+      const receipt = JSON.parse(
+        await goalExecute(
+          {
+            action: "verdict",
+            id: goal.id,
+            verdict: "news",
+            plan: "observed",
+            next_check: `in ${hours}h`,
+          },
+          context("helper", row.id),
+          { now },
+        ),
+      ) as Record<string, unknown>;
+      assert.equal(receipt.id, goal.id);
+      assert.equal(
+        (await s.readHelpers()).goals[0].verdict?.nextCheckAtMs,
+        now + hours * 3600000,
+      );
+    }),
+    { seed: 20261014, numRuns: 30 },
+  );
+});
+
+test("S3 map names the standing CORE goals", async () => {
+  assert.match(
+    await readFile(
+      new URL("../instructions/10-map.md", import.meta.url),
+      "utf8",
+    ),
+    /≤3 active CORE goals/,
   );
 });

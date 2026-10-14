@@ -35,7 +35,7 @@ job is the judgement: is it worth the owner's attention, and what is the next st
 
 ## In a Watch turn
 
-If a new letter or message may answer an open goal, call `goal list`, then `goal update` with `next_check: "now"`; its check owns the account to the owner.
+If a new letter or message may answer an open goal, call `goal list`. Only for `status: active` and `check: null`, call `goal update` with `next_check: "now"`; its check owns the account to the owner.
 Watch tells the owner about new items under an agreed responsibility; goal checks by schedule and acts within `may` until the owner's closure.
 
 The prompt lists the items: a key (`tg:<chat_id>` — a Telegram chat,

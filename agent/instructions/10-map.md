@@ -29,7 +29,7 @@ and that is what makes the card findable by any of them.
 
 - wait for someone's answer and tell me → `goal`.
 
-- `CORE.md` — who the user is, standing preferences, ≤3 active goals,
+- `CORE.md` — who the user is, standing preferences, ≤3 active CORE goals,
   pointers. ALREADY in context (the "CORE" block) — do not re-read it.
 - `MOC.md` — an optional owner-maintained topic index. The night does not
   regenerate it; use `memory_search` for recall.
