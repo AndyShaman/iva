@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { telegramChannel, type TelegramHandle } from "eve/channels/telegram";
 import {
   flushSettledTelegramQuestions,
@@ -7,6 +8,112 @@ import {
   settleTelegramQuestions,
   type QuestionState,
 } from "./telegram-question.ts";
+
+type QuestionApiCall = { method: string; body: Record<string, unknown> };
+
+async function questionApi(
+  respond: (
+    call: QuestionApiCall,
+  ) => Promise<{ status: number; body: unknown }>,
+) {
+  const calls: QuestionApiCall[] = [];
+  const server = createServer((request, response) => {
+    void (async () => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of request) {
+        assert.ok(chunk instanceof Uint8Array);
+        chunks.push(chunk);
+      }
+      const call = {
+        method: request.url!.slice(1),
+        body: JSON.parse(Buffer.concat(chunks).toString()) as Record<
+          string,
+          unknown
+        >,
+      };
+      calls.push(call);
+      const result = await respond(call);
+      response.writeHead(result.status, { "content-type": "application/json" });
+      response.end(JSON.stringify(result.body));
+    })();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const tg: Pick<TelegramHandle, "chatId" | "request" | "post"> = {
+    chatId: "7",
+    post: () => {
+      throw new Error("unexpected native question");
+    },
+    async request(method, body) {
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/${method}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await response.json(),
+      };
+    },
+  };
+  return {
+    tg,
+    calls,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+void test("slow initial rich send keeps the delivered question reference on the Bot API wire", async (t) => {
+  const api = await questionApi(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    return { status: 200, body: { ok: true, result: { message_id: 9 } } };
+  });
+  t.after(api.close);
+  const state: QuestionState = {
+    chatId: "7",
+    chatType: "private",
+    conversationId: null,
+    messageThreadId: null,
+  };
+  await postTelegramQuestion(
+    {
+      requestId: "slow",
+      kind: "question",
+      prompt: "Confirm?",
+      allowFreeform: true,
+      action: {
+        callId: "c",
+        input: {},
+        kind: "tool-call",
+        toolName: "ask_question",
+      },
+      options: [{ id: "yes", label: "Yes" }],
+    },
+    state,
+    api.tg,
+    { rich: true },
+  );
+  assert.equal(state.questionPreviews?.slow.messageId, 9);
+  assert.equal(state.questionPreviews?.slow.rich, true);
+  assert.equal(state.pendingFreeformReplies?.["9"], "slow");
+  assert.deepEqual(
+    api.calls.map(({ method }) => method),
+    ["sendRichMessage"],
+  );
+  assert.equal(api.calls[0].body.chat_id, "7");
+  assert.match(
+    (api.calls[0].body.rich_message as { markdown: string }).markdown,
+    /tg-button/u,
+  );
+});
 
 void test("authoritative resolution removes buttons; edit failure never loses accepted answer", async () => {
   const calls: Array<{ method: string; body: unknown }> = [];

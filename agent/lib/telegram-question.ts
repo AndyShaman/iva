@@ -47,12 +47,10 @@ function messageUnavailable(response: {
   );
 }
 
-function transport(
-  tg: Handle,
-  deadline = performance.now() + QUESTION_EDIT_TIMEOUT_MS,
-) {
+function transport(tg: Handle, deadline?: number) {
   return async (method: string, body: Record<string, unknown>) => {
-    const remaining = deadline - performance.now();
+    const remaining =
+      deadline === undefined ? Infinity : deadline - performance.now();
     if (remaining <= 0) throw new Error("preview edit timeout");
     let timer: ReturnType<typeof setTimeout> | undefined;
     let response: Awaited<ReturnType<TelegramHandle["request"]>>;
@@ -63,10 +61,11 @@ function transport(
           body as NonNullable<Parameters<TelegramHandle["request"]>[1]>,
         ),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("preview edit timeout")),
-            remaining,
-          );
+          if (deadline !== undefined)
+            timer = setTimeout(
+              () => reject(new Error("preview edit timeout")),
+              remaining,
+            );
         }),
       ]);
     } finally {
