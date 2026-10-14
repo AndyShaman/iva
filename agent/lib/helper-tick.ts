@@ -1,86 +1,143 @@
-import { Client, type CancelSessionResult, type ResetResult } from "eve/client";
-import { OWNER_STARTED_AT, runScheduledJob } from "./schedule-runner.ts";
+import { Client, ClientError } from "eve/client";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { OWNER_STARTED_AT } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 import { traceHelper } from "./trace.ts";
-const exitedClients = new Map<string, number>();
-type TickOptions = {
-  nowMs?: number;
-  start?: typeof runScheduledJob;
-  cancel?: (id: string) => Promise<CancelSessionResult>;
-  reset?: (id: string) => Promise<ResetResult>;
-  completed?: { id: string; firedAt: number };
-  log?: (...args: unknown[]) => void;
+import {
+  foldHelperSnapshot,
+  helperSummary,
+  isQuietReply,
+} from "./helper-snapshot.ts";
+import { writeFileAtomic } from "./fs-atomic.ts";
+import { ownerTimeZone } from "./reminder-time.ts";
+import { formatZoned } from "./zoned-time.ts";
+type Session = ReturnType<Client["sessions"]["attach"]>;
+const stopReasons = {
+  closed: "помощник закрыт",
+  ceiling: "предел работы помощника",
+  deadline: "истёк срок помощника",
 };
-export async function runHelperTick(options: TickOptions = {}): Promise<void> {
+export async function runHelperTick(
+  options: { nowMs?: number; log?: (...args: unknown[]) => void } = {},
+): Promise<void> {
   const now = options.nowMs ?? Date.now(),
     log = options.log ?? console.error;
-  const session = (id: string) =>
+  const client = (id: string) =>
     new Client({
       host:
         process.env.ASSISTANT_HOST ??
         `http://127.0.0.1:${process.env.IVA_PORT ?? "8723"}`,
       auth: { bearer: process.env.ASSISTANT_BEARER ?? "" },
-    }).sessions.attach(id);
-  const cancel =
-    options.cancel ??
-    ((id: string) =>
-      session(id).cancel({
-        tasks: true,
-        signal: AbortSignal.timeout(s.HELPER_CHECK_MS),
-      }));
-  const reset =
-    options.reset ??
-    ((id: string) =>
-      session(id).reset({ signal: AbortSignal.timeout(s.HELPER_CHECK_MS) }));
+      headers: { "x-iva-turn": "helper", "x-iva-helper": id },
+    });
+  const call = () => ({ signal: AbortSignal.timeout(s.HELPER_CHECK_MS) });
+  const cancel = (session: Session) =>
+    session.cancel({ tasks: true, ...call() });
+  const cleanup = (session: Session, cancelled = false) => {
+    if (!cancelled) void cancel(session).catch(log);
+    void session.reset(call()).catch(log);
+  };
+  const finish = async (
+    row: s.HelperRow,
+    state: ReturnType<typeof foldHelperSnapshot>,
+    outcome = state.outcome,
+    reason = state.reason,
+  ) => {
+    const { text, model, steps, tokens } = state;
+    const data = { model, steps, tokens };
+    const usable = !!text?.trim() && !isQuietReply(text);
+    const finished = await s.finalizeHelper(
+      row.id,
+      { kind: "running", firedAt: row.run!.firedAt },
+      {
+        ...data,
+        outcome,
+        summary: usable ? helperSummary(text!) : null,
+        reason: row.stop ? stopReasons[row.stop] : reason,
+      },
+      now,
+    );
+    if (!finished) return;
+    if (usable)
+      try {
+        await mkdir(dirname(s.helperResultPath(row.id)), {
+          recursive: true,
+          mode: 0o700,
+        });
+        await writeFileAtomic(s.helperResultPath(row.id), text!, {
+          mode: 0o600,
+        });
+      } catch (error) {
+        log("helper result:", row.id, error);
+      }
+    const { outcome: result, reason: cause } = finished;
+    traceHelper("finished", row.id, {
+      session: row.run!.sessionId ?? undefined,
+      data: { outcome: result, reason: cause, steps, tokens },
+    });
+  };
   try {
     const rows = (await s.readHelpers()).rows.sort(
       (a, b) => Number(!a.run) - Number(!b.run) || a.createdAt - b.createdAt,
     );
-    for (const row of rows)
+    for (let row of rows)
       try {
-        const run = row.run;
-        if (!run) exitedClients.delete(row.id);
-        if (run) {
-          const current = run.ownerStartedAt === OWNER_STARTED_AT;
-          const exited =
-            (options.completed?.id === row.id &&
-              options.completed.firedAt === run.firedAt) ||
-            exitedClients.get(row.id) === run.firedAt;
-          if (exited) exitedClients.set(row.id, run.firedAt);
+        if (row.run) {
+          const run = row.run,
+            old = run.ownerStartedAt !== OWNER_STARTED_AT;
+          const session = run.sessionId
+            ? client(row.id).sessions.attach(run.sessionId)
+            : null;
+          let state = foldHelperSnapshot([]),
+            readable = false,
+            delivered = false;
+          if (session)
+            try {
+              state = foldHelperSnapshot(
+                (await session.snapshot(call())).events,
+              );
+              readable = true;
+            } catch (error) {
+              log("helper snapshot:", row.id, error);
+            }
+          if (!state.ended && old) {
+            if (!session) delivered = true;
+            else
+              try {
+                const result = await cancel(session);
+                delivered =
+                  result.status === "accepted" ||
+                  result.status === "no_active_turn";
+              } catch (error) {
+                log("helper cancel:", row.id, error);
+              }
+          }
           if (
-            !current ||
-            exited ||
+            state.ended ||
+            delivered ||
             now >= run.deadlineAtMs + s.HELPER_GRACE_MS
           ) {
-            if (run.sessionId) {
-              await cancel(run.sessionId);
-              await reset(run.sessionId);
-            } else if (!exited && current) continue;
-            const finished = await s.finalizeHelper(
-              row.id,
-              { kind: "running", firedAt: run.firedAt },
-              {
-                outcome: now >= run.deadlineAtMs ? "deadline" : "interrupted",
-                summary: row.summary,
-                reason: "помощник остановлен после прерывания",
-                model: row.model,
-                steps: row.steps,
-                tokens: row.tokens,
-              },
-              now,
-            );
-            if (finished) {
-              exitedClients.delete(row.id);
-              traceHelper("finished", row.id, {
-                session: run.sessionId ?? undefined,
-                data: {
-                  outcome: finished.outcome,
-                  reason: finished.reason,
-                  steps: finished.steps,
-                  tokens: finished.tokens,
-                },
-              });
+            if (!state.ended) {
+              state.outcome = delivered ? "interrupted" : "deadline";
+              state.reason = delivered
+                ? "помощник остановлен после прерывания"
+                : stopReasons.deadline;
             }
+            await finish(row, state);
+            if (session) cleanup(session, delivered);
+            continue;
+          }
+          if (!old && readable) {
+            const stop =
+              state.tokens > s.HELPER_CEILING_TOKENS
+                ? "ceiling"
+                : now >= run.deadlineAtMs
+                  ? "deadline"
+                  : null;
+            if (stop)
+              row = (await s.stopHelper(row.id, run.firedAt, stop)) ?? row;
+            if (row.stop && session) await cancel(session);
           }
         } else if (row.status === "pending") {
           const claimed = await s.claimHelper(
@@ -89,44 +146,38 @@ export async function runHelperTick(options: TickOptions = {}): Promise<void> {
             now,
           );
           if (!claimed?.run) continue;
-          void (options.start ?? runScheduledJob)({
-            name: `helper-${row.id}`,
-            argv: ["scripts/helpers/run.ts", row.id],
-            root: process.cwd(),
-            nodeBin: process.execPath,
-            timeoutMs: s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS,
-            log,
-          })
-            .then(async (result) => {
-              if (result.error) {
-                const finished = await s.finalizeHelper(
-                  row.id,
-                  { kind: "running", firedAt: now },
-                  {
-                    outcome: "failed",
-                    summary: null,
-                    reason: "помощник не смог начать",
-                    model: null,
-                    steps: 0,
-                    tokens: 0,
-                  },
-                  Date.now(),
-                );
-                if (finished)
-                  traceHelper("finished", row.id, {
-                    data: {
-                      outcome: finished.outcome,
-                      reason: finished.reason,
-                    },
-                  });
-              } else
-                await runHelperTick({
-                  ...options,
-                  nowMs: undefined,
-                  completed: { id: row.id, firedAt: now },
-                });
-            })
-            .catch(log);
+          let session;
+          try {
+            ({ session } = await client(row.id).sessions.create({
+              ...call(),
+              message: `Helper ${row.id}. Now: ${formatZoned(now, ownerTimeZone())}. Allowed: ${row.may || "nothing, look and draft only"}. Task: ${row.task}`,
+            }));
+          } catch (error) {
+            log("helper create:", row.id, error);
+            if (error instanceof ClientError && error.body)
+              await finish(
+                claimed,
+                foldHelperSnapshot([]),
+                "failed",
+                "помощник не смог начать",
+              );
+            continue;
+          }
+          try {
+            if (
+              await s.recordHelperSession(row.id, now, session.state.sessionId)
+            )
+              continue;
+          } catch (error) {
+            log("helper session:", row.id, error);
+          }
+          cleanup(session);
+          await finish(
+            claimed,
+            foldHelperSnapshot([]),
+            "failed",
+            "ход не записан",
+          );
         }
       } catch (error) {
         if (error instanceof s.HelperStoreError) throw error;

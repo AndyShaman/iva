@@ -93,6 +93,9 @@ export async function helperExecute(
     if (v.action === "close") {
       const r = await s.closeHelper(v.id ?? "", chat, now);
       if (!r.ok) return r.text;
+      void (deps.tick ?? runHelperTick)().catch(console.error);
+      if (r.branch === "running" && r.row.stop !== "closed")
+        return "Уже останавливается, исход придёт сам.";
       return r.branch === "pending"
         ? "Задание закрыто до запуска. Исход доступен через outcome."
         : r.branch === "running"

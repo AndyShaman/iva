@@ -319,10 +319,10 @@ PATH=/opt/homebrew/opt/openjdk@25/bin:$PATH JAVA_TOOL_OPTIONS=-Xmx3g sh specs/go
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `Start`                                                    | `goal start` → `goalActor(ctx)` → стор `helpers.json`, G1                        |
 | `NormalizeDay`, `Due`                                      | `runHelperTick()`, нормализация дня и атомарный G2                               |
-| `Claim`, `RecordSession`                                   | прежние T2/T3 помощников, `session.started`, `scripts/helpers/run.ts`            |
+| `Claim`, `RecordSession`                                   | T2/T3 помощников: тик создаёт сессию и записывает id                             |
 | `Report(v)`                                                | `goal report`, текущая сессия проверки, CAS G3                                   |
 | `StopByDeadline`, `StopByCeiling`                          | процесс хода проверки, T5; `GOAL_CHECK_DEADLINE_MS`                              |
-| `ProcessDies`, `ServerRestart`, `ConfirmEnd`               | конец хода/`no_active_turn`, T9/T7 помощников                                    |
+| `ProcessDies`, `ServerRestart`, `ConfirmEnd`               | durable-снимок/доставка отмены после рестарта/потолок, тик помощников            |
 | `Settle`                                                   | `finalize` строки и G5 одной записью, правила 0–4                                |
 | `PauseByLimit`, `CreateNotice`                             | `runHelperTick()`, G2p/G2n; `owes` и конструктор извещения                       |
 | `OwnerEdit`, `OwnerResume`, `OwnerNextCheck`, `OwnerClose` | `goalActor(ctx)`, G6/G6r/G6t/G8; ждущая строка финализируется в записи владельца |

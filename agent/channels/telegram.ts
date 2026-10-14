@@ -1,6 +1,7 @@
 import {
   noteHelperReply,
   finishHelperOutcomes,
+  discardHelperOutcomes,
 } from "../lib/helper-outcome.ts";
 import { randomUUID } from "node:crypto";
 import {
@@ -440,6 +441,8 @@ const telegram = telegramChannel({
     // Отмена во время пересказа между ходами (/stop) — не отмена хода: чат просто свободен,
     // отметки «ход отменён» следующему сообщению не оставляем.
     async "turn.cancelled"(_data, channel, ctx) {
+      if (!ctx?.session) return;
+      discardHelperOutcomes(ctx.session.id, _data.turnId);
       const tg = channel.telegram;
       const status = getChatStatus(chatKeyOf(tg.chatId, tg.messageThreadId));
       const compacting =
@@ -588,6 +591,8 @@ const telegram = telegramChannel({
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.
     async "turn.failed"(data, channel, ctx) {
+      if (!ctx?.session) return;
+      discardHelperOutcomes(ctx.session.id, data.turnId);
       dropIdleCompactionTurn(ctx.session.id);
       try {
         await finishTelegramStatus(channel, ctx.session.id, "failed");
@@ -606,6 +611,7 @@ const telegram = telegramChannel({
     // Сессия умерла: её буфер входа не начнёт хода, и её знак очереди снимается здесь.
     // Знак, вставший за ходом другой сессии, ждёт своего хода.
     async "session.failed"(data, channel) {
+      discardHelperOutcomes(data.sessionId);
       const tg = channel.telegram;
       if (tg.chatId) {
         try {

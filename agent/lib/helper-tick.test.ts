@@ -1,290 +1,340 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns registration. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readdir, readFile } from "node:fs/promises";
+import fs, {
+  mkdtemp,
+  rm,
+  readFile,
+  writeFile,
+  readdir,
+} from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHelperTick } from "./helper-tick.ts";
+import { OWNER_STARTED_AT } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
-import { OWNER_STARTED_AT, runScheduledJob } from "./schedule-runner.ts";
 const chat = { id: "42", threadId: null };
+type Event = { type: string; data?: Record<string, unknown> };
 async function setup(t: test.TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), "iva-helper-tick-"));
-  const prev = process.env.ASSISTANT_DATA_DIR;
-  process.env.ASSISTANT_DATA_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "iva-helper-v7-")),
+    prev = { ...process.env };
+  Object.assign(process.env, {
+    ASSISTANT_DATA_DIR: dir,
+    ASSISTANT_HOST: "http://fixture.invalid",
+    ASSISTANT_BEARER: "fixture",
+    ASSISTANT_TIMEZONE: "UTC",
+  });
   t.after(async () => {
-    if (prev === undefined) delete process.env.ASSISTANT_DATA_DIR;
-    else process.env.ASSISTANT_DATA_DIR = prev;
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    for (const k of [
+      "ASSISTANT_DATA_DIR",
+      "ASSISTANT_HOST",
+      "ASSISTANT_BEARER",
+      "ASSISTANT_TIMEZONE",
+    ])
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
     await rm(dir, { recursive: true, force: true });
   });
-  return dir;
-}
-async function row() {
-  const r = await s.addHelper({ task: "task", may: "", chat }, 1000);
-  assert.ok(r.ok);
-  return r.row;
-}
-async function waitFor(fn: () => Promise<boolean>) {
-  for (let i = 0; i < 100; i++) {
-    if (await fn()) return;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  assert.fail("completion did not finish");
-}
-test("R2 runner reports client exit once; later minute ticks repeat cancel before freeing the slot", async (t) => {
-  await setup(t);
-  const a = await row(),
-    pending = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT }, 2000);
-  await s.recordHelperSession(a.id, 2000, "server");
-  let cancels = 0,
-    resets = 0,
-    starts = 0;
-  const cancel = (id: string) => {
-    assert.equal(id, "server");
-    cancels++;
-    return Promise.resolve({ status: "accepted" as const, sessionId: id });
+  const state = {
+    events: [] as Event[],
+    snapshot: "ok",
+    cancel: "accepted",
+    create: "ok",
+    onCreate: async () => {},
+    calls: [] as string[],
+    signals: [] as AbortSignal[],
+    requests: [] as RequestInit[],
   };
-  const reset = () => {
-    if (++resets < 3) return Promise.reject(Error("reset timed out"));
-    return Promise.resolve({
-      status: "reset" as const,
-      previousSessionId: "server",
-    });
-  };
-  const start: typeof runScheduledJob = () => {
-    starts++;
-    return new Promise(() => {});
-  };
-  await runHelperTick({
-    nowMs: 3000,
-    completed: { id: a.id, firedAt: 2000 },
-    cancel,
-    reset,
-    log: () => {},
-    start,
-  });
-  assert.equal(cancels, 1);
-  assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({ nowMs: 63000, cancel, reset, log: () => {}, start });
-  assert.equal(cancels, 2);
-  assert.ok((await s.getHelper(a.id))?.run);
-  assert.equal(starts, 0);
-  await runHelperTick({ nowMs: 123000, cancel, reset, start });
-  assert.equal(cancels, 3);
-  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
-  assert.equal(starts, 1);
-  assert.ok((await s.getHelper(pending.id))?.run);
-});
-test("F8 restart: cancel always accepted; failed reset holds slot, confirmed reset interrupts", async (t) => {
-  await setup(t);
-  const a = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
-  await s.recordHelperSession(a.id, 2000, "server");
-  await runHelperTick({
-    nowMs: 3000,
-    reset: () => Promise.reject(Error("reset failed")),
-    log: () => {},
-    cancel: (id) => {
-      assert.equal(id, "server");
-      return Promise.resolve({ status: "accepted", sessionId: id });
-    },
-  });
-  assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({
-    nowMs: 3000,
-    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
-    reset: () => Promise.resolve({ status: "no_active_session" }),
-  });
-  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
-  assert.equal(
-    await s.finalizeHelper(
-      a.id,
-      { kind: "running", firedAt: 2000 },
-      {
-        outcome: "done",
-        summary: "late",
-        reason: null,
-        model: null,
-        steps: 0,
-        tokens: 0,
-      },
-      3001,
-    ),
-    null,
-  );
-});
-test("existing runner start failure finalizes failed once, concurrent ticks claim once", async (t) => {
-  await setup(t);
-  const a = await row();
-  let starts = 0;
-  const start: typeof runScheduledJob = (o) => {
-    starts++;
-    assert.equal(o.timeoutMs, s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
-    return Promise.resolve({
-      skipped: false,
-      ok: false,
-      error: Error("spawn failed"),
-    });
-  };
-  await Promise.all([
-    runHelperTick({ nowMs: 9000, start }),
-    runHelperTick({ nowMs: 9000, start }),
-  ]);
-  await waitFor(async () => (await s.getHelper(a.id))?.outcome === "failed");
-  assert.equal(starts, 1);
-  assert.equal((await s.getHelper(a.id))?.reason, "помощник не смог начать");
-});
-test("close of living client leaves cancellation/partial to the client; deadline plus grace reaps confirmed end", async (t) => {
-  await setup(t);
-  const a = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT }, 2000);
-  await s.recordHelperSession(a.id, 2000, "server");
-  await s.closeHelper(a.id, chat, 2100);
-  await runHelperTick({
-    nowMs: 2200,
-    cancel: () => assert.fail("stop alone must not cancel"),
-  });
-  assert.ok((await s.getHelper(a.id))?.run);
-  const nowMs = 2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS;
-  await runHelperTick({
-    nowMs,
-    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
-    reset: () => Promise.reject(Error("reset timed out")),
-    log: () => {},
-  });
-  assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({
-    nowMs,
-    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
-    reset: () =>
-      Promise.resolve({ status: "reset", previousSessionId: "server" }),
-  });
-  assert.equal((await s.getHelper(a.id))?.outcome, "stopped");
-});
-test("deadline becomes deadline, and a same-owner unknown id holds slot until client completion", async (t) => {
-  await setup(t);
-  const a = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT }, 2000);
-  const nowMs = 2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS;
-  await runHelperTick({ nowMs });
-  assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({ nowMs, completed: { id: a.id, firedAt: 2000 } });
-  assert.equal((await s.getHelper(a.id))?.outcome, "deadline");
-});
-test("lost-id exception: old owner without recorded session becomes interrupted", async (t) => {
-  await setup(t);
-  const a = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
-  await runHelperTick({ nowMs: 3000 });
-  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
-});
-test("T9 precedes admission; failed reset holds the only slot", async (t) => {
-  await setup(t);
-  const pending = await row(),
-    old = await row();
-  await s.claimHelper(old.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
-  await s.recordHelperSession(old.id, 2000, "server");
-  const calls: string[] = [];
-  const start: typeof runScheduledJob = () => {
-    calls.push("start");
-    return new Promise(() => {});
-  };
-  await runHelperTick({
-    nowMs: 3000,
-    start,
-    cancel: () => Promise.resolve({ status: "accepted", sessionId: "server" }),
-    reset: () => Promise.reject(Error("reset failed")),
-    log: () => {},
-  });
-  assert.equal(calls.length, 0);
-  await runHelperTick({
-    nowMs: 3000,
-    start,
-    reset: () => {
-      calls.push("reset");
-      return Promise.resolve({ status: "reset", previousSessionId: "server" });
-    },
-    cancel: () => {
-      calls.push("cancel");
-      return Promise.resolve({ status: "accepted", sessionId: "server" });
-    },
-  });
-  assert.ok((await s.getHelper(pending.id))?.run);
-  assert.deepEqual(calls, ["cancel", "reset", "start"]);
-  await row();
-  await runHelperTick({ nowMs: 3000, start: () => assert.fail("one running") });
-  assert.equal((await s.readHelpers()).rows.filter((r) => r.run).length, 1);
-});
-test("existing runner completion recovers lost id and emits the tick end", async (t) => {
-  const dir = await setup(t);
-  const a = await row();
-  await runHelperTick({
-    start: (o) =>
-      runScheduledJob({ ...o, argv: ["-e", "process.exit(0)"], log: () => {} }),
-  });
-  await waitFor(
-    async () => (await s.getHelper(a.id))?.outcome === "interrupted",
-  );
-  await waitFor(async () => {
-    const files = await readdir(join(dir, "trace")).catch(() => []);
-    const logs = await Promise.all(
-      files.map((f) => readFile(join(dir, "trace", f), "utf8")),
-    );
-    return logs.join("").includes('"name":"finished"');
-  });
-  const logs = await Promise.all(
-    (await readdir(join(dir, "trace"))).map((f) =>
-      readFile(join(dir, "trace", f), "utf8"),
-    ),
-  );
-  assert.match(logs.join(""), /"name":"finished"/);
-  assert.match(logs.join(""), /"source":"helper"/);
-});
-test("corrupt table emits store_broken, preserves bytes and starts no child", async (t) => {
-  const dir = await setup(t);
-  await writeFile(join(dir, "helpers.json"), "{");
-  await runHelperTick({
-    log: () => {},
-    start: () => assert.fail("corrupt table"),
-  });
-  assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), "{");
-  const logs = await Promise.all(
-    (await readdir(join(dir, "trace"))).map((f) =>
-      readFile(join(dir, "trace", f), "utf8"),
-    ),
-  );
-  assert.match(logs.join(""), /"name":"store_broken"/);
-});
-
-test("F8 installed client wire: accepted is followed by bounded reset; timeout retries on next tick", async (t) => {
-  await setup(t);
-  const a = await row();
-  await s.claimHelper(a.id, { ownerStartedAt: OWNER_STARTED_AT - 1 }, 2000);
-  await s.recordHelperSession(a.id, 2000, "server");
-  const calls: string[] = [];
-  let resets = 0;
-  t.mock.method(globalThis, "fetch", (url: string, init: RequestInit) => {
-    const path = new URL(String(url)).pathname;
-    calls.push(path.split("/").at(-1)!);
-    assert.ok(init.signal instanceof AbortSignal);
-    if (path.endsWith("/cancel")) {
-      assert.ok(typeof init.body === "string");
-      assert.deepEqual(JSON.parse(init.body), { tasks: true });
-      return Promise.resolve(
-        Response.json({ ok: true, status: "accepted", sessionId: "server" }),
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    const u = new URL(String(url)),
+      path = u.pathname.split("/").at(-1)!;
+    state.calls.push(path);
+    state.requests.push(init);
+    if (init.signal) state.signals.push(init.signal);
+    if (path === "session") {
+      if (state.create === "network") throw Error("network lost after send");
+      if (state.create === "error")
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      await state.onCreate();
+      return Response.json({ sessionId: "server" });
+    }
+    if (path === "stream") {
+      assert.equal(u.searchParams.get("includeTailIndex"), "1");
+      assert.equal(u.searchParams.get("startIndex"), null);
+      if (state.snapshot === "error")
+        return Response.json({ error: "not found" }, { status: 404 });
+      if (state.snapshot === "hang")
+        return new Promise<Response>((_, reject) =>
+          init.signal!.addEventListener(
+            "abort",
+            () => reject(new DOMException("timed out", "TimeoutError")),
+            { once: true },
+          ),
+        );
+      return new Response(
+        state.snapshot === "garbage"
+          ? "broken\n"
+          : state.events.map((e) => JSON.stringify(e)).join("\n") + "\n",
+        {
+          headers: {
+            "x-eve-stream-version": "25",
+            "x-eve-stream-tail-index": String(
+              state.snapshot === "garbage" ? 0 : state.events.length - 1,
+            ),
+          },
+        },
       );
     }
-    assert.ok(path.endsWith("/reset"));
-    if (++resets === 1)
-      return Promise.reject(new DOMException("timed out", "TimeoutError"));
-    return Promise.resolve(
-      Response.json({ ok: true, status: "reset", previousSessionId: "server" }),
-    );
+    if (path === "cancel") {
+      if (state.cancel === "error") throw Error("cancel failed");
+      return Response.json({
+        ok: true,
+        status: state.cancel,
+        ...(state.cancel === "accepted" ? { sessionId: "server" } : {}),
+      });
+    }
+    assert.equal(path, "reset");
+    throw Error("reset cleanup failed");
   });
-  await runHelperTick({ nowMs: 3000, log: () => {} });
+  const add = async () => {
+    const a = await s.addHelper({ task: "task", may: "draft", chat }, 1000);
+    assert.ok(a.ok);
+    return a.row;
+  };
+  const running = async (old = false, known = true) => {
+    const a = await add();
+    await s.claimHelper(
+      a.id,
+      { ownerStartedAt: OWNER_STARTED_AT - Number(old) },
+      2000,
+    );
+    if (known) await s.recordHelperSession(a.id, 2000, "server");
+    return a;
+  };
+  // The old implementation must not spawn a real helper while the new contracts are red.
+  const tick = (nowMs = 3000) =>
+    runHelperTick({
+      nowMs,
+      log: () => {},
+      ...{ start: () => new Promise<never>(() => {}) },
+    });
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  return { dir, state, add, running, tick, flush };
+}
+for (const quarantined of [false, true])
+  test(`v7 restart: ${quarantined ? "quarantine" : "live inbox"}, delivered cancel frees slot even when reset fails`, async (t) => {
+    const f = await setup(t),
+      a = await f.running(true);
+    if (quarantined) {
+      f.state.snapshot = "error";
+      f.state.cancel = "no_active_turn";
+    }
+    await f.tick();
+    await f.flush();
+    assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
+    assert.ok(f.state.calls.includes("stream"));
+    assert.ok(f.state.calls.includes("cancel"));
+  });
+test("v7 restart: undelivered cancel holds slot; hard ceiling ends it despite all errors", async (t) => {
+  const f = await setup(t),
+    a = await f.running(true);
+  f.state.cancel = "error";
+  await f.tick();
   assert.ok((await s.getHelper(a.id))?.run);
-  await runHelperTick({ nowMs: 63000 });
-  assert.equal((await s.getHelper(a.id))?.outcome, "interrupted");
-  assert.deepEqual(calls, ["cancel", "reset", "cancel", "reset"]);
+  await f.tick(2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
+  assert.equal((await s.getHelper(a.id))?.outcome, "deadline");
+});
+test("v7 accepted forever without terminal events holds run until the hard ceiling", async (t) => {
+  const f = await setup(t),
+    a = await f.running();
+  await s.closeHelper(a.id, chat, 2100);
+  await f.tick();
+  await f.tick(2000 + s.HELPER_DEADLINE_MS);
+  assert.ok((await s.getHelper(a.id))?.run);
+  assert.equal(f.state.calls.filter((x) => x === "cancel").length, 2);
+  await f.tick(2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
+  assert.equal((await s.getHelper(a.id))?.outcome, "stopped");
+});
+test("v7 close: cancel leaves durable snapshot unchanged; terminal event preserves last completed partial", async (t) => {
+  const f = await setup(t),
+    a = await f.running();
+  await s.closeHelper(a.id, chat, 2100);
+  f.state.events = [
+    { type: "message.completed", data: { message: "saved" } },
+    {
+      type: "step.completed",
+      data: {
+        usage: { inputTokens: 10, outputTokens: 2 },
+        providerModelId: "helper-model",
+      },
+    },
+  ];
+  await f.tick();
+  assert.ok((await s.getHelper(a.id))?.run);
+  f.state.events.push(
+    { type: "message.completed", data: { message: null } },
+    { type: "turn.cancelled" },
+  );
+  await f.tick();
+  const row = await s.getHelper(a.id);
+  assert.equal(row?.outcome, "stopped");
+  assert.equal(row?.summary, "saved");
+  assert.equal(row?.steps, 1);
+  assert.equal(row?.tokens, 12);
+  assert.equal(await readFile(s.helperResultPath(a.id), "utf8"), "saved");
+});
+for (const failure of ["error", "garbage", "bad-usage"])
+  test(`v7 ${failure} snapshot with current owner holds unchanged row until ceiling`, async (t) => {
+    const f = await setup(t),
+      a = await f.running(),
+      before = await s.getHelper(a.id);
+    f.state.snapshot = failure;
+    if (failure === "bad-usage")
+      f.state.events = [
+        { type: "step.completed", data: { usage: { inputTokens: "broken" } } },
+      ];
+    await f.tick(2000 + s.HELPER_DEADLINE_MS);
+    assert.deepEqual(await s.getHelper(a.id), before);
+    await f.tick(2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
+    assert.equal((await s.getHelper(a.id))?.outcome, "deadline");
+  });
+for (const mode of ["false", "throw"])
+  test(`v7 T3 ${mode}: cleanup known id, failed by claim CAS`, async (t) => {
+    const f = await setup(t),
+      a = await f.add();
+    if (mode === "false")
+      f.state.onCreate = async () => {
+        await s.recordHelperSession(a.id, 3000, "other");
+      };
+    else {
+      const rename = fs.rename.bind(fs);
+      let fail = false;
+      f.state.onCreate = () => {
+        fail = true;
+        return Promise.resolve();
+      };
+      t.mock.method(fs, "rename", (from: string, to: string) => {
+        if (fail && to.endsWith("helpers.json")) {
+          fail = false;
+          return Promise.reject(Error("T3 disk failed"));
+        }
+        return rename(from, to);
+      });
+      syncBuiltinESMExports();
+    }
+    await f.tick();
+    await f.flush();
+    const row = await s.getHelper(a.id);
+    assert.equal(row?.outcome, "failed");
+    assert.equal(row?.reason, "ход не записан");
+    assert.ok(f.state.calls.includes("cancel"));
+    assert.ok(f.state.calls.includes("reset"));
+  });
+test("v7 every core call has 15s bound: stalled snapshot returns; ceiling still wins", async (t) => {
+  const f = await setup(t),
+    a = await f.running();
+  f.state.snapshot = "hang";
+  const timeout = AbortSignal.timeout.bind(AbortSignal),
+    bounds: number[] = [];
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    bounds.push(ms);
+    return timeout(10);
+  });
+  // Native timeout signals are unref'ed; keep this isolated test alive until the request rejects.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
+  await f.tick(2000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
+  await f.flush();
+  assert.equal((await s.getHelper(a.id))?.outcome, "deadline");
+  assert.ok(bounds.length >= 3);
+  assert.ok(bounds.every((ms) => ms === 15000));
+});
+for (const failure of ["error", "network"])
+  test(`v7 create ${failure}: final HTTP error fails; uncertain id holds until ceiling`, async (t) => {
+    const f = await setup(t),
+      a = await f.add();
+    f.state.create = failure;
+    await f.tick();
+    assert.equal(f.state.calls[0], "session");
+    if (failure === "error")
+      assert.equal((await s.getHelper(a.id))?.outcome, "failed");
+    else {
+      assert.ok((await s.getHelper(a.id))?.run);
+      await f.tick(3000 + s.HELPER_DEADLINE_MS + s.HELPER_GRACE_MS);
+      assert.equal((await s.getHelper(a.id))?.outcome, "deadline");
+    }
+  });
+test("v7 create is not a stream subscription; core headers and 15s signal are preserved", async (t) => {
+  const f = await setup(t),
+    a = await f.add();
+  await f.tick();
+  assert.equal((await s.getHelper(a.id))?.run?.sessionId, "server");
+  assert.deepEqual(f.state.calls, ["session"]);
+  const headers = new Headers(f.state.requests[0].headers);
+  assert.equal(headers.get("x-iva-turn"), "helper");
+  assert.equal(headers.get("x-iva-helper"), a.id);
+  assert.equal(f.state.signals.length, 1);
+});
+test("v7 overlapping ticks: one claim, one result writer and one finished trace; reset does not hold next admission", async (t) => {
+  const f = await setup(t),
+    a = await f.add(),
+    b = await f.add();
+  await Promise.all([f.tick(), f.tick()]);
+  assert.equal(f.state.calls.filter((x) => x === "session").length, 1);
+  f.state.events = [
+    { type: "message.completed", data: { message: "result" } },
+    { type: "turn.completed" },
+  ];
+  const writes: string[] = [],
+    rename = fs.rename.bind(fs);
+  t.mock.method(fs, "rename", (from: string, to: string) => {
+    if (to.endsWith("result.md")) writes.push(to);
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  await Promise.all([f.tick(4000), f.tick(4000)]);
+  await f.flush();
+  assert.equal((await s.getHelper(a.id))?.outcome, "done");
+  assert.ok((await s.getHelper(b.id))?.run);
+  assert.equal(writes.length, 1);
+  const logs = (
+    await Promise.all(
+      (await readdir(join(f.dir, "trace"))).map((n) =>
+        readFile(join(f.dir, "trace", n), "utf8"),
+      ),
+    )
+  ).join("");
+  assert.equal(logs.split('"name":"finished"').length - 1, 1);
+});
+test("v7 volume and deadline request stop on the next tick; first reason survives", async (t) => {
+  const f = await setup(t),
+    a = await f.running();
+  f.state.events = [
+    {
+      type: "step.completed",
+      data: { usage: { inputTokens: s.HELPER_CEILING_TOKENS + 1 } },
+    },
+  ];
+  await f.tick();
+  assert.equal((await s.getHelper(a.id))?.stop, "ceiling");
+  await f.tick(2000 + s.HELPER_DEADLINE_MS);
+  assert.equal((await s.getHelper(a.id))?.stop, "ceiling");
+  f.state.events.push({ type: "turn.completed" });
+  await f.tick();
+  assert.equal((await s.getHelper(a.id))?.outcome, "ceiling");
+});
+test("v7 corrupt table preserves bytes and emits store_broken", async (t) => {
+  const f = await setup(t);
+  await writeFile(join(f.dir, "helpers.json"), "{");
+  await f.tick();
+  assert.equal(await readFile(join(f.dir, "helpers.json"), "utf8"), "{");
+  assert.deepEqual(f.state.calls, []);
+  const files = await readdir(join(f.dir, "trace"));
+  assert.match(
+    await readFile(join(f.dir, "trace", files[0]), "utf8"),
+    /store_broken/,
+  );
 });

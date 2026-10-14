@@ -21,7 +21,7 @@ process.env.HELPER_MODEL = "future-helper";
 const { sessionInboxWire } =
   await import("../node_modules/eve/dist/src/execution/wire/session-inbox-encoder.js");
 
-test("R1 prepares the candidate and captures a short complete observation for 140 tools", async () => {
+test("helper wire: prepare the authored tree and capture a complete observation for 140 tools", async () => {
   const live = await import("./live-turn.ts");
   assert.equal(
     typeof (live as Record<string, unknown>).prepareLiveApp,

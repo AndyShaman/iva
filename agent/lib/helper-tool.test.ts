@@ -255,3 +255,36 @@ test("real tool: flat schema, hostile operation/input/auth and foreign chat leav
     /автоматический пересказ/,
   );
 });
+
+test("v7 close preserves existing stop and tells the truth; immediately requests a tick", async (t) => {
+  const s = await import("./helper-store.ts");
+  const dir = await mkdtemp(join(tmpdir(), "iva-helper-close-v7-"));
+  const prev = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  t.after(async () => {
+    if (prev === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = prev;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const added = await s.addHelper(
+    { task: "task", may: "", chat: { id: "42", threadId: null } },
+    1000,
+  );
+  assert.ok(added.ok);
+  await s.claimHelper(added.row.id, { ownerStartedAt: 1 }, 2000);
+  await s.stopHelper(added.row.id, 2000, "ceiling");
+  let ticks = 0;
+  const reply = await helperExecute(
+    { action: "close", id: added.row.id },
+    ctx(),
+    {
+      tick: () => {
+        ticks++;
+        return Promise.resolve();
+      },
+    },
+  );
+  assert.match(reply, /уже останавливается/iu);
+  assert.equal(ticks, 1);
+  assert.equal((await s.getHelper(added.row.id))?.stop, "ceiling");
+});

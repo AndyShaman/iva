@@ -1,16 +1,26 @@
 import { existsSync } from "node:fs";
 import * as s from "./helper-store.ts";
-import { sanitizeInbound, hasInboundAttackSignal } from "./security-gate.ts";
+import {
+  sanitizeInbound,
+  hasInboundAttackSignal,
+  scanOutbound,
+} from "./security-gate.ts";
 import { injectionWarning } from "./telegram-gate-notice.ts";
 type TurnKey = Record<"sessionId" | "turnId", string>;
 const reads = new Map<
   string,
-  { ids: Set<string>; reply: boolean; chat: s.HelperChat }
+  { ids: Set<string>; reply: boolean; chat: s.HelperChat; sessionId: string }
 >();
 const turnKey = (key: TurnKey) => JSON.stringify([key.sessionId, key.turnId]);
 export function noteHelperReply(key: TurnKey, text: string) {
   const entry = reads.get(turnKey(key));
   if (entry && text.trim()) entry.reply = true;
+}
+export function discardHelperOutcomes(sessionId: string, turnId?: string) {
+  const match = turnId ? turnKey({ sessionId, turnId }) : null;
+  for (const [key, entry] of reads)
+    if (entry.sessionId === sessionId && (!match || key === match))
+      reads.delete(key);
 }
 export async function finishHelperOutcomes(key: TurnKey, now: number) {
   const entry = reads.get(turnKey(key));
@@ -34,8 +44,8 @@ export async function readHelperOutcome(
   const r = result.row;
   if (r.outcome === null)
     return "Останавливается, частичный итог будет после остановки.";
-  const content = [r.task.slice(0, 300), r.summary, r.reason].map((v) =>
-    v === null ? null : sanitizeInbound(v),
+  const content = [r.task.slice(0, 300), r.summary, r.reason].map((v, i) =>
+    v === null ? null : sanitizeInbound(i ? scanOutbound(v).text : v),
   );
   const path = s.helperResultPath(id);
   const envelope = JSON.stringify({
@@ -55,6 +65,7 @@ export async function readHelperOutcome(
       ids: new Set<string>(),
       reply: false,
       chat,
+      sessionId: key.sessionId,
     };
     entry.ids.add(id);
     reads.set(turnKey(key), entry);

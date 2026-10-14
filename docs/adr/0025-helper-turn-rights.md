@@ -18,7 +18,7 @@ untrusted. These rules are instructions for the model.
 
 Our eve copy owns the turn step limit and the selected model's compaction
 threshold. Iva owns the lifecycle across turns and restarts: the helper row,
-Schedule, separate turn process and Bridge wake. A service helper request needs
+Schedule and Bridge wake. A service helper request needs
 a valid helper id; its step limit is 80. The effective limit is the minimum of
 the initiating session's and current request's specified limits.
 
@@ -73,8 +73,8 @@ The owner accepted the simpler delivery design on 2026-10-13:
    the undelivered outcome remains visible in the chat's dynamic instructions.
 6. The chat can become busy between its idle check and event admission; the
    existing inbound queue and selected turn policy then apply.
-7. The turn process records its session id after creation. Losing the process
-   before that write permits a server tail bounded by 80 steps.
+7. The helper tick records its session id after creation. Losing that id
+   permits a server tail bounded by 80 steps.
 8. A crash between removing a retained row and its result directory leaves an
    orphan directory until manual cleanup.
 9. A partial outcome contains the last completed message; intermediate replies
@@ -82,3 +82,21 @@ The owner accepted the simpler delivery design on 2026-10-13:
 
 Read outcomes are marked delivered only after a nonempty answer is sent and
 the same session/turn completes. Numeric work counters remain in Trace.
+
+## End of a helper (2026-10-14)
+
+The helper Schedule creates sessions and folds finite durable snapshots. It alone
+finalizes outcomes. Cancel confirms delivery; reset is cleanup. A terminal event,
+delivered cancellation after restart, or the deadline plus grace frees the slot.
+
+The owner accepted these consequences:
+
+1. A recovered old step can finish an already started tool call before processing
+   delivered cancellation; another helper may run in that interval. The observed
+   recovery took about 14 minutes, then cancellation took 0.9 seconds.
+2. Work ceilings, questions and authorization waits are observed up to a minute
+   later. Without a webhook, authorization waiting ends through cleanup cancel.
+3. At the hard ceiling the core turn can continue; its 80-step limit remains.
+4. A lost session id leaves an orphan helper up to 80 steps, alongside later work.
+5. A session with no events holds the slot until the 47-minute hard ceiling.
+6. Failed reset leaves a parked core session; the outcome and slot are independent.

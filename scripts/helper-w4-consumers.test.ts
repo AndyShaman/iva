@@ -426,3 +426,47 @@ test("T15 reader failure after successful send retains the undelivered outcome a
   await writeFile(join(dir, "helpers.json"), before);
   assert.equal((await s.getHelper(row.id))?.deliveredAt, null);
 });
+
+for (const ending of ["turn.cancelled", "turn.failed", "session.failed"])
+  test(`v7 terminal ${ending} drops outcome reads, late completion cannot deliver`, async () => {
+    await fresh();
+    const row = await add();
+    await finish(row.id);
+    const sessionId = `v7-${ending}`;
+    await helperExecute({ action: "outcome", id: row.id }, ctx(sessionId));
+    await emit(ending, sessionId, { sessionId, message: "fixture failure" });
+    noteHelperReply({ sessionId, turnId: "turn_0" }, "late reply");
+    await finishHelperOutcomes({ sessionId, turnId: "turn_0" }, 9000);
+    assert.equal((await s.getHelper(row.id))?.deliveredAt, null);
+  });
+test("v7 outcome envelope redacts installed secret values in summary and reason", async (t) => {
+  await fresh();
+  const row = await add(),
+    secret = "fixture-installed-secret-7842639",
+    previous = process.env.OLLAMA_API_KEY;
+  process.env.OLLAMA_API_KEY = secret;
+  t.after(() => {
+    if (previous === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = previous;
+  });
+  await s.claimHelper(row.id, { ownerStartedAt: 1 }, 1000);
+  await s.finalizeHelper(
+    row.id,
+    { kind: "running", firedAt: 1000 },
+    {
+      outcome: "failed",
+      summary: `summary ${secret}`,
+      reason: `reason ${secret}`,
+      model: null,
+      steps: 0,
+      tokens: 0,
+    },
+    2000,
+  );
+  const raw = await helperExecute(
+    { action: "outcome", id: row.id },
+    ctx("v7-secret"),
+  );
+  assert.ok(!raw.includes(secret));
+  assert.match(raw, /REDACTED/);
+});
