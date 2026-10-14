@@ -14,6 +14,9 @@
 \* Tick: one 4.5 s typing tick reads that record and closes stale streams.
 \* Restart/LazyRecover: process memory is gone; the core may resume without
 \* turn.started. The first event installs a new draft id by pair-scoped CAS.
+\* A restart also forgets the old process's 429 pause, as telegram-draft.ts does.
+\* Terminal record writes retain a different owner; compaction also checks its flag.
+\* Reject counters and sticky violation flags monitor the three implementation seams.
 \*
 \* Initial orphan case is adversarial persisted input: a compacting record has
 \* turnId=null and a leftover positive draft id. Correct writers clear both;
@@ -25,28 +28,31 @@ VARIABLE s
 vars == <<s>>
 Turns == 1..MaxTurns
 Drafts == 1..(MaxTurns + MaxRestarts + 1)
-EmptyRecord == [status |-> "idle", session |-> 0, turn |-> 0, draft |-> 0]
+EmptyRecord == [status |-> "idle", session |-> 0, turn |-> 0, draft |-> 0,
+  compacting |-> FALSE]
 EmptyStream == [session |-> 0, turn |-> 0, closed |-> TRUE, inFlight |-> FALSE,
   pause |-> FALSE, disabled |-> FALSE, success |-> FALSE, failures |-> 0,
-  pending |-> FALSE]
+  rejectsSinceSuccess |-> 0, pending |-> FALSE]
 EmptyStop == [ready |-> FALSE, eventDraft |-> 0, session |-> 0, turn |-> 0, draft |-> 0]
 Init == \E orphan \in BOOLEAN :
   s = [record |-> IF orphan THEN
-         [status |-> "running", session |-> 1, turn |-> 0, draft |-> 1] ELSE EmptyRecord,
+         [status |-> "running", session |-> 1, turn |-> 0, draft |-> 1,
+          compacting |-> TRUE] ELSE EmptyRecord,
     core |-> IF orphan THEN "compacting" ELSE "idle", session |-> 1, turn |-> 0,
     started |-> 0, issued |-> IF orphan THEN 1 ELSE 0, restarts |-> 0,
     recovering |-> FALSE, compacted |-> orphan,
     streams |-> [d \in Drafts |-> EmptyStream], stop |-> EmptyStop,
     finals |-> [t \in Turns |-> "none"], cancels |-> [t \in Turns |-> 0],
     wrongDraft |-> FALSE, emptyTurn |-> FALSE, afterClose |-> FALSE,
-    afterFinal |-> FALSE, staleAfterTick |-> FALSE]
+    afterFinal |-> FALSE, staleAfterTick |-> FALSE,
+    foreignRecordLost |-> FALSE, restartPauseKept |-> FALSE]
 
 Pair(stream, session, turn) == stream.session = session /\ stream.turn = turn
 \* Compare the draft id as well: two incarnations can have the same session/turn.
 Matches(d) == s.record.status = "running" /\ s.record.session = s.streams[d].session
   /\ s.record.turn = s.streams[d].turn /\ s.record.draft = d
 Close(stream) == [stream EXCEPT !.closed = TRUE, !.pending = FALSE,
-  !.success = FALSE, !.failures = 0, !.disabled = FALSE]
+  !.success = FALSE, !.failures = 0, !.rejectsSinceSuccess = 0, !.disabled = FALSE]
 ClosePair(streams, session, turn) == [d \in Drafts |->
   IF Pair(streams[d], session, turn) THEN Close(streams[d]) ELSE streams[d]]
 NewStream(session, turn) == [EmptyStream EXCEPT
@@ -60,7 +66,8 @@ Start(session, publish) ==
      IN s' = [s EXCEPT !.core = "running", !.session = session, !.turn = t,
        !.started = t, !.issued = IF publish THEN d ELSE @, !.recovering = FALSE,
        !.record = IF publish THEN
-         [status |-> "running", session |-> session, turn |-> t, draft |-> d] ELSE @,
+         [status |-> "running", session |-> session, turn |-> t, draft |-> d,
+          compacting |-> FALSE] ELSE @,
        !.streams = IF publish THEN [@ EXCEPT ![d] = NewStream(session, t)] ELSE @]
 
 \* Timer refresh and new text both request the latest frame, never a backlog.
@@ -78,10 +85,15 @@ SendFrame(d) ==
 RequestDone(d, reply) ==
   /\ s.streams[d].inFlight
   /\ LET stream == s.streams[d]
-         errors == IF reply = "reject" THEN stream.failures + 1 ELSE 0
+         errors == IF reply = "ok" THEN 0
+                   ELSE IF reply = "reject" THEN stream.failures + 1
+                   ELSE IF Mutant = "reset-on-non-success" THEN 0 ELSE stream.failures
          done == [stream EXCEPT !.inFlight = FALSE,
            !.success = @ \/ reply = "ok", !.pause = @ \/ reply = "429",
            !.failures = errors,
+           \* History monitor: only an ok reply starts a new rejection series.
+           !.rejectsSinceSuccess = IF reply = "ok" THEN 0
+             ELSE IF reply = "reject" THEN @ + 1 ELSE @,
            !.disabled = @ \/ (reply = "reject" /\ (~stream.success \/ errors >= 3)),
            !.pending = IF stream.closed THEN FALSE ELSE @ \/ reply = "429"]
      IN s' = [s EXCEPT !.streams[d] = IF stream.closed THEN Close(done) ELSE done,
@@ -102,8 +114,11 @@ SendFinal(t) ==
 \* All terminal/parking/input-requested safety closures use the same Close.
 TurnEnded ==
   /\ s.core \in {"running", "cancelled"}
-  /\ s' = [s EXCEPT !.core = "idle", !.record = EmptyRecord,
-       !.streams = ClosePair(@, s.session, s.turn), !.recovering = FALSE]
+  /\ LET owns == s.record.session = s.session /\ s.record.turn = s.turn
+         record == IF owns \/ Mutant = "turn-clear-foreign" THEN EmptyRecord ELSE s.record
+     IN s' = [s EXCEPT !.core = "idle", !.record = record,
+       !.streams = ClosePair(@, s.session, s.turn), !.recovering = FALSE,
+       !.foreignRecordLost = @ \/ (~owns /\ record # s.record)]
 SafetyClose ==
   /\ s.core = "running"
   /\ s' = [s EXCEPT !.streams = ClosePair(@, s.session, s.turn)]
@@ -111,14 +126,20 @@ SafetyClose ==
 BeginCompaction ==
   /\ s.core = "idle" /\ ~s.compacted
   /\ s' = [s EXCEPT !.core = "compacting", !.compacted = TRUE,
-       !.record = [status |-> "running", session |-> s.session, turn |-> 0, draft |-> 0]]
+       !.record = [status |-> "running", session |-> s.session, turn |-> 0, draft |-> 0,
+         compacting |-> TRUE]]
 EndCompaction ==
   /\ s.core = "compacting"
-  /\ s' = [s EXCEPT !.core = "idle", !.record = EmptyRecord]
+  /\ LET owns == s.record.session = s.session /\ s.record.compacting
+         record == IF owns \/ Mutant = "compaction-clear-foreign" THEN EmptyRecord ELSE s.record
+     IN s' = [s EXCEPT !.core = "idle", !.record = record,
+       !.foreignRecordLost = @ \/ (~owns /\ record # s.record)]
 OtherProcess(kind) ==
-  /\ s.record.turn # 0
+  \* An external reset/takeover can also race a compaction's late release.
+  /\ s.record.status = "running"
   /\ s' = [s EXCEPT !.record = IF kind = "reset" THEN EmptyRecord ELSE
-       [status |-> "running", session |-> 2, turn |-> 0, draft |-> 0]]
+       [status |-> "running", session |-> 2, turn |-> 0, draft |-> 0,
+        compacting |-> FALSE]]
 Tick(d) ==
   /\ ~s.streams[d].closed
   /\ LET stale == ~Matches(d)
@@ -147,9 +168,13 @@ StopCancel(reply) ==
 
 Restart ==
   /\ s.restarts < MaxRestarts
-  /\ s' = [s EXCEPT !.restarts = @ + 1, !.recovering = s.core = "running",
+  /\ LET streams == [d \in Drafts |-> [Close(s.streams[d]) EXCEPT
+           !.inFlight = FALSE,
+           !.pause = IF Mutant = "restart-keep-pause" THEN @ ELSE FALSE]]
+     IN s' = [s EXCEPT !.restarts = @ + 1, !.recovering = s.core = "running",
        !.stop = EmptyStop,
-       !.streams = [d \in Drafts |-> [Close(s.streams[d]) EXCEPT !.inFlight = FALSE]]]
+       !.streams = streams,
+       !.restartPauseKept = @ \/ (\E d \in Drafts : streams[d].pause)]
 LazyRecover ==
   /\ s.recovering /\ s.core = "running" /\ s.finals[s.turn] = "none"
   /\ s.record.status = "running" /\ s.record.session = s.session /\ s.record.turn = s.turn
@@ -174,8 +199,11 @@ TypeOK ==
   /\ s.issued \in 0..Cardinality(Drafts) /\ s.restarts \in 0..MaxRestarts
   /\ s.record.status \in {"idle", "running"} /\ s.record.session \in 0..2
   /\ s.record.turn \in 0..MaxTurns /\ s.record.draft \in 0..Cardinality(Drafts)
+  /\ s.record.compacting \in BOOLEAN
+  /\ s.foreignRecordLost \in BOOLEAN /\ s.restartPauseKept \in BOOLEAN
   /\ \A d \in Drafts : /\ s.streams[d].turn \in 0..MaxTurns
       /\ s.streams[d].session \in 0..2 /\ s.streams[d].failures \in 0..3
+      /\ s.streams[d].rejectsSinceSuccess \in 0..3
   /\ \A t \in Turns : s.finals[t] \in {"none", "pending", "sent"}
 StopOwnDraft == ~s.wrongDraft
 StopHasTurn == ~s.emptyTurn
@@ -184,4 +212,10 @@ FramesOnlyWhileOpen == ~s.afterClose
 NoFrameAfterFinal == ~s.afterFinal
 FinalAfterClose == \A t \in Turns : s.finals[t] = "sent" => Drained(t)
 SelfCheckCloses == ~s.staleAfterTick
+\* These monitors state the policy independently of each mutated state update.
+FailurePolicy == \A d \in Drafts :
+  /\ s.streams[d].failures = s.streams[d].rejectsSinceSuccess
+  /\ (s.streams[d].rejectsSinceSuccess = 3 => s.streams[d].disabled)
+ForeignRecordPreserved == ~s.foreignRecordLost
+RestartForgetsPause == ~s.restartPauseKept
 =============================================================================

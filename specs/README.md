@@ -116,25 +116,34 @@ specs/plugin-proposal-check.sh
 turn can still be running. A request already in flight can settle during close,
 and the final answer waits for it and for a 429 pause. A later callback cannot
 schedule another frame after close. New text and the refresh timer request the
-latest frame. First rejection disables drafts; three consecutive rejections after
-a successful frame do the same.
+latest frame. First rejection disables drafts; three rejections since the last
+successful frame do the same. Only success resets the rejection series; a 429
+or network timeout preserves the count without increasing it.
 
 Two turns may use the same session. Stop reads the draft id and pair once, then
 cancel uses that snapshot even if another turn has started. Duplicate updates
 can cancel a core turn only once. Compaction has a null turn id. An additional
 initial case supplies an inconsistent persisted compaction record with a positive
 draft id to check the null-turn guard independently of the record writer.
+Turn completion releases the chat record only when its session and turn still
+match. Compaction release checks its session and the compacting flag. Both keep
+a record acquired by another owner.
 
 Reset and takeover can change the chat record in another process. Each typing
 tick compares status, session, turn and draft id and closes a stale stream.
 Restart clears local streams; a resumed core turn can lazily create a fresh
-draft through a CAS on its pair. Draft ids are abstract fresh values, so random
+draft through a CAS on its pair. Restart also forgets the old process's 429 pause.
+The final answer can receive another 429 after restart; Outbox retries it.
+Draft ids are abstract fresh values, so random
 collisions and clock durations require implementation tests.
 
-The main BFS configuration checks two turns and one restart. Four mutants must
+The main BFS configuration checks two turns and one restart. Eight mutants must
 violate their named state invariant: missing draft comparison (`StopOwnDraft`),
 cancel with a null turn (`StopHasTurn`), a frame after final delivery
-(`NoFrameAfterFinal`), and a missing record check (`SelfCheckCloses`). The main
+(`NoFrameAfterFinal`), a missing record check (`SelfCheckCloses`), resetting the
+rejection count on a 429 or timeout (`FailurePolicy`), releasing another owner's
+record at turn completion or compaction end (two mutants, `ForeignRecordPreserved`),
+and retaining a pre-restart pause (`RestartForgetsPause`). The main
 configuration also checks `StopOnce`, `FramesOnlyWhileOpen`, `FinalAfterClose`
 and `TypeOK`. Frame closure forbids new requests; an earlier in-flight request
 can still finish before the final answer. HTTP wire shapes, redaction, authorization

@@ -52,5 +52,9 @@ check DraftStop-stop-without-draft StopOwnDraft || exit 2
 check DraftStop-stop-with-null-turn StopHasTurn || exit 2
 check DraftStop-frame-after-final NoFrameAfterFinal || exit 2
 check DraftStop-no-self-check SelfCheckCloses || exit 2
+check DraftStop-reset-on-non-success FailurePolicy || exit 2
+check DraftStop-turn-clear-foreign ForeignRecordPreserved || exit 2
+check DraftStop-compaction-clear-foreign ForeignRecordPreserved || exit 2
+check DraftStop-restart-keep-pause RestartForgetsPause || exit 2
 echo "draft-stop-check: ok=$ok failed=$failed"
 [ "$failed" -eq 0 ]
