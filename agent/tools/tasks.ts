@@ -149,6 +149,7 @@ async function run({
         "Относительный срок сначала переведи в дату по skill task-management.",
     };
   const tasks = await load();
+  const total = () => tasks.filter((t) => t.removedAt === undefined).length;
 
   switch (action) {
     case "add": {
@@ -164,7 +165,7 @@ async function run({
       };
       tasks.push(task);
       await save(tasks);
-      return { ok: true, added: task, total: tasks.length };
+      return { ok: true, added: task, total: total() };
     }
     case "list": {
       const items = tasks.filter(
@@ -209,11 +210,11 @@ async function run({
       const removed = tasks.find((x) => x.id === id);
       if (!removed) return { ok: false, error: `Задача ${id} не найдена` };
       if (removed.removedAt !== undefined)
-        return { ok: true, removed, total: tasks.length };
+        return { ok: true, removed, total: total() };
       removed.done = true;
       removed.removedAt = new Date().toISOString();
       await save(tasks);
-      return { ok: true, removed, total: tasks.length };
+      return { ok: true, removed, total: total() };
     }
   }
 }

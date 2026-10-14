@@ -25,6 +25,7 @@ type Row = {
 };
 type Answer = {
   ok: boolean;
+  total?: number;
   error?: string;
   tasks?: Row[];
   added?: Row;
@@ -116,6 +117,7 @@ await test("#290: remove preserves the record and id; stale commands preserve by
   reset([original()]);
   const removed = await call({ action: "remove", id: 117 });
   assert.equal(removed.ok, true);
+  assert.equal(removed.total, 0);
   assert.deepEqual(read(), [
     {
       ...original(),
@@ -140,6 +142,34 @@ await test("#290: remove preserves the record and id; stale commands preserve by
   assert.equal(readFileSync(file, "utf8"), before);
   const added = await call({ action: "add", text: "другое дело" });
   assert.equal(added.added?.id, 118);
+  assert.equal(added.total, 1);
+});
+
+await test("total excludes removed tasks and includes completed tasks after remove/add", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 14, 12) });
+  reset([
+    { ...original(null), id: 1 },
+    { ...original(), id: 2, done: true },
+    { ...original("2026-10-20"), id: 3 },
+  ]);
+  const removed = await call({ action: "remove", id: 3 });
+  assert.equal(removed.ok, true);
+  assert.equal(removed.total, 2);
+  const before = readFileSync(file, "utf8");
+  const repeated = await call({ action: "remove", id: 3 });
+  assert.equal(repeated.ok, true);
+  assert.equal(repeated.total, 2);
+  assert.equal(readFileSync(file, "utf8"), before);
+  const added = await call({ action: "add", text: "новое дело" });
+  assert.equal(added.ok, true);
+  assert.equal(added.added?.id, 4);
+  assert.equal(added.total, 3);
+  assert.deepEqual(
+    (await call({ action: "list", includeDone: true })).tasks!.map(
+      (row) => row.id,
+    ),
+    [1, 2, 4],
+  );
 });
 
 await test(`property #290: issued ids keep their original task across removals (seed ${seed})`, async () => {
@@ -162,12 +192,12 @@ await test(`property #290: issued ids keep their original task across removals (
           previous = row.id;
           issued.set(row.id, text);
           visible.set(row.id, text);
+          assert.equal(answer.total, visible.size);
           if (remove) {
-            assert.equal(
-              (await call({ action: "remove", id: row.id })).ok,
-              true,
-            );
+            const removed = await call({ action: "remove", id: row.id });
+            assert.equal(removed.ok, true);
             visible.delete(row.id);
+            assert.equal(removed.total, visible.size);
           }
           assert.deepEqual(
             new Map(read().map((item) => [item.id, item.text])),
