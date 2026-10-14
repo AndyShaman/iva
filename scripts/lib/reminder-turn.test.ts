@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Async client doubles preserve the external I/O boundary. */
 // Контракт хода напоминания: он длится, пока идут события (потолка длительности нет),
 // молчащий стрим гасится на окне тишины, а пока ход идёт — чат видит его сессию, чтобы
 // ⏹ и /stop гасили её тем же путём, что и ход канала. Самой записи в run-status ход не
@@ -129,6 +130,134 @@ function failureOf(work: Promise<unknown>): Promise<unknown> {
   );
 }
 
+for (const mode of [
+  "accepted",
+  "rejected",
+  "hanging",
+  "reset-hanging",
+] as const) {
+  void test(`silence-before-turn-start cancels the known session: ${mode}`, async (t) => {
+    const { MessageResponse } = (await import(
+      new URL(
+        "../../node_modules/eve/dist/src/client/message-response.js",
+        import.meta.url,
+      ).href
+    )) as typeof import("../../node_modules/eve/dist/src/client/message-response.js");
+    let release = () => {};
+    let releaseReset = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resetGate = new Promise<void>((resolve) => {
+      releaseReset = resolve;
+    });
+    const calls: string[] = [];
+    const logs: unknown[][] = [];
+    let finished = false;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const flush = async () => {
+      for (let i = 0; i < 10; i++)
+        await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    const response = new MessageResponse({
+      sessionId: "prestart",
+      cancelTurn: async () => {
+        calls.push("response.cancel");
+        return { status: "accepted", sessionId: "prestart" };
+      },
+      createStream: async function* () {
+        await gate;
+        yield {
+          type: "turn.started",
+          data: { turnId: "late-turn", sequence: 1 },
+          meta: { at: "2026-10-14T12:00:00Z", id: "fixture-start" },
+        };
+        yield {
+          type: "session.waiting",
+          data: { continuationToken: "prestart", wait: "next-user-message" },
+          meta: { at: "2026-10-14T12:00:00Z", id: "fixture-waiting" },
+        };
+      },
+    });
+    const work = failureOf(
+      runReminderTurn("fixture", OPTIONS, {
+        inactivityMs: 15,
+        log: (...parts) => {
+          logs.push(parts);
+        },
+        watch: {
+          claim: async () => true,
+          pulse: () => {},
+          release: () => {
+            calls.push("release");
+          },
+        },
+        createClient: async () => ({
+          sessions: {
+            create: async () => ({
+              response,
+              session: {
+                send: async () => {},
+                cancel: async ({ tasks }) => {
+                  calls.push(`session.cancel tasks=${String(tasks)}`);
+                  if (mode === "rejected")
+                    throw new Error("cancel unavailable");
+                  if (mode === "hanging") await new Promise(() => {});
+                },
+                reset: async () => {
+                  calls.push("reset");
+                  if (mode === "reset-hanging") await resetGate;
+                },
+              },
+            }),
+          },
+        }),
+      }),
+    ).then((error) => {
+      finished = true;
+      return error;
+    });
+    try {
+      await flush();
+      t.mock.timers.tick(15);
+      await flush();
+      assert.deepEqual(
+        calls,
+        mode === "hanging"
+          ? ["session.cancel tasks=true"]
+          : ["session.cancel tasks=true", "release", "reset"],
+      );
+      if (mode === "hanging" || mode === "reset-hanging") {
+        t.mock.timers.tick(30_000);
+        await flush();
+      }
+      assert.equal(
+        finished,
+        true,
+        "the watchdog returns before turn.started is released",
+      );
+      const error = await work;
+      assert.ok(error instanceof ReminderTurnError);
+      assert.equal(error.message, "no activity for 15ms");
+      assert.deepEqual(calls, [
+        "session.cancel tasks=true",
+        "release",
+        "reset",
+      ]);
+      assert.equal(
+        logs.length,
+        mode === "rejected" || mode === "hanging" ? 1 : 0,
+      );
+    } finally {
+      release();
+      releaseReset();
+      await flush();
+      t.mock.timers.tick(30_000);
+      await work;
+    }
+  });
+}
+
 for (const mark of ["cancel", "limit", "cancel-and-limit"] as const) {
   void test(`recoverable failure preserves ${mark} priority`, async () => {
     const spy = spyTurn(async function* () {
@@ -138,11 +267,18 @@ for (const mark of ["cancel", "limit", "cancel-and-limit"] as const) {
       if (mark !== "cancel") yield SESSION_LIMIT_REQUESTED;
       yield { type: "session.waiting" };
     });
-    const turn = await runReminderTurn("fixture", OPTIONS, { createClient: spy.createClient });
+    const turn = await runReminderTurn("fixture", OPTIONS, {
+      createClient: spy.createClient,
+    });
     assert.equal(turn.cancelled, mark !== "limit");
     assert.equal(turn.sessionLimit, mark === "limit" ? true : undefined);
     assert.equal(turn.status, mark === "limit" ? "failed" : "waiting");
-    assert.equal(turn.message, mark === "limit" ? "the turn hit the eve session token limit" : "intermediate");
+    assert.equal(
+      turn.message,
+      mark === "limit"
+        ? "the turn hit the eve session token limit"
+        : "intermediate",
+    );
   });
 }
 
@@ -197,7 +333,7 @@ void test("a silent stream is cancelled at the idle window, never swallowed", as
 
   assert.ok(idle instanceof ReminderTurnError);
   assert.match(idle.message, /no activity for 80ms/u);
-  assert.equal(silent.cancelCount(), 1);
+  assert.deepEqual(silent.sessionCalls, ["cancel tasks=true", "reset"]);
   assert.deepEqual(silent.resets, ["Reminder finished"]);
 });
 
