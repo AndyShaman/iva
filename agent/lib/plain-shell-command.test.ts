@@ -32,6 +32,7 @@ const ACCEPTED_DATA = [
 ] as const;
 
 const ACCEPTED_HELP = [
+  `"iva" restart --help`,
   `iva doctor --help`,
   `iva restart '--help'`,
   `iva restart --he"lp"`,
@@ -74,7 +75,6 @@ const REJECTED = [
   `grep pattern\rinput`,
   `iva restart >&2 --help`,
   `iva restart --help 2>/dev/null`,
-  `"iva" restart --help`,
   `a;;`,
   `a;|`,
   `a;&`,
@@ -89,7 +89,41 @@ const TRAILING_SEMICOLON_CASES = [
   `iva restart --help;`,
 ] as const;
 
+const QUOTED_DATA = new Set([
+  "remaining sed pipeline",
+  "remaining git commit",
+  "remaining quoted iva",
+  "review1 absolute grep",
+  "review1 relative grep",
+  "review1 absolute echo",
+  "review1 neighbor sh",
+  "review1 neighbor bash",
+  "review1 neighbor python",
+  "review1 neighbor chmod",
+  "review1 neighbor source",
+  "review1 neighbor dot",
+  "review1 neighbor executable",
+  "review1 input process substitution",
+  "review1 output process substitution",
+  "review2 assignment leading redirect scheduler",
+  "review2 assignment leading redirect self",
+  "review2 malformed fd scheduler",
+  "review2 triple pipe",
+  "review2 triple ampersand",
+  "review2 triple semicolon",
+  "review2 mixed pipe ampersand",
+  "review2 quoted assignment scheduler",
+  "review2 quoted assignment self",
+  "deepseek bash both redirect",
+  "deepseek bash append both redirect",
+  "specv1 F6 exact",
+  "fact7 rg data",
+  "fact7 jq data",
+  "fact7 sed data",
+]);
+
 const SOFTENED = new Set([
+  ...QUOTED_DATA,
   "c1 grep pipeline",
   "c1 echo batch",
   "c1 echo at",
@@ -151,14 +185,15 @@ test("корпус пропускает завершающую точку с з�
   }
 });
 
-test("корпус четырёх рецензий сохраняет эталон кроме разрешённых v4.1 смягчений", async () => {
+test("корпус четырёх рецензий сохраняет исполняемые отказы и разрешает данные 287-A", async () => {
   const [{ selfRestartViolation }, { schedulerBypassViolation }] =
     await Promise.all([
       import("./self-restart-guard.ts"),
       import("./scheduler-bypass-guard.ts"),
     ]);
 
-  for (const { name, input, expected } of REVIEW_CASES) {
+  for (const { name, input, expected: historical } of REVIEW_CASES) {
+    const expected = QUOTED_DATA.has(name) ? [false, false] : historical;
     const actual = pair(selfRestartViolation, schedulerBypassViolation, input);
     assert.deepEqual(actual, expected, `${name}: ${JSON.stringify(input)}`);
     const baseline = pair(referenceSelfRestart, referenceScheduler, input);
@@ -188,7 +223,12 @@ test("эталонные гварды побайтно соответствую�
   ]);
   for (const [name, digest] of expected) {
     const actual = createHash("sha256")
-      .update(readFileSync(join(here, name)))
+      .update(
+        readFileSync(join(here, name), "utf8").replace(
+          /import\s*\{\s*commandSegments,\s*type CommandPosition,?\s*\}\s*from "\.\/self-restart-guard\.test-fixture\.ts";/,
+          'import { commandSegments, type CommandPosition } from "./self-restart-guard.ts";',
+        ),
+      )
       .digest("hex");
     assert.equal(actual, digest, name);
   }

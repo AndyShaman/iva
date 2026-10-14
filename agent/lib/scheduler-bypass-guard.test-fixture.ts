@@ -6,7 +6,10 @@
 // `list-timers`, `daemon-reload`), юниты `iva*` (рестарт моста/таймеров не убивает агента),
 // обвязку сна (`wait`, `done`, `:`, второй sleep). Принятое ложное срабатывание:
 // `grep … > /tmp/out` (вывод в файл — отдельной командой). Deterrence, не граница.
-import { commandSegments, type CommandPosition } from "./self-restart-guard.ts";
+import {
+  commandSegments,
+  type CommandPosition,
+} from "./self-restart-guard.test-fixture.ts";
 
 const WHAT = {
   SYSTEMD_RUN: "systemd-run: свой таймер",

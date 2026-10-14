@@ -128,7 +128,7 @@ function dataCommand(command: Command): boolean {
 }
 function helpCommand(command: Command): boolean {
   const first = command[0][0];
-  if (!first?.bare || first.value !== "iva") return false;
+  if (first?.value !== "iva") return false;
   if (command[1].some((item) => item !== "2>&1")) return false;
   return command[0]
     .slice(1)

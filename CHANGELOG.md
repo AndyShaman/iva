@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 🔧 **В дневном файле остаются ответы владельцу**: служебные ответы CLI и HTTP пропускаются; ответы в Telegram, напоминания, Watch, Brief и другие видимые фоновые ответы сохраняются. Daily transcripts skip CLI and HTTP service replies while keeping Telegram and visible background replies.
+- 🔧 **Кавычки сохраняют данные команд**: защита bash пропускает сообщения `git commit -m`, конвейеры `journalctl | sed | grep` с `at/batch` в строке и справку `"iva" restart --help`; исполняемые таймеры и перезапуск продолжают проверяться. Shell guards preserve quoted command data and recognize the quoted Iva help command.
 
 - ⏹ **Стоп подтверждает остановку выбранного хода**: следующий ход в том же разговоре получает своё состояние; кнопка перезапуска от предыдущего хода сохраняет его идентификатор и оставляет следующий ход работать. Stop confirmation and restart buttons now track the selected turn within its session.
 
