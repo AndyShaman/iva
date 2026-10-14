@@ -14,6 +14,8 @@
 \* Tick: one 4.5 s typing tick reads that record and closes stale streams.
 \* Restart/LazyRecover: process memory is gone; the core may resume without
 \* turn.started. The first event installs a new draft id by pair-scoped CAS.
+\* Input-requested closes and forgets the stream. Continuing after the answer
+\* uses the same lazy recovery, after the closed stream has drained.
 \* A restart also forgets the old process's 429 pause, as telegram-draft.ts does.
 \* Terminal record writes retain a different owner; compaction also checks its flag.
 \* Reject counters and sticky violation flags monitor the three implementation seams.
@@ -127,6 +129,11 @@ TurnEnded ==
 SafetyClose ==
   /\ s.core = "running"
   /\ s' = [s EXCEPT !.streams = ClosePair(@, s.session, s.turn)]
+\* Forget only on the question closure; the next continued event creates a stream.
+InputRequested ==
+  /\ s.core = "running" /\ s.finals[s.turn] = "none"
+  /\ s' = [s EXCEPT !.streams = ClosePair(@, s.session, s.turn),
+       !.recovering = TRUE]
 
 BeginCompaction ==
   /\ s.core = "idle" /\ ~s.compacted
@@ -182,13 +189,14 @@ Restart ==
        !.restartPauseKept = @ \/ (\E d \in Drafts : streams[d].pause)]
 LazyRecover ==
   /\ s.recovering /\ s.core = "running" /\ s.finals[s.turn] = "none"
+  /\ Drained(s.turn)
   /\ s.record.status = "running" /\ s.record.session = s.session /\ s.record.turn = s.turn
   /\ s.issued < Cardinality(Drafts)
   /\ LET d == s.issued + 1 IN s' = [s EXCEPT !.recovering = FALSE,
        !.issued = d, !.record.draft = d, !.streams[d] = NewStream(s.session, s.turn)]
 
 Next == MessageCompleted \/ TurnEnded \/ SafetyClose \/ BeginCompaction \/ EndCompaction
-  \/ Restart \/ LazyRecover
+  \/ Restart \/ LazyRecover \/ InputRequested
   \/ (\E session \in 1..2, publish \in BOOLEAN : Start(session, publish))
   \/ (\E kind \in {"reset", "takeover"} : OtherProcess(kind))
   \/ (\E reply \in {"ok", "network"} : StopCancel(reply))

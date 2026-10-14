@@ -336,7 +336,12 @@ const telegram = telegramChannel({
   },
   events: {
     async "input.requested"(data, channel, ctx) {
-      await closeTelegramDraftTurn(ctx.session.id, data.turnId);
+      await closeTelegramDraftTurn(
+        ctx.session.id,
+        data.turnId,
+        undefined,
+        true,
+      );
       for (const request of data.requests)
         await postTelegramQuestion(request, channel.state, channel.telegram, {
           rich: TELEGRAM_RICH_REPLIES === "auto",

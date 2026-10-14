@@ -111,6 +111,7 @@ async function emit(
     | "actions.requested"
     | "action.result"
     | "input.requested"
+    | "input.resolved"
     | "turn.completed",
   data: Record<string, unknown>,
   {
@@ -118,11 +119,13 @@ async function emit(
     sessionId,
     chatType = "private",
     threadId,
+    state,
   }: {
     chatId: string;
     sessionId: string;
     chatType?: string;
     threadId?: number;
+    state?: Record<string, unknown>;
   },
 ) {
   const ctx = new ContextContainer();
@@ -138,7 +141,7 @@ async function emit(
       auth: { current: null, initiator: null },
       continuation: { token: `telegram:${chatId}::`, rekey() {} },
     },
-    state: {
+    state: state ?? {
       ...adapter.state,
       chatId,
       chatType,
@@ -371,6 +374,145 @@ const draftCalls = () =>
   apiCalls.filter((call) => call.method === "sendRichMessageDraft");
 const richText = (call: ApiCall) =>
   String((call.body?.rich_message as { markdown?: unknown })?.markdown);
+
+test("question answers resume typing and a fresh stoppable draft in the same turn", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "setInterval", "Date"],
+    now: 300_000,
+  });
+  apiCalls.length = 0;
+  const pair = {
+    chatId: "92",
+    sessionId: "question-resume",
+    state: {
+      ...adapter.state,
+      chatId: "92",
+      chatType: "private",
+      messageThreadId: null,
+    },
+  };
+  setChatStatus("92:", {
+    status: "idle",
+    sessionId: null,
+    turnId: null,
+    draftId: null,
+    resetAt: null,
+  });
+  await emit("turn.started", { turnId: "turn_1" }, pair);
+  try {
+    for (let stepIndex = 0; stepIndex < 2; stepIndex++) {
+      const previousDraftId = getChatStatus("92:")?.draftId;
+      const requestId = `q-${stepIndex}`;
+      await emit(
+        "input.requested",
+        {
+          turnId: "turn_1",
+          stepIndex,
+          requests: [
+            {
+              requestId,
+              kind: "question",
+              prompt: "Continue?",
+              action: {
+                callId: requestId,
+                kind: "tool-call",
+                toolName: "ask_question",
+                input: {},
+              },
+              options: [{ id: "yes", label: "Yes" }],
+            },
+          ],
+        },
+        pair,
+      );
+      const waiting = apiCalls.length;
+      t.mock.timers.tick(4_500);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(apiCalls.length, waiting);
+      await emit(
+        "input.resolved",
+        {
+          turnId: "turn_1",
+          stepIndex,
+          sequence: stepIndex + 1,
+          resolutions: [
+            {
+              requestId,
+              kind: "question",
+              outcome: "answered",
+              response: { optionId: "yes" },
+            },
+          ],
+        },
+        pair,
+      );
+      assert.ok(
+        apiCalls
+          .slice(waiting)
+          .some(
+            (call) =>
+              call.method === "editMessageText" &&
+              richText(call).includes("Selected: Yes"),
+          ),
+        JSON.stringify(apiCalls.slice(waiting)),
+      );
+      const resumed = apiCalls.length;
+      await emit(
+        "actions.requested",
+        {
+          turnId: "turn_1",
+          stepIndex: stepIndex + 1,
+          actions: [
+            {
+              callId: `tool-${stepIndex}`,
+              kind: "tool-call",
+              toolName: "bash",
+              input: { command: "sleep 10" },
+            },
+          ],
+        },
+        pair,
+      );
+      t.mock.timers.tick(1_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const after = apiCalls.slice(resumed);
+      assert.ok(
+        after.some(
+          (call) =>
+            call.method === "sendChatAction" && call.body?.action === "typing",
+        ),
+      );
+      const frame = after.find(
+        (call) => call.method === "sendRichMessageDraft",
+      );
+      assert.ok(frame, "continued turn must send a new draft after the answer");
+      assert.equal(frame.body?.can_stop, true);
+      assert.equal(frame.body?.draft_id, getChatStatus("92:")?.draftId);
+      assert.notEqual(frame.body?.draft_id, previousDraftId);
+      assert.equal(getChatStatus("92:")?.turnId, "turn_1");
+      const typing = apiCalls.filter(
+        (call) => call.method === "sendChatAction",
+      ).length;
+      t.mock.timers.tick(4_500);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.ok(
+        apiCalls.filter((call) => call.method === "sendChatAction").length >
+          typing,
+      );
+    }
+    await emit(
+      "message.completed",
+      { turnId: "turn_1", stepIndex: 3, message: "Done", finishReason: "stop" },
+      pair,
+    );
+    const completed = apiCalls.length;
+    t.mock.timers.tick(9_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(apiCalls.length, completed);
+  } finally {
+    await emit("turn.cancelled", { turnId: "turn_1" }, pair);
+  }
+});
 
 function startTurn(chatId: string, sessionId: string) {
   setChatStatus(chatKeyOf(chatId), {
