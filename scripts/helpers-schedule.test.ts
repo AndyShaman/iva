@@ -4,7 +4,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
 test("v7 helpers schedule completes while the reminder task is still waiting, with separate Nitro task names", async () => {
   const { default: helper } = await import("../agent/schedules/helpers.ts");
   assert.equal(helper.cron, "* * * * *");
@@ -48,13 +47,52 @@ test("v7 owner epoch is process-wide across duplicate module loads", async (t) =
   const b = (await import(path)) as { OWNER_STARTED_AT: number };
   assert.equal(a, b.OWNER_STARTED_AT);
 });
-test("v7 reminder-turn matches base 91dd9bb6 byte for byte", async () => {
-  const { stdout } = await promisify(execFile)("git", [
-    "show",
-    "91dd9bb6:scripts/lib/reminder-turn.ts",
-  ]);
-  assert.equal(
-    await readFile(new URL("./lib/reminder-turn.ts", import.meta.url), "utf8"),
-    stdout,
+test("v7 helper header uses the common reminder client and preserves R1 failure", async () => {
+  const { runReminderTurn } = await import("./lib/reminder-turn.ts");
+  const options = {
+    host: "http://fixture.invalid",
+    auth: { bearer: () => Promise.resolve("fixture") },
+    headers: { "x-iva-turn": "helper" },
+  };
+  const resets: string[] = [];
+  const response = Object.assign(
+    (async function* () {
+      await Promise.resolve();
+      yield { type: "message.completed", data: { message: "intermediate" } };
+      yield { type: "turn.failed" };
+      yield { type: "session.waiting" };
+    })(),
+    {
+      sessionId: "fixture-session",
+      cancel: () => Promise.reject(new Error("unexpected stream cancellation")),
+    },
   );
+  const turn = await runReminderTurn("fixture", options, {
+    createClient: (received) => {
+      assert.equal(received, options);
+      return Promise.resolve({
+        sessions: {
+          create: ({ message }) => {
+            assert.equal(message, "fixture");
+            return Promise.resolve({
+              response,
+              session: {
+                send: () => Promise.resolve(),
+                cancel: () =>
+                  Promise.reject(new Error("unexpected session cancellation")),
+                reset: ({ reason }) => {
+                  resets.push(reason);
+                  return Promise.resolve();
+                },
+              },
+            });
+          },
+        },
+      });
+    },
+  });
+  assert.equal(turn.status, "failed");
+  assert.equal(turn.message, "ход упал");
+  assert.equal(turn.cancelled, false);
+  assert.deepEqual(resets, ["Reminder finished"]);
 });
