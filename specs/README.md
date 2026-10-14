@@ -109,6 +109,41 @@ Witnesses must fail: `PluginProposal-norename.cfg` (the tap copies the proposal 
 specs/plugin-proposal-check.sh
 ```
 
+## DraftStop
+
+`DraftStop.tla` models a private chat's draft stream and native stop. The final
+`message.completed` closes the stream before Outbox sends the answer; the core
+turn can still be running. A request already in flight can settle during close,
+and the final answer waits for it and for a 429 pause. A later callback cannot
+schedule another frame after close. New text and the refresh timer request the
+latest frame. First rejection disables drafts; three consecutive rejections after
+a successful frame do the same.
+
+Two turns may use the same session. Stop reads the draft id and pair once, then
+cancel uses that snapshot even if another turn has started. Duplicate updates
+can cancel a core turn only once. Compaction has a null turn id. An additional
+initial case supplies an inconsistent persisted compaction record with a positive
+draft id to check the null-turn guard independently of the record writer.
+
+Reset and takeover can change the chat record in another process. Each typing
+tick compares status, session, turn and draft id and closes a stale stream.
+Restart clears local streams; a resumed core turn can lazily create a fresh
+draft through a CAS on its pair. Draft ids are abstract fresh values, so random
+collisions and clock durations require implementation tests.
+
+The main BFS configuration checks two turns and one restart. Four mutants must
+violate their named state invariant: missing draft comparison (`StopOwnDraft`),
+cancel with a null turn (`StopHasTurn`), a frame after final delivery
+(`NoFrameAfterFinal`), and a missing record check (`SelfCheckCloses`). The main
+configuration also checks `StopOnce`, `FramesOnlyWhileOpen`, `FinalAfterClose`
+and `TypeOK`. Frame closure forbids new requests; an earlier in-flight request
+can still finish before the final answer. HTTP wire shapes, redaction, authorization
+parsing, real timer deadlines and the live Telegram client have separate checks.
+
+```sh
+LOG_DIR="$PWD/.scratch/draft-stop-results" specs/draft-stop-check.sh
+```
+
 ## IdleCompaction
 
 `IdleCompaction.tla` models the compaction between turns (ADR-0021) and was written after the code: it checks the code, not a design. One eve session in one chat: the bridge (routing under queue or steer, replies to bot messages, the disk queue, the drain, the reaper), the chat status record, the process memory of `agent/lib/idle-compaction.ts` (with the open ask `reclaim`), eve's input buffer, control queue and current action, the compact POST that the `session.waiting` handler awaits with its outcomes (accepted, refused, unknown, accepted after the client's timeout), the `compaction.requested` hook that claims the chat again, `/stop` and steer aborts in eve's order (parking, `turn.cancelled`, parking), and a restart with the ExecStartPre quarantine. The comment in the model maps every action to its function and lists the assumptions about eve (facts Ф3–Ф13 of the spec).
@@ -119,7 +154,7 @@ Findings that must fail: the window between the start of a late compaction and i
 
 Witnesses must fail: `-offfail` (R3 off: `OffOnlyAfterUselessCompaction`), `-nobeginclaim` (no claim on `compaction.requested`: `CompactionGuarded`), `-noaskguard` (a second ask while one is open: `NoStackedCompaction`), `-releasebysession` (on the base without the await: `TurnRecordKept`), `-noclaim` (`QueuedWhileCompacting`), `-noopenguard` (`OffOnlyAfterUselessCompaction`), `-noisyreap` (`NoFalseInterruptNotice`), `-turnkeeps` (`CompactingNeverInTurn`), `-dueagain` (`AtMostOneAskPerTurn`), `-offnotchecked` (`NoAskWhileOff`), `-repliesdirect` (`QueuedWhileCompacting`), `-noreap` (`ChatFreed`). `-void` (no await) and `-noparkrelease` pass: the hook's claim covers the first, the reaper the second.
 
-The queued sign (the loader shown under a message that waits behind a live turn, its message id kept in the chat record as `queued*`) is in the model since it was added to the code: `SignOwned` — while the sign is shown, the record keeps its id, and a live record holds it or a turn that will take it is pending; a record that goes idle with no such turn has deleted it. The exceptions are a restart that rewrote a compacting record before any Bot API was up (the next turn start deletes the sign) and the session hung by F6. It holds on every code configuration; `-reapkeepssign` (the reaper leaves the sign) and `-rewritelosessign` (the restart rewrite drops the `queued*` fields) and `-claimdropssign` (the compaction claim drops them) must fail on it.
+The draft/stop change retires the queued status message. This model retains queue ownership, buffered input, compaction and recovery; `DraftStop.tla` covers the new stream lifecycle.
 
 ```sh
 specs/idle-compaction-check.sh
