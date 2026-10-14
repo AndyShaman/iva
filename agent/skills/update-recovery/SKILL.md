@@ -48,7 +48,8 @@ does not prove the customization was included.
 
 3. Choose one safe resolution:
 
-   - A semantic merge: write the merged file to `data/custom/<agent/path>`, then run
+   - A semantic merge: take `customRoot` from the status output and write the merged file to
+     `<customRoot>/<agent/path>`, then run
      `node --env-file-if-exists=.env scripts/custom-recovery.ts resolve <agent/path> edited`.
    - Keep the user's copy: use side `local`.
    - Accept the new core copy: use side `upstream`.

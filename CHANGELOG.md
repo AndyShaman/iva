@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - 🔧 **В дневном файле остаются ответы владельцу**: служебные ответы CLI и HTTP пропускаются; ответы в Telegram, напоминания, Watch, Brief и другие видимые фоновые ответы сохраняются. Daily transcripts skip CLI and HTTP service replies while keeping Telegram and visible background replies.
+- 🔧 **Semantic merge использует настроенный путь данных**: скилл восстановления берёт `customRoot` из машинного статуса и пишет правку туда, откуда resolver читает сторону `edited`. Recovery writes semantic merges under the resolved custom root, including paths with spaces.
+
 - 🔧 **Восстановление подсказывает шаг для своей установки**: машинный ответ после разрешения конфликта ведёт к процедуре `update-recovery`, которая различает установленную Version и developer checkout. Successful conflict resolution points to the installation's existing activation procedure.
 
 - 🔧 **Кавычки сохраняют данные команд**: защита bash пропускает сообщения `git commit -m`, конвейеры `journalctl | sed | grep` с `at/batch` в строке и справку `"iva" restart --help`; исполняемые таймеры и перезапуск продолжают проверяться. Shell guards preserve quoted command data and recognize the quoted Iva help command.
