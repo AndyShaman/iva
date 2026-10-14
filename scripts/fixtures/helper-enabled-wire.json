@@ -409,7 +409,7 @@
         },
         "required": ["action"]
       },
-      "description": "Задачи: add (text, priority, due), list (includeDone; по умолчанию — незавершённые), update (id, due, expectedDue — прежний срок из list), done/remove (id). Срок — календарная дата YYYY-MM-DD, null — без срока. Для относительных сроков и исправления старых записей загрузи skill task-management. Задачи не выдумываются из памяти: список ведёт тул."
+      "description": "Задачи: add (text, priority, due), list (includeDone; по умолчанию — незавершённые), update (id, due, expectedDue — прежний срок из list), done (id), remove (id; закрывает как удалённую, запись и номер остаются). Срок — календарная дата YYYY-MM-DD, null — без срока. Для относительных сроков и исправления старых записей загрузи skill task-management. Задачи не выдумываются из памяти: список ведёт тул."
     },
     {
       "type": "function",

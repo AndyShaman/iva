@@ -63,7 +63,7 @@ test("helper uses chat definitions and static block, retaining owner instruction
     /owner-fixture/,
   );
 });
-test("R7 Telegram chat and existing turns retain 91dd9bb6 wire bytes except the approved tools and prefix switch", async () => {
+test("R7 Telegram chat and existing turns retain 91dd9bb6 wire bytes except approved tools, tasks description and prefix switch", async () => {
   const base = JSON.parse(
     await readFile(
       new URL("./fixtures/helper-w3-base.json", import.meta.url),
@@ -78,11 +78,19 @@ test("R7 Telegram chat and existing turns retain 91dd9bb6 wire bytes except the 
       new URL("./fixtures/helper-enabled-wire.json", import.meta.url),
       "utf8",
     ),
-  ) as { tools: { name: string }[]; ruPrefix: unknown[] };
+  ) as { tools: { name: string; description: string }[]; ruPrefix: unknown[] };
   assert.equal(base.base, "91dd9bb6");
+  const tasks = enabled.tools.find((tool) => tool.name === "tasks");
+  assert.ok(tasks);
   const previous = base.wires["wire-0"],
     removed = new Set(["agent", "task_cancel", "task_update", "planner"]),
-    tools = previous.tools.filter((tool) => !removed.has(tool.name)),
+    tools = previous.tools
+      .filter((tool) => !removed.has(tool.name))
+      .map((tool) =>
+        tool.name === "tasks"
+          ? { ...tool, description: tasks.description }
+          : tool,
+      ),
     helper = enabled.tools.find((tool) => tool.name === "helper");
   assert.ok(helper);
   assert.equal(previous.tools.length, 140);
