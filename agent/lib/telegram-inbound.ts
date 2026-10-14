@@ -20,6 +20,7 @@ import {
   contentKeyNames,
   mediaFromRaw,
   messageParts,
+  TELEGRAM_MESSAGE_ENVELOPE_KEYS as envelope,
   type TelegramRawMessage,
 } from "./telegram-parts.ts";
 import { traceInboundReceived } from "./trace.ts";
@@ -414,6 +415,9 @@ async function unreadableNote(
 ): Promise<void> {
   if (message.chat.type !== "private" || message.from?.isBot === true) return;
   if (!nothingReadable(partsRaw, readings)) return;
+  const keys = partsRaw.flatMap((raw) => Object.keys(raw));
+  const topic = keys.some((key) => key.includes("forum_topic_"));
+  if (topic && keys.every((key) => envelope.has(key))) return;
   const names = contentKeyNames(partsRaw);
   const shown = names.slice(0, UNREADABLE_FIELD_LIMIT).join(", ");
   const list = names.length > UNREADABLE_FIELD_LIMIT ? `${shown}, …` : shown;

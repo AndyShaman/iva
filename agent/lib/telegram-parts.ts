@@ -52,6 +52,12 @@ export const TELEGRAM_MESSAGE_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   // таймер автоудаления — это не обращение к боту, ответа не ждут.
   "pinned_message",
   "message_auto_delete_timer_changed",
+  "forum_topic_created",
+  "forum_topic_edited",
+  "forum_topic_closed",
+  "forum_topic_reopened",
+  "general_forum_topic_hidden",
+  "general_forum_topic_unhidden",
   "iva_parts",
   "iva_buffered",
   TELEGRAM_QUEUE_RECEIPT_FIELD,

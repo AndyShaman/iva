@@ -853,6 +853,49 @@ function unreadable(extra: Record<string, unknown>, type = "private") {
   });
 }
 
+await test("forum topic service events stay silent and start no turn", async () => {
+  for (const fields of [
+    { forum_topic_created: { name: "Тема", icon_color: 1 } },
+    { forum_topic_edited: { name: "Новое имя" } },
+    { forum_topic_closed: {} },
+    { forum_topic_reopened: {} },
+    { general_forum_topic_hidden: {} },
+    { general_forum_topic_unhidden: {} },
+  ]) {
+    const { calls, effects } = harness();
+    assert.equal(
+      await inbound.runTelegramInbound(unreadable(fields), effects),
+      null,
+    );
+    assert.deepEqual(calls.sent, [], Object.keys(fields).join());
+    assert.equal(calls.accepted, 0);
+    assert.equal(calls.typing, 0);
+  }
+});
+
+await test("topic metadata preserves unknown content notices and user text", async () => {
+  const fields = { forum_topic_created: { name: "Тема", icon_color: 1 } };
+  const unknown = harness();
+  assert.equal(
+    await inbound.runTelegramInbound(
+      unreadable({ ...fields, some_future_field: {} }),
+      unknown.effects,
+    ),
+    null,
+  );
+  assert.equal(unknown.calls.sent.length, 1);
+  assert.match(unknown.calls.sent[0], /fields: some_future_field/u);
+  const text = harness();
+  assert.ok(
+    await inbound.runTelegramInbound(
+      privateText("Привет", fields),
+      text.effects,
+    ),
+  );
+  assert.equal(text.calls.accepted, 1);
+  assert.deepEqual(text.calls.sent, []);
+});
+
 await test("нечитаемое сообщение в личке получает ровно одно уведомление с именем поля", async () => {
   const before = dailyText();
   const { calls, effects } = harness();

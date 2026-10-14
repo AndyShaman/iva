@@ -1406,6 +1406,35 @@ void test("REGRESSION: rich_message from an allowed private sender is admitted",
   assert.equal(shouldQueueBusyUpdate(richOnlyUpdate(), BUSY_OPTIONS), true);
 });
 
+void test("forum topic metadata enters the queue only with user content", () => {
+  const { message_id, date, chat, from } = privateUpdate(1, "").message;
+  const message = {
+    message_id,
+    date,
+    chat,
+    from,
+    forum_topic_created: { name: "Тема", icon_color: 1 },
+  };
+  assert.equal(
+    shouldQueueBusyUpdate({ update_id: 1, message }, BUSY_OPTIONS),
+    false,
+  );
+  assert.equal(
+    shouldQueueBusyUpdate(
+      { update_id: 2, message: { ...message, some_future_field: {} } },
+      BUSY_OPTIONS,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldQueueBusyUpdate(
+      { update_id: 3, message: { ...message, text: "Привет" } },
+      BUSY_OPTIONS,
+    ),
+    true,
+  );
+});
+
 void test("a message of envelope keys alone carries nothing, whitespace text included", () => {
   assert.equal(
     shouldQueueBusyUpdate(
