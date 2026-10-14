@@ -20,6 +20,7 @@ type Row = {
   due: string | null;
   done: boolean;
   createdAt: string;
+  removedAt?: string;
   ownerNote?: string;
 };
 type Answer = {
@@ -29,6 +30,7 @@ type Answer = {
   added?: Row;
   updated?: Row;
   current?: Row;
+  removed?: Row;
 };
 const call = async (input: Input): Promise<Answer> =>
   (await tool.execute(input, {} as never)) as Answer;
@@ -107,6 +109,95 @@ await test("legacy deadlines survive list and unrelated add/done; update repairs
   assert.deepEqual(answer.updated, { ...row, due: "2026-09-24" });
   assert.deepEqual(read()[0], answer.updated);
   assert.equal(read()[1].done, true);
+});
+
+await test("#290: remove preserves the record and id; stale commands preserve bytes", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 14, 12) });
+  reset([original()]);
+  const removed = await call({ action: "remove", id: 117 });
+  assert.equal(removed.ok, true);
+  assert.deepEqual(read(), [
+    {
+      ...original(),
+      done: true,
+      removedAt: "2026-10-14T12:00:00.000Z",
+    },
+  ]);
+  assert.deepEqual(removed.removed, read()[0]);
+  const before = readFileSync(file, "utf8");
+  t.mock.timers.tick(1000);
+  assert.equal((await call({ action: "remove", id: 117 })).ok, true);
+  for (const input of [
+    { action: "done", id: 117 },
+    { action: "update", id: 117, due: null, expectedDue: "завтра" },
+  ] satisfies Input[]) {
+    const answer = await call(input);
+    assert.equal(answer.ok, false);
+    assert.equal(answer.error, "Задача 117 удалена");
+  }
+  for (const includeDone of [false, true])
+    assert.deepEqual((await call({ action: "list", includeDone })).tasks, []);
+  assert.equal(readFileSync(file, "utf8"), before);
+  const added = await call({ action: "add", text: "другое дело" });
+  assert.equal(added.added?.id, 118);
+});
+
+await test(`property #290: issued ids keep their original task across removals (seed ${seed})`, async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(
+        fc.record({ text: fc.string({ minLength: 1 }), remove: fc.boolean() }),
+        { minLength: 2, maxLength: 25 },
+      ),
+      async (operations) => {
+        reset();
+        const issued = new Map<number, string>();
+        const visible = new Map<number, string>();
+        let previous = 0;
+        for (const { text, remove } of operations) {
+          const answer = await call({ action: "add", text });
+          assert.equal(answer.ok, true);
+          const row = answer.added!;
+          assert.ok(row.id > previous, JSON.stringify({ previous, row }));
+          previous = row.id;
+          issued.set(row.id, text);
+          visible.set(row.id, text);
+          if (remove) {
+            assert.equal(
+              (await call({ action: "remove", id: row.id })).ok,
+              true,
+            );
+            visible.delete(row.id);
+          }
+          assert.deepEqual(
+            new Map(read().map((item) => [item.id, item.text])),
+            issued,
+          );
+          for (const includeDone of [false, true])
+            assert.deepEqual(
+              new Map(
+                (await call({ action: "list", includeDone })).tasks!.map(
+                  (item) => [item.id, item.text],
+                ),
+              ),
+              visible,
+            );
+        }
+      },
+    ),
+    {
+      seed,
+      numRuns: 60,
+      examples: [
+        [
+          [
+            { text: "старое", remove: true },
+            { text: "новое", remove: false },
+          ],
+        ],
+      ],
+    },
+  );
 });
 
 await test("update explicitly clears a deadline and accepts a previously absent deadline", async () => {

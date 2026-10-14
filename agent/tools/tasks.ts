@@ -24,6 +24,7 @@ interface Task {
   due: string | null;
   done: boolean;
   createdAt: string;
+  removedAt?: string;
 }
 
 // Нет файла → []. Битый JSON — НЕ пустой список: loadJsonStrict откладывает бэкап и
@@ -65,7 +66,8 @@ function isTask(value: unknown): value is Task {
 export default defineTool({
   description:
     "Задачи: add (text, priority, due), list (includeDone; по умолчанию — незавершённые), " +
-    "update (id, due, expectedDue — прежний срок из list), done/remove (id). " +
+    "update (id, due, expectedDue — прежний срок из list), done (id), " +
+    "remove (id; закрывает как удалённую, запись и номер остаются). " +
     "Срок — календарная дата YYYY-MM-DD, null — без срока. Для относительных сроков и " +
     "исправления старых записей загрузи skill task-management. Задачи не выдумываются из памяти: список ведёт тул.",
   inputSchema: z.object({
@@ -165,7 +167,9 @@ async function run({
       return { ok: true, added: task, total: tasks.length };
     }
     case "list": {
-      const items = includeDone ? tasks : tasks.filter((t) => !t.done);
+      const items = tasks.filter(
+        (t) => t.removedAt === undefined && (includeDone || !t.done),
+      );
       return { ok: true, count: items.length, tasks: items };
     }
     case "update": {
@@ -178,6 +182,8 @@ async function run({
         };
       const task = tasks.find((item) => item.id === id);
       if (!task) return { ok: false, error: `Задача ${id} не найдена` };
+      if (task.removedAt !== undefined)
+        return { ok: false, error: `Задача ${id} удалена` };
       if (task.due !== expectedDue)
         return {
           ok: false,
@@ -192,15 +198,20 @@ async function run({
       if (!id) return { ok: false, error: "Для done нужен id" };
       const t = tasks.find((x) => x.id === id);
       if (!t) return { ok: false, error: `Задача ${id} не найдена` };
+      if (t.removedAt !== undefined)
+        return { ok: false, error: `Задача ${id} удалена` };
       t.done = true;
       await save(tasks);
       return { ok: true, done: t };
     }
     case "remove": {
       if (!id) return { ok: false, error: "Для remove нужен id" };
-      const idx = tasks.findIndex((x) => x.id === id);
-      if (idx === -1) return { ok: false, error: `Задача ${id} не найдена` };
-      const [removed] = tasks.splice(idx, 1);
+      const removed = tasks.find((x) => x.id === id);
+      if (!removed) return { ok: false, error: `Задача ${id} не найдена` };
+      if (removed.removedAt !== undefined)
+        return { ok: true, removed, total: tasks.length };
+      removed.done = true;
+      removed.removedAt = new Date().toISOString();
       await save(tasks);
       return { ok: true, removed, total: tasks.length };
     }

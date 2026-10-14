@@ -8,7 +8,13 @@
 // `.scratch/work/reviews/pbt-deepseek-4-3-2026-09-12.md`.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +24,7 @@ import fc from "fast-check";
 import "./lib/ts-esm-hooks.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "pbt-r3-tasks-"));
+process.on("exit", () => rmSync(dataDir, { recursive: true, force: true }));
 process.env.ASSISTANT_DATA_DIR = dataDir;
 
 const { default: tasksTool } = await import("../agent/tools/tasks.ts");
@@ -32,6 +39,7 @@ type TaskRow = {
   due?: unknown;
   done?: unknown;
   createdAt?: unknown;
+  removedAt?: unknown;
 };
 type Answer = {
   ok?: boolean;
@@ -201,12 +209,12 @@ await test("зелёное: случайный поток add/done/remove из �
       assert.ok(isPositiveInt(row.id), JSON.stringify(row));
       assert.equal(typeof row.text, "string");
       if (rnd() < 0.3) {
-        const outcome = await call(
-          rnd() < 0.5
-            ? { action: "done", id: row.id as number }
-            : { action: "remove", id: row.id as number },
-        );
-        assert.ok(outcome.ok, JSON.stringify(outcome));
+        const action = rnd() < 0.5 ? "done" : "remove";
+        const outcome = await call({ action, id: row.id as number });
+        if (row.removedAt !== undefined && action === "done") {
+          assert.equal(outcome.ok, false);
+          assert.equal(outcome.error, `Задача ${String(row.id)} удалена`);
+        } else assert.ok(outcome.ok, JSON.stringify(outcome));
         if (outcome.removed) removedTexts.add(String(outcome.removed.text));
       }
     }
