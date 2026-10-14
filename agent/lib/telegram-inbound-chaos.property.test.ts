@@ -156,8 +156,10 @@ await test("произвольный мусор в апдейте не брос�
       const { effects } = harness();
       const turn = await inbound.runTelegramInbound(message, effects);
       if (turn !== null) {
-        assert.ok(Array.isArray(turn.context));
-        for (const line of turn.context) assert.equal(typeof line, "string");
+        const modelText = [message.text, ...(turn.context ?? [])];
+        assert.equal(modelText[0], "мусор");
+        assert.equal(turn.auth?.principalId, "telegram:42");
+        for (const line of modelText) assert.equal(typeof line, "string");
       }
     }),
     { seed: 20_260_913, numRuns: 300 },

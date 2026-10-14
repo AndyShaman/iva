@@ -502,7 +502,7 @@ function carrierTextEntries(
   const flagged = logInboundFindings(sanitized);
   return {
     entries: gatedTextEntries(sanitized, dailyPath),
-    flagged,
+    flagged: flagged && (sanitized.blocked || sanitized.text !== labelled),
   };
 }
 
