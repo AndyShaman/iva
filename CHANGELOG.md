@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - 🔧 **В дневном файле остаются ответы владельцу**: служебные ответы CLI и HTTP пропускаются; ответы в Telegram, напоминания, Watch, Brief и другие видимые фоновые ответы сохраняются. Daily transcripts skip CLI and HTTP service replies while keeping Telegram and visible background replies.
+- 🔧 **Проверка ночи читает факты запуска**: скилл фоновой проверки читает раздел Schedules пакета `iva diagnose`, где видны результат ночи и её незакрытый провал. Background checks read nightly Job facts from the existing diagnose package.
+
 - 🔧 **Semantic merge использует настроенный путь данных**: скилл восстановления берёт `customRoot` из машинного статуса и пишет правку туда, откуда resolver читает сторону `edited`. Recovery writes semantic merges under the resolved custom root, including paths with spaces.
 
 - 🔧 **Восстановление подсказывает шаг для своей установки**: машинный ответ после разрешения конфликта ведёт к процедуре `update-recovery`, которая различает установленную Version и developer checkout. Successful conflict resolution points to the installation's existing activation procedure.

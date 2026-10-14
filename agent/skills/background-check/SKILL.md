@@ -23,7 +23,7 @@ A check observes a job; it does not keep a model turn open until the job finishe
    basenames need a job-owned temporary directory and unique paths per input,
    not overwriting `/tmp/<basename>`. A restart can repeat external side effects;
    establish resume safety and the owner's authorization first.
-4. An interrupted `memory-night`: read `iva jobs`, the failed job's log, the raw
+4. An interrupted `memory-night`: read `iva diagnose` and its Schedules section, the failed job's log, the raw
    day in `vault/daily/` and its cache in `data/memory/night/`. A day not processed
    that night is not proof that a Card was deleted. The next night resumes an
    unfinished day from its cache. Never delete that cache, raw days or Cards to
