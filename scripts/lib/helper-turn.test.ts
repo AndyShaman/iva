@@ -35,7 +35,8 @@ test("R1 close during a busy stream cancels within one check and retains the slo
   let closedAt = 0,
     cancels = 0,
     firstCancelAt = 0,
-    finalized = false;
+    finalized = false,
+    terminalSent = false;
   const response = Object.assign(
     (async function* () {
       yield { type: "message.completed", data: { message: "saved partial" } };
@@ -46,7 +47,8 @@ test("R1 close during a busy stream cancels within one check and retains the slo
         t.mock.timers.tick(1);
         yield { type: "message.appended", data: { messageDelta: "busy" } };
       }
-      await new Promise(() => {});
+      terminalSent = true;
+      yield { type: "turn.cancelled" };
     })(),
     { sessionId: "busy", cancel: () => Promise.resolve() },
   );
@@ -61,7 +63,7 @@ test("R1 close during a busy stream cancels within one check and retains the slo
               assert.ok((await s.getHelper(id))?.run);
               assert.equal(finalized, false);
               if (++cancels === 1) firstCancelAt = Date.now();
-              return { status: cancels === 1 ? "accepted" : "no_active_turn" };
+              return { status: "accepted", sessionId: "busy" };
             },
             reset: () => Promise.resolve(),
           },
@@ -74,7 +76,8 @@ test("R1 close during a busy stream cancels within one check and retains the slo
     signal: controller.signal,
     onSession: (sessionId) => s.recordHelperSession(id, 2000, sessionId),
     onCompleted: async (turn) => {
-      assert.equal(cancels, 2);
+      assert.equal(terminalSent, true);
+      assert.ok(cancels >= 1);
       assert.equal(turn.partial, "saved partial");
       await s.finalizeHelper(
         id,
@@ -103,14 +106,18 @@ test("R1 close during a busy stream cancels within one check and retains the slo
 function fixture(
   events: TurnStreamEvent[],
   cancel: () => Promise<unknown> = () =>
-    Promise.resolve({ status: "no_active_turn" }),
+    Promise.resolve({ status: "accepted", sessionId: "s" }),
   stall = false,
 ) {
   const calls: string[] = [];
   const response = Object.assign(
     (async function* () {
       for (const e of events) yield e;
-      if (stall) await new Promise(() => {});
+      if (stall) {
+        while (!calls.includes("cancel"))
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        yield { type: "turn.cancelled" };
+      }
     })(),
     { sessionId: "s", cancel: () => Promise.resolve() },
   );
@@ -174,7 +181,7 @@ test("helper completed waiting: last completed text, reason, usage and finalize 
   assert.equal(usage.length, 1);
   assert.deepEqual(f.calls, ["finalize", "reset"]);
 });
-test("helper question waiting fails and confirms cancel before finalize", async () => {
+test("helper question stream closes without a terminal event; tick owns reset and finalization", async () => {
   const f = fixture([
     { type: "message.completed", data: { message: "partial" } },
     { type: "input.requested", data: { requests: [{ kind: "question" }] } },
@@ -193,7 +200,8 @@ test("helper question waiting fails and confirms cancel before finalize", async 
   assert.equal(r.status, "failed");
   assert.match(r.message ?? "", /помощник ждал ответа/);
   assert.equal(r.partial, "partial");
-  assert.deepEqual(f.calls, ["cancel", "finalize", "reset"]);
+  assert.ok(!f.calls.includes("finalize"));
+  assert.ok(!f.calls.includes("reset"));
 });
 test("helper early stream end preserves run: no completion callback or reset", async () => {
   const f = fixture([
@@ -211,7 +219,7 @@ test("helper early stream end preserves run: no completion callback or reset", a
   assert.equal(r.partial, "partial");
   assert.deepEqual(f.calls, []);
 });
-test("helper abort holds until cancel no_active_turn; late completed text excluded", async () => {
+test("helper abort: cancel always accepted; terminal stream event permits finalize, late text excluded", async () => {
   const abort = new AbortController();
   let cancellations = 0;
   const f = fixture(
@@ -223,10 +231,10 @@ test("helper abort holds until cancel no_active_turn; late completed text exclud
       },
       { type: "message.completed", data: { message: "late" } },
     ],
-    () =>
-      Promise.resolve({
-        status: ++cancellations === 1 ? "accepted" : "no_active_turn",
-      }),
+    () => {
+      cancellations++;
+      return Promise.resolve({ status: "accepted", sessionId: "s" });
+    },
     true,
   );
   const r = await runReminderTurn("task", options, {
@@ -237,7 +245,7 @@ test("helper abort holds until cancel no_active_turn; late completed text exclud
       abort.abort();
     },
     onCompleted: () => {
-      assert.ok(cancellations >= 2);
+      assert.ok(cancellations >= 1);
       f.calls.push("finalize");
       return Promise.resolve();
     },
@@ -249,7 +257,7 @@ test("helper abort holds until cancel no_active_turn; late completed text exclud
 test("unrecorded live session is canceled and failed only after observed end", async () => {
   const f = fixture(
     [],
-    () => Promise.resolve({ status: "no_active_turn" }),
+    () => Promise.resolve({ status: "accepted", sessionId: "s" }),
     true,
   );
   const r = await runReminderTurn("task", options, {
@@ -315,7 +323,8 @@ test("helper session limit and silence cancel and retain only completed partial"
     });
     assert.equal(r.status, "failed");
     assert.equal(r.partial, "saved");
-    assert.deepEqual(f.calls, ["cancel", "reset"]);
+    assert.ok(f.calls.filter((call) => call === "cancel").length >= 1);
+    assert.equal(f.calls.at(-1), "reset");
   }
 });
 
@@ -381,3 +390,21 @@ test("helper marker on initiator with current chat still uses the static helper 
     assert.match(JSON.stringify(block), /background helper of Iva/);
   }
 });
+
+test(
+  "F8 ended stream with cancellation always accepted returns without finalizing; tick owns reset",
+  { timeout: 5000 },
+  async () => {
+    const f = fixture(
+      [{ type: "input.requested", data: { requests: [{ kind: "question" }] } }],
+      () => Promise.resolve({ status: "accepted", sessionId: "s" }),
+    );
+    const turn = await runReminderTurn("task", options, {
+      createClient: () => Promise.resolve(f.client),
+      helperCheckMs: 1,
+      onCompleted: () => assert.fail("stream has no terminal event"),
+    });
+    assert.equal(turn.status, "failed");
+    assert.ok(!f.calls.includes("reset"));
+  },
+);

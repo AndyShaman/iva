@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runHelper } from "./run.ts";
+import { runHelperTick } from "../../agent/lib/helper-tick.ts";
 import * as s from "../../agent/lib/helper-store.ts";
 const chat = { id: "42", threadId: null };
 for (const { scenario, reason } of [
@@ -29,7 +30,7 @@ for (const { scenario, reason } of [
       ].map((reason) => ({ scenario, reason }))
     : [{ scenario, reason: "" }],
 )) {
-  test(`real client + process/store: ${scenario}${reason ? ": " + reason : ""}, confirmed cancel, last completed partial and atomic result`, async (t) => {
+  test(`real client + process/store: ${scenario}${reason ? ": " + reason : ""}, terminal stream or tick reset proves end before atomic outcome`, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), "iva-helper-failure-"));
     const prev = { ...process.env };
     Object.assign(process.env, {
@@ -78,17 +79,17 @@ for (const { scenario, reason } of [
       if (u.endsWith("/cancel")) {
         assert.ok((await s.getHelper(id))?.run);
         cancels++;
-        if (cancels === 1) throw Error("network refused cancel");
         return Response.json({
           ok: true,
-          ...(cancels === 2
-            ? { status: "accepted", sessionId: "server" }
-            : { status: "no_active_turn" }),
+          status: "accepted",
+          sessionId: "server",
         });
       }
       if (u.endsWith("/reset")) {
         reset++;
-        assert.equal((await s.getHelper(id))?.run, null);
+        if (["question", "session-limit", "stream-error"].includes(scenario))
+          assert.ok((await s.getHelper(id))?.run);
+        else assert.equal((await s.getHelper(id))?.run, null);
         return Response.json({ ok: true, status: "no_active_session" });
       }
       assert.ok(u.includes("/stream"));
@@ -136,6 +137,10 @@ for (const { scenario, reason } of [
     });
     t.mock.method(console, "error", () => {});
     await runHelper(id);
+    const lostStream = ["question", "session-limit", "stream-error"].includes(
+      scenario,
+    );
+    if (lostStream) await runHelperTick({ completed: { id, firedAt: 2000 } });
     const row = await s.getHelper(id);
     assert.ok(row);
     assert.equal(row.run, null);
@@ -146,11 +151,16 @@ for (const { scenario, reason } of [
         ? "stopped"
         : scenario === "ceiling"
           ? "ceiling"
-          : scenario === "rename"
-            ? "done"
-            : "failed",
+          : lostStream
+            ? "interrupted"
+            : scenario === "rename"
+              ? "done"
+              : "failed",
     );
-    if (scenario !== "rename") {
+    if (lostStream) {
+      assert.equal(row.summary, null);
+      await assert.rejects(readFile(s.helperResultPath(id)));
+    } else if (scenario !== "rename") {
       assert.equal(await readFile(s.helperResultPath(id), "utf8"), "second");
       assert.equal(row.summary, "second");
     } else {
@@ -159,7 +169,7 @@ for (const { scenario, reason } of [
       await assert.rejects(readFile(s.helperResultPath(id)));
     }
     if (["question", "session-limit", "stream-error"].includes(scenario))
-      assert.equal(cancels, 3);
+      assert.ok(cancels >= 1);
     if (scenario === "closed") assert.equal(row.status, "closed");
     if (scenario === "failed") assert.equal(row.reason, reason);
     else assert.doesNotMatch(row.reason ?? "", /\/menu/);

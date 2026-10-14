@@ -60,7 +60,7 @@ test(
     import { access, writeFile } from "node:fs/promises";
     import { join } from "node:path";
     const gate = join(process.env.ASSISTANT_DATA_DIR, "allow-cancel");
-    let completed = false;
+    let completed = false, stream;
     const timeout = setTimeout, interval = setInterval;
     globalThis.setTimeout = (fn, delay, ...args) => timeout(fn, delay <= 15000 && fn.toString().includes("resolve(null)") ? 20 : delay, ...args);
     globalThis.setInterval = (fn, delay, ...args) => interval(fn, delay === 15000 ? 20 : delay, ...args);
@@ -79,11 +79,13 @@ test(
       if (u.endsWith("/cancel")) {
         while (!(await access(gate).then(() => true, () => false)))
           await new Promise(resolve => timeout(resolve, 10));
-        return Response.json({ ok: true, status: "no_active_turn" });
+        stream.enqueue(new TextEncoder().encode(JSON.stringify({ type: "turn.cancelled" }) + "\\n"));
+        return Response.json({ ok: true, status: "accepted", sessionId: "fixture-server" });
       }
       if (u.endsWith("/reset")) return Response.json({ ok: true, status: "no_active_session" });
       if (!u.includes("/stream")) throw Error("unexpected request " + u);
       return new Response(new ReadableStream({ start(c) {
+        stream = c;
         const events = [
           { type: "message.completed", data: { message: "completed partial already received" } },
           { type: "step.completed", data: { usage: { inputTokens: 10, outputTokens: 2 }, providerModelId: "fixture-processed" } }
@@ -125,7 +127,7 @@ test(
     );
     await s.closeHelper(id, chat, Date.now());
     await runHelperTick({
-      cancel: () => Promise.resolve({ status: "no_active_turn" }),
+      cancel: () => assert.fail("stop alone is owned by the living client"),
     });
     await writeFile(join(dir, "allow-cancel"), "tick finished");
     await exited;
