@@ -102,7 +102,7 @@ Safe(x,y,a,g,r,n) ==
  [] OTHER -> FALSE
 Commit(y,a,g,r) ==
  /\ s' = y
- /\ audit' = IF ~TrackSafety THEN audit ELSE IF a \notin {"Start","Due","Settle","CreateNotice","OwnerEdit","OwnerResume","OwnerClose","SweepRow","SweepGoal","PersistLast"} THEN audit ELSE
+ /\ audit' = IF ~TrackSafety THEN audit ELSE
      [n \in SafetyNames |-> audit[n] /\ Safe(s,y,a,g,r,n)]
 Init ==
  /\ s = [g |-> [g \in Goals |-> IF Mode="day" /\ g=1 THEN LoadedDayGoal ELSE EmptyGoal], r |-> [r \in RowIds |-> EmptyRow],
@@ -139,7 +139,8 @@ FinishSplit ==
      !.split=0],"FinishSplit",g,r)
 Claim(r) ==
  /\ s.r[r].phase="pending" /\ s.g[s.r[r].goal].status="active"
- /\ Commit([s EXCEPT !.r[r].phase="running", !.r[r].client="live"],"Claim",s.r[r].goal,r)
+ /\ Commit([s EXCEPT !.r[r].phase="running", !.r[r].client="live",
+     !.g[s.r[r].goal].rev=IF Mutant="claim-rev" THEN @+1 ELSE @],"Claim",s.r[r].goal,r)
 \* The server hook can record the id and report after the HTTP client dies;
 \* restart ends every old server turn, including one without a recorded id.
 RecordSession(r) ==

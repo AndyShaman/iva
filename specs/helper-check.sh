@@ -5,6 +5,7 @@ set -u
 JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--Xmx3g}
 export JAVA_TOOL_OPTIONS
 cd "$(dirname "$0")" || exit 2
+. ./tlc-result.sh || exit 2
 ROOT=$(cd .. && pwd) || exit 2
 TLC=${TLC:-$(command -v tlc || printf '%s/.local/bin/tlc' "$HOME")}
 [ -x "$TLC" ] || { echo 'helper-check: tlc not found (set TLC=/path/to/tlc)'; exit 2; }
@@ -49,17 +50,8 @@ check() {
     -workers "$workers" -deadlock -metadir "$META/$cfg.states" \
     -config "$cfg.cfg" "$module.tla" >"$log" 2>&1
   code=$?
-  got=$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$log" | head -1)
-  if [ "$code" -eq 0 ] && ! grep -q '^Error:' "$log"; then
-    if grep -q '^Model checking completed. No error has been found.' "$log"; then
-      got=none
-    elif [ "$CHECK_MODE" = simulate ] && grep -q '^Progress: .* states checked.' "$log" && grep -q '^Finished in ' "$log"; then
-      got=none
-    fi
-  elif [ "$code" -eq 13 ] && grep -q '^Error: Temporal properties were violated' "$log"; then
-    # Для ожидаемого temporal witness cfg должен иметь ровно одно свойство.
-    got=$(sed -n 's/^PROPERTY \([A-Za-z0-9_]*\)$/\1/p' "$cfg.cfg")
-  fi
+  valid=false
+  tlc_expect "$log" "$code" "$cfg.cfg" "$expect" "" "${CHECK_MODE:-bfs}" && valid=true
   states=$(sed -n 's/.* \([0-9,]*\) distinct states found.*/\1/p' "$log" | tail -1)
   checked=$(sed -n 's/^Progress: \([0-9,]*\) states checked.*/\1/p' "$log" | tail -1)
   elapsed=$(sed -n 's/^Finished in \(.*\) at .*/\1/p' "$log" | tail -1)
@@ -68,13 +60,7 @@ check() {
     cp "$log" "$LOG_DIR/$cfg.log" || return 2
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$cfg" "$expect" "${got:-error}" "$code" "${states:-unknown}" "${elapsed:-unknown}" "${load:-unavailable}" >> "$LOG_DIR/results.tsv"
   fi
-  valid=false
-  [ "$got" = none ] && [ "$code" -eq 0 ] && valid=true
-  [ -n "$got" ] && [ "$got" != none ] && [ "$code" -eq 12 ] && valid=true
-  [ -n "$got" ] && [ "$code" -eq 13 ] &&
-    grep -q '^Error: Temporal properties were violated' "$log" &&
-    [ "$(sed -n 's/^PROPERTY \([A-Za-z0-9_]*\)$/\1/p' "$cfg.cfg")" = "$got" ] && valid=true
-  if [ "$got" = "$expect" ] && [ "$valid" = true ]; then
+  if [ "$valid" = true ]; then
     echo "OK $cfg: $got; mode=$CHECK_MODE; exit=$code; distinct=${states:-unknown}; checked=${checked:-unknown}; time=${elapsed:-unknown}"
     ok=$((ok+1))
   else

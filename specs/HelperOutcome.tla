@@ -3,19 +3,21 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANT Mutant
 Helpers == {"a", "b"}
 Keep == 1
-VARIABLE s
-vars == <<s>>
+VARIABLES s, readPure
+vars == <<s, readPure>>
+Durable(x) == <<x.status, x.outcome, x.finishes, x.finished, x.deliveredAt, x.retained>>
 \* Session/turn belongs to consumer memory; durable row holds only deliveredAt.
 Ready(h) == s.status[h] = "finished" /\ s.deliveredAt[h] = 0
-Init == s = [status |-> [h \in Helpers |-> "pending"],
+InitCore == s = [status |-> [h \in Helpers |-> "pending"],
   outcome |-> [h \in Helpers |-> FALSE], finishes |-> [h \in Helpers |-> 0],
   finished |-> [h \in Helpers |-> 0],
   deliveredAt |-> [h \in Helpers |-> 0], retained |-> Helpers,
   session |-> 1, reads |-> {}, previousReads |-> {}, readCounts |-> [h \in Helpers |-> 0],
   replied |-> FALSE, nonempty |-> FALSE, now |-> 0,
-  proof |-> [h \in Helpers |-> TRUE], readDirty |-> FALSE,
+  proof |-> [h \in Helpers |-> TRUE],
   lostUnread |-> FALSE, sweptEarly |-> FALSE, readAuthorized |-> TRUE,
   bridge |-> "online", events |-> {}, offlineFinished |-> {}, bridgeReturned |-> FALSE]
+Init == InitCore /\ readPure = TRUE
 Finish(h) ==
   /\ s.status[h] = "pending" \/ (Mutant = "finish-twice" /\ s.finishes[h] = 1)
   /\ s' = [s EXCEPT !.status[h] = "finished", !.outcome[h] = TRUE,
@@ -26,8 +28,10 @@ Read(h,actor) ==
   /\ actor = "owner" \/ Mutant = "foreign-read"
   /\ h \in s.retained /\ s.outcome[h] /\ ~s.replied /\ h \notin s.reads
   /\ s.readCounts[h] < 2
+  /\ Mutant # "hide-unread"
   /\ s' = [s EXCEPT !.reads = @ \cup {h}, !.previousReads = @ \cup {h},
-       !.readCounts[h] = @ + 1, !.readDirty = @ \/ Mutant = "read-write",
+       !.readCounts[h] = @ + 1,
+       !.deliveredAt[h] = IF Mutant = "read-write" THEN s.now + 1 ELSE @,
        !.readAuthorized = @ /\ actor = "owner"]
 BridgeDown == /\ s.bridge = "online" /\ s' = [s EXCEPT !.bridge = "offline"]
 BridgeUp ==
@@ -63,9 +67,12 @@ Sweep(h) ==
   /\ s' = [s EXCEPT !.retained = @ \ {h},
        !.lostUnread = @ \/ Ready(h),
        !.sweptEarly = @ \/ (s.status[h] = "closed" /\ s.now < s.finished[h] + Keep)]
-Next == (\E h \in Helpers : Finish(h) \/ (\E actor \in {"owner","unknown","helper"} : Read(h,actor))
+NextCore == (\E h \in Helpers : Finish(h) \/ (\E actor \in {"owner","unknown","helper"} : Read(h,actor))
           \/ Mark(h) \/ Close(h) \/ Sweep(h))
         \/ (\E b \in BOOLEAN : Reply(b)) \/ Restart \/ Clock \/ BridgeDown \/ BridgeUp
+ObserveRead == readPure' = (readPure /\
+  ((\E h \in Helpers, actor \in {"owner","unknown","helper"} : Read(h,actor)) => Durable(s') = Durable(s)))
+Next == NextCore /\ ObserveRead
 Spec == Init /\ [][Next]_vars
 \* A finished offline remains available to Read; only B, finished after recovery, emits an event.
 BridgeRecoveryNext ==
@@ -73,7 +80,7 @@ BridgeRecoveryNext ==
   \/ (s.bridge = "offline" /\ s.status["a"] = "pending" /\ Finish("a"))
   \/ (s.status["a"] = "finished" /\ ~s.bridgeReturned /\ BridgeUp)
   \/ (s.bridgeReturned /\ s.status["b"] = "pending" /\ Finish("b"))
-BridgeRecoverySpec == Init /\ [][BridgeRecoveryNext]_vars
+BridgeRecoverySpec == Init /\ [][BridgeRecoveryNext /\ ObserveRead]_vars
 BridgeRecovered == s.bridgeReturned => s.bridge = "online"
 RecoveredDelivery == s.status["b"] = "finished" => "b" \in s.events
 OfflineNotReplayed == "a" \in s.offlineFinished => "a" \notin s.events
@@ -84,9 +91,10 @@ TypeOK == /\ s.session \in {1,2} /\ s.now \in 0..2
 OutcomeOnce == \A h \in Helpers : s.finishes[h] <= 1
 DeliveredAfterReply == \A h \in Helpers : s.deliveredAt[h] # 0 => s.proof[h]
 UndeliveredKept == ~s.lostUnread
-Visible == \A h \in Helpers : Ready(h) /\ h \in s.retained => Mutant # "hide-unread"
+Visible == \A h \in Helpers : Ready(h) /\ h \in s.retained /\ ~s.replied /\
+  h \notin s.reads /\ s.readCounts[h] < 2 => ENABLED Read(h,"owner")
 ClosedKept == ~s.sweptEarly
-ReadPure == ~s.readDirty
+ReadPure == readPure
 ClosedFinal == \A h \in Helpers : s.status[h] = "closed" => s.outcome[h]
 \* Reachability witnesses: multiple outcomes and repeated reading after restart are accepted.
 NoTwoReads == Cardinality(s.reads) < 2

@@ -8,9 +8,11 @@
 # временную папку.
 set -u
 cd "$(dirname "$0")" || exit 2
+. ./tlc-result.sh || exit 2
 TLC=${TLC:-$(command -v tlc || echo "$HOME/.local/bin/tlc")}
 [ -x "$TLC" ] || { echo "plugin-proposal-check: tlc not found (set TLC=/path/to/tlc)"; exit 2; }
 WORKERS=${WORKERS:-4}
+case "$WORKERS" in 1|2|3|4) ;; *) echo "WORKERS must be 1..4"; exit 2;; esac
 META=$(mktemp -d) || exit 2
 trap 'rm -rf "$META"' EXIT
 ok=0; failed=0
@@ -27,18 +29,16 @@ check() { # config expected [dropped invariant]; expected: none | <Invariant>
   w=$WORKERS; [ "$expect" = none ] || w=1
   cp PluginProposal.tla "$META/"
   (cd "$META" && "$TLC" -workers "$w" -deadlock -metadir "$run.states" -config "$run.cfg" PluginProposal.tla) >"$log" 2>&1
-  if grep -q "No error has been found" "$log"; then got=none
-  else got=$(sed -n 's/^Error: Invariant \([A-Za-z]*\) is violated.*/\1/p' "$log" | head -1); fi
-  if [ -z "$got" ]; then
-    echo "FAIL $name: tlc failed or gave no verdict"; sed -n '1,40p' "$log"; failed=$((failed+1)); return
-  fi
-  if [ "$got" = "$expect" ]; then
+  code=$?
+  valid=false
+  tlc_expect "$log" "$code" "$run.cfg" "$expect" "" && valid=true
+  if [ "$valid" = true ]; then
     if [ "$got" = none ]; then
       echo "OK $name: no error ($(sed -n 's/.* \([0-9,]*\) distinct states found.*/\1/p' "$log" | tail -1) distinct states)"
     else echo "OK $name: $got violated (expected)"; fi
     ok=$((ok+1))
   else
-    echo "FAIL $name: got '$got', expected '$expect'"; failed=$((failed+1))
+    echo "FAIL $name: got '${got:-error}', expected '$expect'"; failed=$((failed+1))
   fi
 }
 check PluginProposal-norename OneInstaller SweepSparesTaken
