@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers v7.2: tick-owned outcomes, bounded finish, adversarial durable kernel. BFS, <=4 workers.
+# Helpers v7.3: tick-owned outcomes, bounded finish, adversarial durable kernel. BFS, <=4 workers.
 # CHECK_MODE=simulate проверяет запуск и случайные трассы, без полного BFS.
 set -u
 JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--Xmx3g}
@@ -84,6 +84,9 @@ check() {
     [ -n "$got" ] || return 2
   fi
 }
+check HelperRun-v73-stop-before-end StopOnlyWhileRunning || exit 2
+check HelperRun-v73-stop-needs-snapshot StopCancelSent || exit 2
+check HelperRun-v73-end-cutoff SnapshotFolded || exit 2
 check HelperRun-v72-run none || exit 2
 check HelperRun-v72-silent none || exit 2
 check HelperRun-v72-restart none || exit 2

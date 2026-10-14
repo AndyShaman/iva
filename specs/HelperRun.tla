@@ -12,7 +12,8 @@ Texts == 0..3 \* 0: empty, 1/2: distinct messages, 3: quiet reply
 Empty == [status |-> "pending", run |-> FALSE, claimed |-> FALSE,
   fired |-> 0, owner |-> 1, creating |-> FALSE, created |-> FALSE, known |-> FALSE,
   kernel |-> FALSE, quarantined |-> FALSE, event |-> "none", text |-> 0,
-  messages |-> 0, usage |-> <<>>, stop |-> "none", stops |-> <<>>,
+  messages |-> 0, usage |-> <<>>, foldText |-> 0, foldUsage |-> <<>>,
+  stop |-> "none", stops |-> <<>>, stopOnEnd |-> FALSE, missedCancel |-> FALSE,
   outcome |-> "none", saved |-> 0, steps |-> 0, work |-> 0,
   attempts |-> 0, delivered |-> FALSE, resetQueued |-> FALSE, commits |-> <<>>]
 Init == s = [rows |-> [h \in Helpers |-> Empty], owner |-> 1, now |-> 0,
@@ -42,8 +43,10 @@ Commit(row, event, text, usage, startFault, delivered, outcome) ==
    stop |-> row.stop, stops |-> row.stops, claimed |-> row.claimed,
    startFault |-> startFault, oldOwner |-> row.owner # s.owner,
    known |-> row.known, delivered |-> delivered, at |-> s.now, fired |-> row.fired,
-   saved |-> IF Mutant = "drop-text" THEN 0 ELSE Usable(text),
-   steps |-> Len(usage), work |-> IF Mutant = "work-output" THEN 0 ELSE MeasuredWork(usage, 0)]
+   saved |-> IF Mutant = "drop-text" THEN 0 ELSE Usable(IF event # "none" THEN row.foldText ELSE text),
+   steps |-> Len(IF event # "none" THEN row.foldUsage ELSE usage),
+   work |-> IF Mutant = "work-output" THEN 0
+     ELSE MeasuredWork(IF event # "none" THEN row.foldUsage ELSE usage, 0)]
 Finished(row, event, text, usage, startFault, delivered, outcome) ==
   LET audit == Commit(row, event, text, usage, startFault, delivered, outcome)
   IN [row EXCEPT !.run = FALSE, !.creating = FALSE,
@@ -82,12 +85,15 @@ RecordFailed(h) ==
 \* irrelevant to the tick; the retained kernel flag witnesses a durable tail.
 Message(h, text) ==
   /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
-  /\ s.rows[h].event = "none" /\ s.rows[h].messages < 2
-  /\ s' = [s EXCEPT !.rows[h].text = text, !.rows[h].messages = @ + 1]
+  /\ s.rows[h].messages < 2
+  /\ s' = [s EXCEPT !.rows[h].text = text, !.rows[h].messages = @ + 1,
+       !.rows[h].foldText = IF Mutant = "end-cutoff" /\ s.rows[h].event # "none" THEN @ ELSE text]
 Usage(h, input, output) ==
   /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
-  /\ s.rows[h].event = "none" /\ Len(s.rows[h].usage) < 2
-  /\ s' = [s EXCEPT !.rows[h].usage = Append(@, [input |-> input, output |-> output])]
+  /\ Len(s.rows[h].usage) < 2
+  /\ LET usage == Append(s.rows[h].usage, [input |-> input, output |-> output])
+     IN s' = [s EXCEPT !.rows[h].usage = usage,
+       !.rows[h].foldUsage = IF Mutant = "end-cutoff" /\ s.rows[h].event # "none" THEN @ ELSE usage]
 KernelEvent(h, event) ==
   /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
   /\ s.rows[h].event = "none"
@@ -108,8 +114,8 @@ Close(h) ==
        Finished(row, "none", 0, <<>>, FALSE, FALSE, "stopped")]
 
 \* A minute advances only after its finite tick pass. Each HTTP operation returns or times out
-\* within HELPER_CALL_MS; the atomic row step represents these bounded calls, not a successful RPC.
-\* v7.2: a separate Schedule remains runnable while a reminder turn never returns.
+\* within HELPER_CHECK_MS; the atomic row step represents these bounded calls, not a successful RPC.
+\* v7.3: a separate Schedule remains runnable while a reminder turn never returns.
 TickStart ==
   /\ (Mutant # "shared-schedule" \/ ~s.reminderBusy)
   /\ s.phase = "idle" /\ s.lastTick < s.now
@@ -135,11 +141,13 @@ TickRow(h, read, reply) ==
          usage == IF readable THEN before.usage ELSE <<>>
          oldOwner == before.owner # s.owner
          atCeiling == s.now >= before.fired + Ceiling
-         row == IF event # "none" \/ oldOwner \/ ~readable THEN before
+         row == IF event # "none" \/ oldOwner \/ ~readable
+           \/ (atCeiling /\ Mutant # "stop-before-end") THEN before
            ELSE IF MeasuredWork(usage, 0) > 3 THEN SetStop(before, "ceiling")
            ELSE IF s.now >= before.fired + Deadline THEN SetStop(before, "deadline")
            ELSE before
-         cancelNeeded == before.known /\ (oldOwner \/ row.stop # "none" \/ atCeiling)
+         cancelNeeded == before.known /\ (oldOwner \/ row.stop # "none" \/ atCeiling \/ event # "none")
+           /\ (Mutant # "stop-needs-snapshot" \/ readable \/ oldOwner \/ atCeiling \/ event # "none")
          delivered == cancelNeeded /\ CancelDelivered(reply)
          cancelRow == IF cancelNeeded THEN [row EXCEPT !.attempts = @ + 1,
            !.delivered = @ \/ delivered] ELSE row
@@ -150,9 +158,13 @@ TickRow(h, read, reply) ==
          outcome == IF row.stop # "none" THEN StopOutcome(row.stop)
            ELSE IF event # "none" THEN EventOutcome(event, text)
            ELSE IF restartFinish THEN "interrupted" ELSE "deadline"
-         result == IF before.run /\ end THEN Finished(cancelRow, event, text, usage, FALSE, delivered,
+         \* Independent observers record whether the actual transition violates branch/cancel order.
+         observed == [cancelRow EXCEPT
+           !.stopOnEnd = @ \/ (before.stop = "none" /\ row.stop # "none" /\ end),
+           !.missedCancel = @ \/ (before.known /\ row.stop # "none" /\ ~cancelNeeded)]
+         result == IF before.run /\ end THEN Finished(observed, event, text, usage, FALSE, delivered,
            IF Mutant = "wrong-event" /\ event # "none" THEN "done" ELSE outcome)
-           ELSE cancelRow
+           ELSE observed
      IN s' = [s EXCEPT !.rows[h] = result, !.todo = @ \ {h}]
 TickDone ==
   /\ s.phase = "scan" /\ s.todo = {}
@@ -186,6 +198,11 @@ TypeOK == /\ s.reminderBusy \in BOOLEAN
 OneRun == Cardinality(Running) <= 1
 OutcomeOnce == \A h \in Helpers : Len(s.rows[h].commits) <= 1
 StopOnce == \A h \in Helpers : s.rows[h].stop = FirstStop(s.rows[h].stops)
+StopOnlyWhileRunning == \A h \in Helpers : ~s.rows[h].stopOnEnd
+StopCancelSent == \A h \in Helpers : ~s.rows[h].missedCancel
+SnapshotFolded == \A h \in Helpers :
+  /\ s.rows[h].foldText = s.rows[h].text
+  /\ s.rows[h].foldUsage = s.rows[h].usage
 EndAllowed(commit) == ~commit.claimed \/ commit.startFault \/ commit.event # "none"
   \/ (commit.oldOwner /\ (~commit.known \/ commit.delivered))
   \/ commit.at >= commit.fired + Ceiling

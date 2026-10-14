@@ -163,7 +163,7 @@ specs/queue-drain-check.sh
 
 ## Helpers
 
-`HelperRun.tla` описывает узел конца по v7.2 §2 и §7: один писатель исхода —
+`HelperRun.tla` описывает узел конца по v7.3 §2 и §7: один писатель исхода —
 минутный тик, durable-события ядра — среда. `cancel` доставляет команду и
 сохраняет возможность продолжения ядра. `resetQueued` обозначает cancel/reset по известному id после
 исхода; успех reset для finalize не требуется.
@@ -174,8 +174,10 @@ close и последовательного прохода тика. Оконч�
 по известному локально id, затем делает failed по CAS. Конечный снимок либо
 ошибка/срок/мусор/404 — отдельные ответы среды. Тик сначала использует первое
 терминальное событие; затем смену owner с подтверждённой доставкой отмены либо
-неизвестным id; затем первый stop по объёму/сроку; наконец безусловную границу
-часов. При читаемом снимке сохраняется последний завершённый пригодный текст.
+неизвестным id; затем безусловную границу часов. Только продолжающаяся строка
+до этой границы получает новый stop по объёму/сроку. При записанном stop отмена
+отправляется и при ошибке чтения снимка. Первый конец фиксирует исход, а текст
+и usage сворачиваются из всего снимка, включая события после первого конца.
 
 `Claim` разрешён в начальную минуту; время относительно firedAt нормализовано:
 deadline=2, grace=1. `TickStart` фиксирует строки прохода, `TickRow` исполняет
@@ -191,9 +193,10 @@ deadline=2, grace=1. `TickStart` фиксирует строки прохода,
 доставки cancel, reset или появления событий не предполагается.
 
 `TickRow` атомарно абстрагирует конечную последовательность HTTP-вызовов:
-каждый возвращает ответ или достигает HELPER_CHECK_MS. Реальные 15 секунд,
-замок/CAS при перекрытии двух проходов и порядок отдельных awaits проверяют
-тесты реализации; их wall-clock время модель минутных проходов не измеряет.
+каждый возвращает ответ или достигает HELPER_CHECK_MS.
+Перекрытие трёх тиков, гонку тика с перезапуском и замок/CAS проверяют тесты
+`agent/lib/helper-tick.test.ts`; модель представляет последовательные проходы.
+Реальные 15 секунд и порядок отдельных awaits относятся к проверкам реализации.
 Один слот относится к строкам таблицы: `OneRun` считает `run`, а не durable
 сессии. Durable work после interrupted/границы/lost-id — принятое следствие;
 `NoDetachedWork` даёт ожидаемый красный свидетель на обычной модели.
@@ -201,9 +204,14 @@ deadline=2, grace=1. `TickStart` фиксирует строки прохода,
 Свойства `HelperRun` читают состояние и независимую историю входов CAS:
 `OutcomeOnce` — число commits; `StopOnce` — первый stop в журнале просьб;
 `OutcomeJustified` — событие, отказ старта/T3, доставленная отмена при смене
-owner или часы; `OutcomeMatches` — таблица исходов v7.2; `RestartDelivered` —
+owner или часы; `OutcomeMatches` — таблица исходов v7.3; `RestartDelivered` —
 доставка перед interrupted при известном id; `PartialKept` и `WorkMeasured` —
-текст и формула по данным снимка; `RowConsistent` — исход/claim. Имена мутантов
+текст и формула по данным снимка; `RowConsistent` — исход/claim.
+`StopOnlyWhileRunning` читает наблюдатель назначения нового stop на финализирующем
+тике; `StopCancelSent` читает наблюдатель пропущенной отмены при известном id
+и записанном stop. Оба наблюдателя вычисляются из фактического перехода.
+`SnapshotFolded` сравнивает свёрнутые поля с полным журналом текста и usage,
+который продолжает обновляться после первого конца. Имена мутантов
 в свойствах отсутствуют. Мутанты меняют только переходы/запись результатов.
 Bounds: один helper, в capacity — два; 0..4 минуты, две завершённые реплики,
 две usage-записи, input 0..2/output 0..1, нормированный предел работы 3.
@@ -227,33 +235,36 @@ seed 20261013/fingerprint 1. Simulation отделена от полного п�
 Trap удаляет metadir/states; LOG_DIR сохраняет журналы и results.tsv.
 Ожидаемый invariant отказ требует exit12 и точное имя; temporal отказ — exit13
 и единственное свойство конфигурации. Инфраструктурная ошибка не убивает мутант.
-Всего 38 конфигураций: 21 HelperRun (10 зелёных, 9 разных мутантов,
+Всего 41 конфигурация: 24 HelperRun (10 зелёных, 12 разных мутантов,
 дополнительная temporal проверка «нет потолка», свидетель durable-хвоста)
 и 17 прежних HelperOutcome. Все прогоны выполняются на Mac mini.
 
-| Конфигурация                                                                   | Ожидаемый результат   |
-| ------------------------------------------------------------------------------ | --------------------- |
-| [HelperRun-v72-run.cfg](HelperRun-v72-run.cfg)                                 | PASS                  |
-| [HelperRun-v72-silent.cfg](HelperRun-v72-silent.cfg)                           | PASS                  |
-| [HelperRun-v72-restart.cfg](HelperRun-v72-restart.cfg)                         | PASS                  |
-| [HelperRun-v72-quarantine.cfg](HelperRun-v72-quarantine.cfg)                   | PASS                  |
-| [HelperRun-v72-cancel-failure.cfg](HelperRun-v72-cancel-failure.cfg)           | PASS                  |
-| [HelperRun-v72-snapshot-failure.cfg](HelperRun-v72-snapshot-failure.cfg)       | PASS                  |
-| [HelperRun-v72-lost-id.cfg](HelperRun-v72-lost-id.cfg)                         | PASS                  |
-| [HelperRun-v72-record-failure.cfg](HelperRun-v72-record-failure.cfg)           | PASS                  |
-| [HelperRun-v72-reminder-busy.cfg](HelperRun-v72-reminder-busy.cfg)             | PASS                  |
-| [HelperRun-v72-capacity.cfg](HelperRun-v72-capacity.cfg)                       | PASS                  |
-| [HelperRun-v72-cancel-finish.cfg](HelperRun-v72-cancel-finish.cfg)             | RED: OutcomeJustified |
-| [HelperRun-v72-no-ceiling.cfg](HelperRun-v72-no-ceiling.cfg)                   | RED: BoundedEnd       |
-| [HelperRun-v72-restart-undelivered.cfg](HelperRun-v72-restart-undelivered.cfg) | RED: RestartDelivered |
-| [HelperRun-v72-finalize-twice.cfg](HelperRun-v72-finalize-twice.cfg)           | RED: OutcomeOnce      |
-| [HelperRun-v72-stop-overwrite.cfg](HelperRun-v72-stop-overwrite.cfg)           | RED: StopOnce         |
-| [HelperRun-v72-wrong-event.cfg](HelperRun-v72-wrong-event.cfg)                 | RED: OutcomeMatches   |
-| [HelperRun-v72-drop-text.cfg](HelperRun-v72-drop-text.cfg)                     | RED: PartialKept      |
-| [HelperRun-v72-work-output.cfg](HelperRun-v72-work-output.cfg)                 | RED: WorkMeasured     |
-| [HelperRun-v72-no-ceiling-live.cfg](HelperRun-v72-no-ceiling-live.cfg)         | RED: NoSilentEnd      |
-| [HelperRun-v72-shared-schedule.cfg](HelperRun-v72-shared-schedule.cfg)         | RED: NoSilentEnd      |
-| [HelperRun-v72-detached-work.cfg](HelperRun-v72-detached-work.cfg)             | RED: NoDetachedWork   |
+| Конфигурация                                                                   | Ожидаемый результат       |
+| ------------------------------------------------------------------------------ | ------------------------- |
+| [HelperRun-v72-run.cfg](HelperRun-v72-run.cfg)                                 | PASS                      |
+| [HelperRun-v72-silent.cfg](HelperRun-v72-silent.cfg)                           | PASS                      |
+| [HelperRun-v72-restart.cfg](HelperRun-v72-restart.cfg)                         | PASS                      |
+| [HelperRun-v72-quarantine.cfg](HelperRun-v72-quarantine.cfg)                   | PASS                      |
+| [HelperRun-v72-cancel-failure.cfg](HelperRun-v72-cancel-failure.cfg)           | PASS                      |
+| [HelperRun-v72-snapshot-failure.cfg](HelperRun-v72-snapshot-failure.cfg)       | PASS                      |
+| [HelperRun-v72-lost-id.cfg](HelperRun-v72-lost-id.cfg)                         | PASS                      |
+| [HelperRun-v72-record-failure.cfg](HelperRun-v72-record-failure.cfg)           | PASS                      |
+| [HelperRun-v72-reminder-busy.cfg](HelperRun-v72-reminder-busy.cfg)             | PASS                      |
+| [HelperRun-v72-capacity.cfg](HelperRun-v72-capacity.cfg)                       | PASS                      |
+| [HelperRun-v72-cancel-finish.cfg](HelperRun-v72-cancel-finish.cfg)             | RED: OutcomeJustified     |
+| [HelperRun-v72-no-ceiling.cfg](HelperRun-v72-no-ceiling.cfg)                   | RED: BoundedEnd           |
+| [HelperRun-v72-restart-undelivered.cfg](HelperRun-v72-restart-undelivered.cfg) | RED: RestartDelivered     |
+| [HelperRun-v72-finalize-twice.cfg](HelperRun-v72-finalize-twice.cfg)           | RED: OutcomeOnce          |
+| [HelperRun-v72-stop-overwrite.cfg](HelperRun-v72-stop-overwrite.cfg)           | RED: StopOnce             |
+| [HelperRun-v72-wrong-event.cfg](HelperRun-v72-wrong-event.cfg)                 | RED: OutcomeMatches       |
+| [HelperRun-v72-drop-text.cfg](HelperRun-v72-drop-text.cfg)                     | RED: PartialKept          |
+| [HelperRun-v72-work-output.cfg](HelperRun-v72-work-output.cfg)                 | RED: WorkMeasured         |
+| [HelperRun-v72-no-ceiling-live.cfg](HelperRun-v72-no-ceiling-live.cfg)         | RED: NoSilentEnd          |
+| [HelperRun-v72-shared-schedule.cfg](HelperRun-v72-shared-schedule.cfg)         | RED: NoSilentEnd          |
+| [HelperRun-v72-detached-work.cfg](HelperRun-v72-detached-work.cfg)             | RED: NoDetachedWork       |
+| [HelperRun-v73-stop-before-end.cfg](HelperRun-v73-stop-before-end.cfg)         | RED: StopOnlyWhileRunning |
+| [HelperRun-v73-stop-needs-snapshot.cfg](HelperRun-v73-stop-needs-snapshot.cfg) | RED: StopCancelSent       |
+| [HelperRun-v73-end-cutoff.cfg](HelperRun-v73-end-cutoff.cfg)                   | RED: SnapshotFolded       |
 
 HelperOutcome: `-safety`, `-bridge-recovery` — PASS; остальные конфиги
 проверяют прежние отрицательные свидетели, перечисленные в `helper-check.sh`.
