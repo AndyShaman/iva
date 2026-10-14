@@ -285,37 +285,56 @@ test("v7 create is not a stream subscription; core headers and 15s signal are pr
   assert.equal(headers.get("x-iva-helper"), a.id);
   assert.equal(f.state.signals.length, 1);
 });
-test("v7 overlapping ticks: one claim, one result writer and one finished trace; reset does not hold next admission", async (t) => {
-  const f = await setup(t),
-    a = await f.add(),
-    b = await f.add();
-  await Promise.all([f.tick(), f.tick()]);
-  assert.equal(f.state.calls.filter((x) => x === "session").length, 1);
-  f.state.events = [
-    { type: "message.completed", data: { message: "result" } },
-    { type: "turn.completed", data: { sequence: 1, turnId: "turn" } },
-  ];
-  const writes: string[] = [],
-    rename = fs.rename.bind(fs);
-  t.mock.method(fs, "rename", (from: string, to: string) => {
-    if (to.endsWith("result.md")) writes.push(to);
-    return rename(from, to);
+for (const hasGoal of [false, true])
+  test(`v7 overlapping ticks${hasGoal ? " with goal" : ""}: one claim, one result writer and one finished trace; reset does not hold next admission`, async (t) => {
+    const f = await setup(t),
+      a = await f.add(),
+      b = await f.add();
+    if (hasGoal) {
+      const { changeGoal } = await import("./goal-store.ts");
+      await changeGoal(
+        {
+          action: "start",
+          text: "wait for answer",
+          may: "",
+          next_check: "in 1h",
+        },
+        chat,
+        null,
+        1000,
+      );
+    }
+    await Promise.all([f.tick(), f.tick()]);
+    assert.equal(f.state.calls.filter((x) => x === "session").length, 1);
+    f.state.events = [
+      { type: "message.completed", data: { message: "result" } },
+      { type: "turn.completed", data: { sequence: 1, turnId: "turn" } },
+    ];
+    f.state.onCreate = () => {
+      f.state.events = [];
+      return Promise.resolve();
+    };
+    const writes: string[] = [],
+      rename = fs.rename.bind(fs);
+    t.mock.method(fs, "rename", (from: string, to: string) => {
+      if (to.endsWith("result.md")) writes.push(to);
+      return rename(from, to);
+    });
+    syncBuiltinESMExports();
+    await Promise.all([f.tick(4000), f.tick(4000)]);
+    await f.flush();
+    assert.equal((await s.getHelper(a.id))?.outcome, "done");
+    assert.ok((await s.getHelper(b.id))?.run);
+    assert.equal(writes.length, 1);
+    const logs = (
+      await Promise.all(
+        (await readdir(join(f.dir, "trace"))).map((n) =>
+          readFile(join(f.dir, "trace", n), "utf8"),
+        ),
+      )
+    ).join("");
+    assert.equal(logs.split('"name":"finished"').length - 1, 1);
   });
-  syncBuiltinESMExports();
-  await Promise.all([f.tick(4000), f.tick(4000)]);
-  await f.flush();
-  assert.equal((await s.getHelper(a.id))?.outcome, "done");
-  assert.ok((await s.getHelper(b.id))?.run);
-  assert.equal(writes.length, 1);
-  const logs = (
-    await Promise.all(
-      (await readdir(join(f.dir, "trace"))).map((n) =>
-        readFile(join(f.dir, "trace", n), "utf8"),
-      ),
-    )
-  ).join("");
-  assert.equal(logs.split('"name":"finished"').length - 1, 1);
-});
 test("v7 volume and deadline request stop on the next tick; first reason survives", async (t) => {
   const f = await setup(t),
     a = await f.running();

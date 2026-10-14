@@ -199,6 +199,8 @@ What becomes of your work — for the owner's questions about you.
 
 ## Spend, schedule, services
 
+Goals: `goal list` shows the Plan, next check and waiting Outcome; Trace `helper.goal_*` and `helper.finished` with `goal` record their checks.
+
 - Spend: `iva usage today|week|month|by-source|by-model` — tokens and turns;
   rows `watch`, `brief`, `insight` from 06.10.2026, earlier ones `background`.
 - Spend of one turn, one line out:

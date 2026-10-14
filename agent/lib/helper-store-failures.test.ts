@@ -68,6 +68,7 @@ test("lock timeout refuses a transition with existing bytes intact", async (t) =
     assert.deepEqual(await s.readHelpers(), {
       schemaVersion: 1,
       rows: [],
+      goals: [],
     });
   } finally {
     releaseLock(path, token);

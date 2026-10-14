@@ -27,7 +27,8 @@ Walk everything the owner has connected, with your own tools, read only:
    today's meetings, letters and chats that wait for the owner.
 3. Every Connection and plugin: `connection_search` lists them; look at each one for
    what is new or due today.
-4. Goals from CORE: the shared procedure chooses a concrete step for today.
+4. CORE goals: the shared procedure chooses a concrete step for today.
+   Call `goal list`; if any goal is proposed, paused or has an untold Outcome, add one line "goal: N идут, K ждут ответа", counting current statuses yourself.
 5. Weather for the owner's city (from memory, `memory_search`). No city known — ask
    once and save the answer with `write_card`.
 6. Habits — only the ones the owner named; never invent a routine.

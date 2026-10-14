@@ -13,6 +13,7 @@ process.env.OLLAMA_MODEL = "chat-fixture";
 process.env.AGENT_LANGUAGE = "en";
 process.env.ASSISTANT_TIMEZONE = "UTC";
 const { default: helperTool } = await import("../agent/tools/helper.ts");
+const { default: goalTool } = await import("../agent/tools/goal.ts");
 type Wire = {
   tools: { name: string; [key: string]: unknown }[];
   prefix: unknown[];
@@ -132,13 +133,20 @@ test("enabled tools on the provider wire equal the base minus removed tools plus
   const previous = Object.values(base.wires)[0];
   const removed = new Set(["agent", "task_cancel", "task_update", "planner"]);
   assert.deepEqual(
-    enabled.tools.filter((t) => t.name !== "helper"),
+    enabled.tools.filter((t) => t.name !== "helper" && t.name !== "goal"),
     previous.tools.filter((t) => !removed.has(t.name)),
   );
   assert.equal(
     enabled.tools.find((t) => t.name === "helper")?.description,
     helperTool.description,
   );
+  const goal = enabled.tools.find((t) => t.name === "goal");
+  assert.equal(goal?.description, goalTool.description);
+  assert.equal(goal?.inputSchema && typeof goal.inputSchema, "object");
+  const goalSchema = goal.inputSchema as Record<string, unknown>;
+  assert.equal(goalSchema.type, "object");
+  for (const key of ["oneOf", "anyOf", "allOf", "$ref"])
+    assert.ok(!(key in goalSchema));
   for (const kind of "chat reminder signal watch brief insight alert helper".split(
     " ",
   )) {

@@ -12,6 +12,7 @@ import {
 import { writeFileAtomic } from "./fs-atomic.ts";
 import { ownerTimeZone } from "./reminder-time.ts";
 import { formatZoned } from "./zoned-time.ts";
+import { dueGoals } from "./goal-store.ts";
 type Session = ReturnType<Client["sessions"]["attach"]>;
 const stopReasons = {
   closed: "помощник закрыт",
@@ -74,12 +75,28 @@ export async function runHelperTick(
     const { outcome: result, reason: cause } = finished;
     traceHelper("finished", row.id, {
       session: row.run!.sessionId ?? undefined,
-      data: { outcome: result, reason: cause, steps, tokens },
+      data: {
+        outcome: result,
+        reason: cause,
+        steps,
+        tokens,
+        goal: finished.goal,
+        rule: finished.rule,
+      },
     });
   };
   try {
+    try {
+      await dueGoals(now);
+    } catch (error) {
+      if (error instanceof s.HelperStoreError) throw error;
+      log("goal due:", error);
+    }
     const rows = (await s.readHelpers()).rows.sort(
-      (a, b) => Number(!a.run) - Number(!b.run) || a.createdAt - b.createdAt,
+      (a, b) =>
+        Number(!a.run) - Number(!b.run) ||
+        Number(a.goal !== null) - Number(b.goal !== null) ||
+        a.createdAt - b.createdAt,
     );
     for (let row of rows)
       try {

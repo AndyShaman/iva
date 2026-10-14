@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./data-dir.ts";
 import { acquireLock, releaseLock, saveJsonAtomic } from "./json-store.ts";
+import { goalSchema, helperIdSchema, settleGoal } from "./goal-rules.ts";
 
 export const HELPER_MAX_OPEN = 3,
   HELPER_MAX_ROWS = 20;
@@ -17,7 +18,7 @@ export const HELPER_SUMMARY_MAX = 1500,
   HELPER_KEEP_MS = 86400000;
 const integer = z.number().int().nonnegative();
 const text = z.string().min(1);
-const chatSchema = z.strictObject({ id: text, threadId: text.nullable() });
+const chatSchema = goalSchema.shape.chat;
 const runSchema = z.strictObject({
   firedAt: integer,
   ownerStartedAt: integer,
@@ -26,7 +27,8 @@ const runSchema = z.strictObject({
 });
 const rowSchema = z
   .strictObject({
-    id: z.string().regex(/^h-[0-9a-f]{6}$/),
+    id: helperIdSchema,
+    goal: goalSchema.shape.id.nullable().default(null),
     task: z.string().trim().min(1).max(2000),
     may: z.string().max(500),
     chat: chatSchema,
@@ -66,12 +68,29 @@ const stateSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     rows: z.array(rowSchema).max(HELPER_MAX_ROWS),
+    goals: z.array(goalSchema).default([]),
   })
   .refine(
     (s) =>
       new Set(s.rows.map((r) => r.id)).size === s.rows.length &&
       s.rows.filter((r) => r.status === "pending").length <= HELPER_MAX_OPEN,
     "duplicate id or pending capacity",
+  )
+  .refine(
+    (s) =>
+      new Set(s.goals.map((g) => g.id)).size === s.goals.length &&
+      s.goals.every(
+        (g) =>
+          (g.nextCheckAtMs !== null) === (g.status === "active") &&
+          (g.pause !== null) === (g.status === "paused") &&
+          (g.verdict === null || g.check !== null) &&
+          (g.check === null ||
+            s.rows.some(
+              (r) =>
+                r.id === g.check && r.goal === g.id && r.status === "pending",
+            )),
+      ),
+    "inconsistent goal links",
   );
 export type HelperRow = z.infer<typeof rowSchema>;
 export type HelpersState = z.infer<typeof stateSchema>;
@@ -90,6 +109,7 @@ export type HelperShow = { row: HelperRow };
 export type HelperClose = {
   row: HelperRow;
   branch: "pending" | "running" | "finished";
+  rule: string | null;
 };
 export type HelperRefusal =
   | "invalid-input"
@@ -105,9 +125,9 @@ export type { HelperTraceEvent } from "./trace.ts";
 export class HelperStoreError extends Error {}
 const file = () => join(dataDir(), "helpers.json");
 const root = () => join(dataDir(), "helpers");
-const sameChat = (a: HelperChat, b: HelperChat) =>
+export const sameChat = (a: HelperChat, b: HelperChat) =>
   a.id === b.id && a.threadId === b.threadId;
-const ready = (r: HelperRow) =>
+export const ready = (r: HelperRow) =>
   r.status === "finished" && r.deliveredAt === null;
 const running = (r: HelperRow, firedAt: number) =>
   r.run?.firedAt === firedAt && r.outcome === null;
@@ -127,7 +147,7 @@ export async function readHelpers(): Promise<HelpersState> {
     raw = await readFile(file(), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { schemaVersion: 1, rows: [] };
+      return { schemaVersion: 1, rows: [], goals: [] };
     throw new HelperStoreError(`${file()}: ${String(error)}`);
   }
   try {
@@ -148,6 +168,53 @@ async function locked<T>(fn: (s: HelpersState) => Promise<T>): Promise<T> {
 }
 async function save(s: HelpersState) {
   await saveJsonAtomic(file(), stateSchema.parse(s), { mode: 0o600 });
+}
+export const mutateHelpers = <T>(
+  fn: (s: HelpersState) => { save: boolean; value: T },
+) =>
+  locked(async (s) => {
+    const result = fn(s);
+    if (result.save) await save(s);
+    return result.value;
+  });
+export function insertRow(
+  s: HelpersState,
+  input: Pick<HelperRow, "task" | "may" | "chat" | "goal">,
+  now: number,
+) {
+  const reserved = Number(input.goal !== null);
+  const pending = s.rows.filter((r) => r.status === "pending");
+  if (s.rows.length >= HELPER_MAX_ROWS - reserved)
+    return refuse(
+      "max-rows",
+      `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. Read or close outcomes.`,
+    );
+  if (pending.length >= HELPER_MAX_OPEN - reserved)
+    return refuse(
+      "capacity",
+      `${pending.filter((r) => r.run).length} running, ${pending.filter((r) => !r.run).length} waiting, ${s.rows.filter(ready).length} outcomes; pending maximum 3. Wait, read or close.`,
+    );
+  let id: string;
+  do id = `h-${randomBytes(3).toString("hex")}`;
+  while (s.rows.some((r) => r.id === id));
+  const row: HelperRow = {
+    ...input,
+    id,
+    createdAt: now,
+    status: "pending",
+    run: null,
+    stop: null,
+    outcome: null,
+    summary: null,
+    reason: null,
+    model: null,
+    steps: 0,
+    tokens: 0,
+    finishedAt: null,
+    deliveredAt: null,
+  };
+  s.rows.push(row);
+  return { ok: true as const, row };
 }
 export const getHelper = async (id: string) =>
   (await readHelpers()).rows.find((r) => r.id === id) ?? null;
@@ -177,39 +244,9 @@ export async function addHelper(
     .safeParse(input);
   if (!parsed.success) return refuse("invalid-input", parsed.error.message);
   return locked(async (s) => {
-    const pending = s.rows.filter((r) => r.status === "pending");
-    if (s.rows.length >= HELPER_MAX_ROWS)
-      return refuse(
-        "max-rows",
-        `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. Read or close outcomes.`,
-      );
-    if (pending.length >= HELPER_MAX_OPEN)
-      return refuse(
-        "capacity",
-        `${pending.filter((r) => r.run).length} running, ${pending.filter((r) => !r.run).length} waiting, ${s.rows.filter(ready).length} outcomes; pending maximum 3. Wait, read or close.`,
-      );
-    let id: string;
-    do id = `h-${randomBytes(3).toString("hex")}`;
-    while (s.rows.some((r) => r.id === id));
-    const row: HelperRow = {
-      ...parsed.data,
-      id,
-      createdAt: now,
-      status: "pending",
-      run: null,
-      stop: null,
-      outcome: null,
-      summary: null,
-      reason: null,
-      model: null,
-      steps: 0,
-      tokens: 0,
-      finishedAt: null,
-      deliveredAt: null,
-    };
-    s.rows.push(row);
-    await save(s);
-    return { ok: true, row };
+    const result = insertRow(s, { ...parsed.data, goal: null }, now);
+    if (result.ok) await save(s);
+    return result;
   });
 }
 
@@ -257,13 +294,19 @@ export const stopHelper = (id: string, firedAt: number, stop: HelperStop) =>
     r.stop ??= stop;
     return true;
   });
-function finishRow(r: HelperRow, f: HelperFinish, now: number) {
+function finishRow(
+  r: HelperRow,
+  f: HelperFinish,
+  now: number,
+  s: HelpersState,
+) {
   Object.assign(r, f, {
     outcome: r.stop === "closed" ? "stopped" : (r.stop ?? f.outcome),
     status: r.stop === "closed" ? "closed" : "finished",
     run: null,
     finishedAt: now,
   });
+  return r.goal === null ? null : settleGoal(s, r, now);
 }
 export const finalizeHelper = (
   id: string,
@@ -271,18 +314,42 @@ export const finalizeHelper = (
   finish: HelperFinish,
   now: number,
 ) =>
-  change(id, (r) => {
+  mutateHelpers((s) => {
+    const r = s.rows.find((r) => r.id === id);
     if (
+      !r ||
       r.outcome !== null ||
       r.status !== "pending" ||
       (expected.kind === "running"
         ? !running(r, expected.firedAt)
         : r.run !== null || r.createdAt !== expected.createdAt)
     )
-      return false;
-    finishRow(r, finish, now);
-    return true;
+      return { save: false, value: null };
+    const rule = finishRow(r, finish, now, s);
+    return { save: true, value: { ...r, rule } };
   });
+export function closeRow(s: HelpersState, row: HelperRow, now: number) {
+  const branch = row.run ? "running" : row.outcome ? "finished" : "pending";
+  let rule: string | null = null;
+  if (branch === "running") row.stop ??= "closed";
+  else if (branch === "pending") {
+    row.stop = "closed";
+    rule = finishRow(
+      row,
+      {
+        outcome: "stopped",
+        summary: null,
+        reason: null,
+        model: null,
+        steps: 0,
+        tokens: 0,
+      },
+      now,
+      s,
+    );
+  } else row.status = "closed";
+  return { branch, rule } satisfies Omit<HelperClose, "row">;
+}
 export async function closeHelper(
   id: string,
   chat: HelperChat,
@@ -295,25 +362,9 @@ export async function closeHelper(
       return refuse("foreign-chat", "Helper belongs to another chat.");
     if (row.deliveredAt !== null)
       return refuse("already-delivered", "Outcome already delivered.");
-    const branch = row.run ? "running" : row.outcome ? "finished" : "pending";
-    if (branch === "running") row.stop ??= "closed";
-    else if (branch === "pending") {
-      row.stop = "closed";
-      finishRow(
-        row,
-        {
-          outcome: "stopped",
-          summary: null,
-          reason: null,
-          model: null,
-          steps: 0,
-          tokens: 0,
-        },
-        now,
-      );
-    } else row.status = "closed";
+    const result = closeRow(s, row, now);
     await save(s);
-    return { ok: true, row, branch };
+    return { ok: true, row, ...result };
   });
 }
 export async function showHelper(
@@ -350,9 +401,11 @@ export async function sweepHelpers(now: number): Promise<string[]> {
       .filter(
         (r) =>
           !r.run &&
-          ((r.status === "closed" &&
-            r.finishedAt !== null &&
-            r.finishedAt + HELPER_KEEP_MS <= now) ||
+          ((r.goal !== null &&
+            (r.status === "closed" || r.deliveredAt !== null)) ||
+            (r.status === "closed" &&
+              r.finishedAt !== null &&
+              r.finishedAt + HELPER_KEEP_MS <= now) ||
             (r.deliveredAt !== null && r.deliveredAt + HELPER_KEEP_MS <= now)),
       )
       .map((r) => r.id);

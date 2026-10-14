@@ -78,13 +78,21 @@ export async function readHelperOutcome(
 }
 export async function helperOutcomesMarkdown(chat: s.HelperChat) {
   try {
-    return (await s.listHelpers(chat))
-      .filter((r) => r.status === "finished" && r.deliveredAt === null)
-      .map(
-        (r) =>
-          `${r.id}, ${new Date(r.finishedAt!).toISOString()}: прочитай helper outcome и расскажи.`,
-      )
-      .join("\n");
+    const state = await s.readHelpers();
+    return [
+      ...state.rows
+        .filter((r) => s.sameChat(r.chat, chat) && s.ready(r))
+        .map(
+          (r) =>
+            `${r.id}, ${new Date(r.finishedAt!).toISOString()}: прочитай helper outcome и расскажи.`,
+        ),
+      ...state.goals
+        .filter((g) => s.sameChat(g.chat, chat) && g.pause === "expired")
+        .map(
+          (g) =>
+            `goal ${g.id}: paused (expired). Tell the owner once and offer to continue.`,
+        ),
+    ].join("\n");
   } catch (error) {
     console.error("[helper] outcomes:", error);
     return "таблица помощников повреждена, помощники не работают";

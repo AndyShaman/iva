@@ -55,6 +55,7 @@ test("missing reader and schema corruption preserve bytes and reject foreign fie
   assert.deepEqual(await s.readHelpers(), {
     schemaVersion: 1,
     rows: [],
+    goals: [],
   });
   const row = await added();
   const base = await s.readHelpers();
@@ -103,6 +104,7 @@ test("input rejection before directory; empty may; capacity counts pending, max 
   assert.deepEqual(await s.readHelpers(), {
     schemaVersion: 1,
     rows: [],
+    goals: [],
   });
   assert.deepEqual(
     (await readdir(dir)).filter((x) => x === "helpers"),
