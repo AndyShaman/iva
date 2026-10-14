@@ -20,7 +20,11 @@ process.env.TELEGRAM_BOT_TOKEN = "status-progress-token";
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = "status-progress-secret";
 process.env.TELEGRAM_RICH_REPLIES = "auto";
 
-type ApiCall = { method: string; body: Record<string, unknown> | undefined };
+type ApiCall = {
+  signal?: AbortSignal | null;
+  method: string;
+  body: Record<string, unknown> | undefined;
+};
 type Handler = (data: Record<string, unknown>, context: unknown) => unknown;
 type Adapter = {
   state?: Record<string, unknown>;
@@ -47,6 +51,7 @@ globalThis.fetch = (url, init = {}) => {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the double reads whatever eve passes.
   const method = new URL(String(url)).pathname.split("/").at(-1) ?? "";
   const call = {
+    signal: init.signal,
     method,
     body: init.body
       ? (JSON.parse(
@@ -231,6 +236,11 @@ test("channel wire streams a draft, gates secrets once per turn, closes before s
   const pair = { chatId: "9", sessionId: "wire-1" };
   await emit("turn.started", { turnId: "turn_1" }, pair);
   await pause();
+  assert.ok(draftCalls()[0].signal instanceof AbortSignal);
+  assert.ok(
+    apiCalls.find((call) => call.method === "sendChatAction")?.signal instanceof
+      AbortSignal,
+  );
   const draftId = getChatStatus("9:")?.draftId;
   assert.equal(typeof draftId, "number");
   assert.ok(Number(draftId) > 0);

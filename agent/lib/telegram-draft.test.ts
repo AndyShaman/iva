@@ -200,3 +200,72 @@ await test("знак очереди переживает любой финал �
 });
 
 process.on("exit", () => rmSync(dataDir, { recursive: true, force: true }));
+
+await test("принятое сообщение видит typing в течение 20 секунд до turn.started; CAS передаёт поток ходу", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "setInterval", "Date"],
+    now: 100_000,
+  });
+  t.after(() => t.mock.timers.reset());
+  const { publishTelegramEarlyStatus, publishTelegramTurnStarted } =
+    await import("./telegram-turn-start.ts");
+  const { startTelegramAcceptedTyping, telegramDraftTurn } = status;
+  const { calls, tg } = handle();
+  const key = runStatus.chatKeyOf(tg.chatId);
+  runStatus.setChatStatus(key, {
+    status: "idle",
+    sessionId: null,
+    turnId: null,
+    resetAt: null,
+  });
+  const ingressId = await publishTelegramEarlyStatus({
+    chatKey: key,
+    ingressId: "accepted-20s",
+    getStatusImpl: runStatus.getChatStatus,
+    setStatusIfImpl: runStatus.setChatStatusIf,
+  });
+  assert.equal(ingressId, "accepted-20s");
+  startTelegramAcceptedTyping(tg, ingressId!);
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
+  for (let i = 0; i < 4; i++) {
+    t.mock.timers.tick(4500);
+    await flush();
+  }
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(calls.length, 5);
+  assert.ok(calls.every((c) => c.method === "sendChatAction"));
+  assert.equal(
+    await publishTelegramTurnStarted({
+      chatKey: key,
+      sessionId: "accepted-session",
+      turnId: "accepted-turn",
+      draftId: 21,
+      getStatusImpl: runStatus.getChatStatus,
+      setStatusIfImpl: runStatus.setChatStatusIf,
+    }),
+    true,
+  );
+  telegramDraftTurn(tg, "accepted-session", "accepted-turn", true, {
+    sessionId: "accepted-session",
+    turnId: "accepted-turn",
+    draftId: 21,
+  });
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(
+    calls.filter((c) => c.method === "sendRichMessageDraft").length,
+    1,
+  );
+  await status.finishTelegramStatus(
+    { telegram: tg },
+    "accepted-session",
+    "completed",
+    "accepted-turn",
+  );
+  const count = calls.length;
+  t.mock.timers.tick(40_000);
+  await flush();
+  assert.equal(calls.length, count);
+});
