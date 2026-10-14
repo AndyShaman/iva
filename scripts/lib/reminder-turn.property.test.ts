@@ -75,7 +75,11 @@ test("reduceTurnEvents never throws and reports the last boundary", () => {
       );
       assert.equal(result.status, expectedStatus);
       assert.equal(result.message, expectedMessage);
-      assert.equal(result.failure, expectedFailure);
+      assert.equal(
+        result.failure,
+        expectedFailure ??
+          (events.some((item) => item.type === "turn.failed") ? "" : undefined),
+      );
       assert.equal(result.cancelled, expectedCancelled);
     }),
     { numRuns: 200 },

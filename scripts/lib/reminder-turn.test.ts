@@ -130,6 +130,23 @@ function failureOf(work: Promise<unknown>): Promise<unknown> {
   );
 }
 
+for (const data of [undefined, null, { message: 42 }] as const) {
+  void test(`turn.failed without string text is failed with a cause: ${JSON.stringify(data)}`, async () => {
+    const spy = spyTurn(async function* () {
+      yield { type: "message.completed", data: { message: "intermediate" } };
+      yield { type: "turn.failed", data };
+      yield { type: "session.waiting" };
+    });
+    const turn = await runReminderTurn("fixture", OPTIONS, {
+      createClient: spy.createClient,
+    });
+    assert.equal(turn.status, "failed");
+    assert.equal(turn.message, "ход упал");
+    assert.equal(turn.cancelled, false);
+    assert.deepEqual(spy.resets, ["Reminder finished"]);
+  });
+}
+
 for (const mode of [
   "accepted",
   "rejected",

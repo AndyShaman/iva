@@ -229,8 +229,8 @@ function applyTurnMark(state: TurnState, event: TurnStreamEvent): TurnState {
     case "turn.cancelled":
       return { ...state, cancelled: true };
     case "turn.failed": {
-      const failure = eventText(event);
-      return failure === undefined ? state : { ...state, failure };
+      const failure = eventText(event) ?? state.failure ?? "";
+      return { ...state, failure };
     }
     default:
       return state;
@@ -553,7 +553,7 @@ async function settleTurn(
     return {
       status: "failed",
       cancelled: false,
-      message: state.failure,
+      message: state.failure || "ход упал",
       feedback,
     };
   const { status, cancelled } = turnBoundary(state);
