@@ -17,7 +17,12 @@ case "$WORKERS" in 1|2|3|4) ;; *) echo "goal-check: WORKERS must be 1..4"; exit 
 started=$(date +%s)
 ok=0; failed=0
 check() {
- cfg=$1; expect=$2; log="$META/$cfg.log"
+ cfg=$1; expect=$2
+ case " $selected " in
+   ' all '|*" $cfg "*) ;;
+   *) return 0;;
+ esac
+ log="$META/$cfg.log"
  remaining=$((595 - $(date +%s) + started))
  [ "$remaining" -gt 0 ] || { echo 'goal-check: whole-suite deadline exceeded'; return 2; }
  duration=${TLC_TIMEOUT:-150}
@@ -52,40 +57,33 @@ check() {
 # A selected development run still goes through the same verdict/deadline checks.
 # With GOAL_CONFIGS unset, every green design precedes every negative witness.
 selected=${GOAL_CONFIGS:-all}
-while read -r cfg expect; do
- [ -n "$cfg" ] || continue
- case " $selected " in
-   ' all '|*" $cfg "*) check "$cfg" "$expect" || exit 2;;
- esac
-done <<'CONFIGS'
-GoalCheck none
-GoalCheck-owner none
-GoalCheck-failures none
-GoalCheck-failures-live none
-GoalCheck-limits none
-GoalCheck-live none
-GoalCheck-capacity none
-GoalCheck-day none
-GoalCheck-zombie none
-GoalCheck-nodetach DetachedChangesNothing
-GoalCheck-noclosed RemovedMeansSilent
-GoalCheck-owner-time OwnerNextKept
-GoalCheck-fail-default OwnerNextKept
-GoalCheck-doublecheck OneLiveCheck
-GoalCheck-pending-close CheckReleased
-GoalCheck-require-done ContentTold
-GoalCheck-quiet-empty FailureCount
-GoalCheck-content-failure FailureCount
-GoalCheck-due-untold OneUntoldPerGoal
-GoalCheck-verdict-cas-goal VerdictOwnCheck
-GoalCheck-no-reserve OwnerPlace
-GoalCheck-link-stop StoreLinks
-GoalCheck-sweep-untold UntoldKept
-GoalCheck-claim-detached OneLiveCheck
-GoalCheck-nonormalize DueServed
-GoalCheck-spec-weak-fair DueServed
-GoalCheck-capacity-reach RowsBoundedReach
-CONFIGS
+check GoalCheck none || exit 2
+check GoalCheck-owner none || exit 2
+check GoalCheck-failures none || exit 2
+check GoalCheck-failures-live none || exit 2
+check GoalCheck-limits none || exit 2
+check GoalCheck-live none || exit 2
+check GoalCheck-capacity none || exit 2
+check GoalCheck-day none || exit 2
+check GoalCheck-zombie none || exit 2
+check GoalCheck-nodetach DetachedChangesNothing || exit 2
+check GoalCheck-noclosed RemovedMeansSilent || exit 2
+check GoalCheck-owner-time OwnerNextKept || exit 2
+check GoalCheck-fail-default OwnerNextKept || exit 2
+check GoalCheck-doublecheck OneLiveCheck || exit 2
+check GoalCheck-pending-close CheckReleased || exit 2
+check GoalCheck-require-done ContentTold || exit 2
+check GoalCheck-quiet-empty FailureCount || exit 2
+check GoalCheck-content-failure FailureCount || exit 2
+check GoalCheck-due-untold OneUntoldPerGoal || exit 2
+check GoalCheck-verdict-cas-goal VerdictOwnCheck || exit 2
+check GoalCheck-no-reserve OwnerPlace || exit 2
+check GoalCheck-link-stop StoreLinks || exit 2
+check GoalCheck-sweep-untold UntoldKept || exit 2
+check GoalCheck-claim-detached OneLiveCheck || exit 2
+check GoalCheck-nonormalize DueServed || exit 2
+check GoalCheck-spec-weak-fair DueServed || exit 2
+check GoalCheck-capacity-reach RowsBoundedReach || exit 2
 [ "$ok" -gt 0 ] || { echo 'goal-check: no configuration selected'; exit 2; }
 if [ "$selected" != all ]; then
  wanted=0
