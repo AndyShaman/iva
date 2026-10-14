@@ -211,6 +211,9 @@ StopOnce == \A t \in Turns : s.cancels[t] <= 1
 FramesOnlyWhileOpen == ~s.afterClose
 NoFrameAfterFinal == ~s.afterFinal
 FinalAfterClose == \A t \in Turns : s.finals[t] = "sent" => Drained(t)
+\* All streams belong to this chat, including earlier turns in another session.
+NoOlderInFlightAfterFinal == \A t \in Turns : s.finals[t] = "sent" =>
+  \A d \in Drafts : s.streams[d].turn < t => ~s.streams[d].inFlight
 SelfCheckCloses == ~s.staleAfterTick
 \* These monitors state the policy independently of each mutated state update.
 FailurePolicy == \A d \in Drafts :

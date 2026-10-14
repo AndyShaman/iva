@@ -145,7 +145,12 @@ rejection count on a 429 or timeout (`FailurePolicy`), releasing another owner's
 record at turn completion or compaction end (two mutants, `ForeignRecordPreserved`),
 and retaining a pre-restart pause (`RestartForgetsPause`). The main
 configuration also checks `StopOnce`, `FramesOnlyWhileOpen`, `FinalAfterClose`
-and `TypeOK`. Frame closure forbids new requests; an earlier in-flight request
+and `TypeOK`. `NoOlderInFlightAfterFinal` checks the whole chat: after a turn's
+final answer, requests from earlier turns must have settled. It also covers
+earlier turns in another session, and retains that requirement after the chat
+record changes. A cancelled turn's request surviving into the next turn's final
+answer violates this invariant even when both per-turn final invariants hold.
+Frame closure forbids new requests; an earlier in-flight request
 can still finish before the final answer. HTTP wire shapes, redaction, authorization
 parsing, real timer deadlines and the live Telegram client have separate checks.
 
