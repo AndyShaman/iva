@@ -1,205 +1,226 @@
 ----------------------------- MODULE HelperRun -----------------------------
-EXTENDS Naturals, FiniteSets, TLC
+EXTENDS Integers, FiniteSets, Sequences, TLC
 CONSTANTS Case, Mutant, Helpers
 VARIABLE s
 vars == <<s>>
-Empty == [status |-> "absent", run |-> FALSE, owner |-> 0, fired |-> 0,
-  known |-> FALSE, clientId |-> FALSE, recordFailed |-> FALSE, client |-> FALSE, active |-> FALSE, inbox |-> FALSE, reset |-> FALSE, cancel |-> FALSE,
-  stop |-> "none", outcome |-> "none", partial |-> 0, saved |-> 0,
-  steps |-> 0, previous |-> 0, work |-> 0, workProof |-> TRUE,
-  ceilingPending |-> FALSE, ceilingLost |-> FALSE, finishedByTick |-> FALSE,
-  limited |-> FALSE, finishes |-> 0, endedProof |-> TRUE, stopProof |-> TRUE, may |-> "",
-  authorized |-> TRUE, mayPresent |-> TRUE, asked |-> FALSE, retained |-> TRUE,
-  finishedAt |-> 0, closedEarly |-> FALSE, closeChanged |-> FALSE,
-  effects |-> 0, restartEffect |-> FALSE, lateEffect |-> FALSE, tailEffect |-> FALSE]
-Init == s = [rows |-> [h \in Helpers |-> Empty], now |-> 0, owner |-> 1,
-             restarted |-> FALSE, missingRead |-> FALSE, normalEnd |-> FALSE]
-Open == {h \in Helpers : s.rows[h].status = "pending"}
+Deadline == 2
+Grace == 1
+Ceiling == Deadline + Grace
+Terms == {"none", "completed", "failed", "question", "authorization", "cancelled", "step-limit"}
+Stops == {"none", "closed", "deadline", "ceiling"}
+Texts == 0..3 \* 0: empty, 1/2: distinct messages, 3: quiet reply
+Empty == [status |-> "pending", run |-> FALSE, claimed |-> FALSE,
+  fired |-> 0, owner |-> 1, creating |-> FALSE, created |-> FALSE, known |-> FALSE,
+  kernel |-> FALSE, quarantined |-> FALSE, event |-> "none", text |-> 0,
+  messages |-> 0, usage |-> <<>>, stop |-> "none", stops |-> <<>>,
+  outcome |-> "none", saved |-> 0, steps |-> 0, work |-> 0,
+  attempts |-> 0, delivered |-> FALSE, resetQueued |-> FALSE, commits |-> <<>>]
+Init == s = [rows |-> [h \in Helpers |-> Empty], owner |-> 1, now |-> 0,
+  lastTick |-> -1, phase |-> "idle", todo |-> {}, reminderBusy |-> TRUE]
 Running == {h \in Helpers : s.rows[h].run}
-Add(h,actor,hasMay) ==
-  /\ s.rows[h].status = "absent"
-  /\ Cardinality(Open) < 3
-  /\ actor = "owner" \/ Mutant = "helper-start"
-  /\ hasMay \/ Mutant = "missing-may"
-  /\ s' = [s EXCEPT !.rows[h] = [Empty EXCEPT !.status = "pending",
-        !.may = IF Mutant = "may-copy" THEN "changed" ELSE "opaque",
-        !.authorized = actor = "owner", !.mayPresent = hasMay]]
+Usable(text) == IF text = 3 THEN 0 ELSE text
+StopOutcome(stop) == IF stop = "closed" THEN "stopped" ELSE stop
+EventOutcome(event, text) ==
+  IF event = "step-limit" THEN "ceiling"
+  ELSE IF event = "cancelled" THEN "interrupted"
+  ELSE IF event \in {"failed", "question", "authorization"} THEN "failed"
+  ELSE IF Usable(text) > 0 THEN "done" ELSE "empty"
+RECURSIVE MeasuredWork(_, _)
+MeasuredWork(usage, previous) ==
+  IF Len(usage) = 0 THEN 0
+  ELSE (IF Head(usage).input > previous THEN Head(usage).input - previous ELSE 0)
+       + Head(usage).output + MeasuredWork(Tail(usage), Head(usage).input)
+FirstStop(stops) == IF Len(stops) = 0 THEN "none" ELSE Head(stops)
+SetStop(row, why) ==
+  IF row.stop = "none" THEN [row EXCEPT !.stop = why, !.stops = Append(@, why)]
+  ELSE IF Mutant = "stop-overwrite" THEN [row EXCEPT !.stop = why]
+  ELSE row
+
+\* Audit entries retain actual inputs at the CAS, independently of the selected mutation.
+Commit(row, event, text, usage, startFault, delivered, outcome) ==
+  [outcome |-> outcome, event |-> event, text |-> text, usage |-> usage,
+   stop |-> row.stop, stops |-> row.stops, claimed |-> row.claimed,
+   startFault |-> startFault, oldOwner |-> row.owner # s.owner,
+   known |-> row.known, delivered |-> delivered, at |-> s.now, fired |-> row.fired,
+   saved |-> IF Mutant = "drop-text" THEN 0 ELSE Usable(text),
+   steps |-> Len(usage), work |-> IF Mutant = "work-output" THEN 0 ELSE MeasuredWork(usage, 0)]
+Finished(row, event, text, usage, startFault, delivered, outcome) ==
+  LET audit == Commit(row, event, text, usage, startFault, delivered, outcome)
+  IN [row EXCEPT !.run = FALSE, !.creating = FALSE,
+      !.status = IF row.stop = "closed" THEN "closed" ELSE "finished",
+      !.outcome = outcome, !.saved = audit.saved, !.steps = audit.steps, !.work = audit.work,
+      !.resetQueued = row.known \/ (startFault /\ row.created), !.commits = Append(@, audit)]
+
 Claim(h) ==
-  /\ s.rows[h].status = "pending" /\ ~s.rows[h].run /\ s.rows[h].outcome = "none"
-  /\ Cardinality(Running) < 1 \/ Mutant = "capacity"
-  /\ s' = [s EXCEPT !.rows[h].run = TRUE, !.rows[h].owner = s.owner,
-                   !.rows[h].fired = 1, !.rows[h].client = TRUE]
+  /\ s.now = 0 /\ s.rows[h].status = "pending" /\ ~s.rows[h].claimed
+  /\ Cardinality(Running) < 1
+  /\ s' = [s EXCEPT !.rows[h].run = TRUE, !.rows[h].claimed = TRUE,
+       !.rows[h].creating = TRUE, !.rows[h].owner = s.owner, !.rows[h].fired = s.now]
 Create(h) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ ~s.rows[h].active /\ ~s.rows[h].known
-  /\ s.rows[h].stop = "none" /\ s.now = 0
-  /\ s' = [s EXCEPT !.rows[h].active = TRUE, !.rows[h].inbox = TRUE, !.rows[h].clientId = TRUE]
-RecordSession(h) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ s.rows[h].active /\ ~s.rows[h].known
-  /\ s' = [s EXCEPT !.rows[h].known = TRUE]
-RecordFailure(h) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ s.rows[h].clientId
-  /\ ~s.rows[h].known /\ ~s.rows[h].recordFailed
-  /\ s' = [s EXCEPT !.rows[h].recordFailed = TRUE, !.rows[h].cancel = TRUE]
-Message(h) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ s.rows[h].active
-  /\ s.rows[h].stop = "none" /\ ~s.rows[h].recordFailed /\ s.rows[h].partial < 2
-  /\ s' = [s EXCEPT !.rows[h].partial = @ + 1]
-Usage(h,input,output) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ s.rows[h].active
-  /\ s.rows[h].stop = "none"
-  /\ s.rows[h].steps < (IF Mutant = "step-limit" THEN 3 ELSE 2)
-  /\ LET delta == (IF input > s.rows[h].previous THEN input - s.rows[h].previous ELSE 0) + output
-         work == s.rows[h].work + (IF Mutant = "work-output" THEN delta - output ELSE delta)
-     IN s' = [s EXCEPT !.rows[h].steps = @ + 1, !.rows[h].previous = input,
-       !.rows[h].work = work, !.rows[h].limited = s.rows[h].steps + 1 >= 2,
-       !.rows[h].workProof = @ /\ (Mutant # "work-output" \/ output = 0),
-       !.rows[h].ceilingPending = @ \/ (work > 3 /\ Mutant # "work-stop")]
-\* Usage reports first; the asynchronous store stop can lose to natural completion.
-CeilingStop(h) ==
-  /\ s.rows[h].ceilingPending
-  /\ s' = [s EXCEPT !.rows[h].ceilingPending = FALSE,
-       !.rows[h].stop = IF s.rows[h].run /\ s.rows[h].stop = "none"
-         THEN "ceiling" ELSE @]
-Stop(h,why) ==
-  /\ s.rows[h].run /\ s.rows[h].stop = "none"
-  /\ s' = [s EXCEPT !.rows[h].stop = why,
-       !.rows[h].stopProof = TRUE]
-OverwriteStop(h) ==
-  /\ Mutant = "stop-twice" /\ s.rows[h].stop # "none"
-  /\ s' = [s EXCEPT !.rows[h].stop = "deadline", !.rows[h].stopProof = FALSE]
-Question(h) ==
-  /\ s.rows[h].run /\ s.rows[h].active /\ ~s.rows[h].asked
-  /\ s' = [s EXCEPT !.rows[h].asked = TRUE, !.rows[h].cancel = TRUE]
-Cancel(h) ==
-  /\ s.rows[h].run /\ (s.rows[h].known \/ (s.rows[h].client /\ s.rows[h].clientId)) /\ ~s.rows[h].cancel
-  /\ s.rows[h].stop # "none" \/ s.rows[h].asked \/ ~s.rows[h].client
-      \/ s.rows[h].owner # s.owner \/ s.now >= 3
-  /\ s' = [s EXCEPT !.rows[h].cancel = TRUE]
-End(h) ==
-  /\ s.rows[h].active
-  /\ s.rows[h].cancel \/ s.now >= 3 \/ s.rows[h].partial = 2 \/ s.rows[h].limited
-  /\ s' = [s EXCEPT !.rows[h].active = FALSE]
-ClientExit(h) ==
-  /\ s.rows[h].client
-  /\ s' = [s EXCEPT !.rows[h].client = FALSE]
-RunnerTimeout(h) ==
-  /\ s.now = 3 /\ s.rows[h].client
-  /\ s' = [s EXCEPT !.rows[h].client = FALSE]
-Eligible(h,tick) ==
-  IF tick THEN s.rows[h].owner # s.owner \/ ~s.rows[h].client \/ s.now >= 3
-  ELSE s.rows[h].client /\ (s.rows[h].known \/ ~s.rows[h].active)
-\* Reset succeeds only once the turn ends; failures/timeouts leave the inbox alive.
-Reset(h) ==
-  /\ s.rows[h].run /\ s.rows[h].known /\ s.rows[h].inbox
-  /\ Eligible(h,TRUE) /\ s.rows[h].cancel /\ ~s.rows[h].active
-  /\ s' = [s EXCEPT !.rows[h].inbox = FALSE, !.rows[h].reset = TRUE]
-CanFinish(h,tick) ==
-  /\ s.rows[h].run /\ Eligible(h,tick)
-  /\ (IF tick THEN s.rows[h].reset \/ (~s.rows[h].known /\ ~s.rows[h].client)
-      ELSE ~s.rows[h].active) \/ Mutant = "early-free"
-     \/ (tick /\ Mutant = "accepted-finish" /\ s.rows[h].cancel)
-Result(h,tick) ==
-  IF s.rows[h].stop = "closed" THEN "stopped"
-  ELSE IF s.rows[h].stop # "none" THEN s.rows[h].stop
-  ELSE IF s.rows[h].recordFailed THEN "failed"
-  ELSE IF s.rows[h].asked THEN IF Mutant = "question-done" THEN "done" ELSE "failed"
-  ELSE IF tick THEN IF s.now >= 2 THEN "deadline" ELSE "interrupted"
-  ELSE IF s.rows[h].limited THEN IF s.rows[h].partial > 0 THEN "ceiling" ELSE "failed"
-  ELSE IF s.rows[h].partial > 0 THEN "done" ELSE "empty"
-Finish(h,tick) ==
-  /\ CanFinish(h,tick) \/ (Mutant = "finalize-twice" /\ s.rows[h].finishes = 1)
-  /\ s' = [s EXCEPT !.rows[h].run = FALSE,
-       !.rows[h].status = IF s.rows[h].stop = "closed" THEN "closed" ELSE "finished",
-       !.rows[h].outcome = Result(h,tick), !.rows[h].finishes = @ + 1,
-       !.rows[h].saved = IF tick \/ Mutant = "partial" THEN 0 ELSE s.rows[h].partial,
-       !.rows[h].finishedByTick = tick,
-       !.rows[h].ceilingLost = ~tick /\ Result(h,tick) = "done" /\ s.rows[h].work > 3,
-       !.rows[h].finishedAt = s.now,
-       !.rows[h].endedProof = (IF tick /\ s.rows[h].known THEN s.rows[h].reset
-          ELSE ~s.rows[h].active \/ (~s.rows[h].known /\ ~s.rows[h].client))]
-StaleFinish(h) ==
-  /\ Mutant = "stale-cas" /\ s.rows[h].run
-  /\ s' = [s EXCEPT !.rows[h].run = FALSE, !.rows[h].outcome = "done",
-       !.rows[h].status = "finished", !.rows[h].endedProof = FALSE]
+  /\ s.rows[h].run /\ s.rows[h].creating /\ ~s.rows[h].created
+  /\ s' = [s EXCEPT !.rows[h].kernel = TRUE, !.rows[h].created = TRUE]
+Record(h) ==
+  /\ Case \notin {"lost-id", "record-failure"}
+  /\ s.rows[h].run /\ s.rows[h].creating /\ s.rows[h].created
+  /\ s' = [s EXCEPT !.rows[h].known = TRUE, !.rows[h].creating = FALSE]
+LoseId(h) ==
+  /\ Case \in {"all", "lost-id"}
+  /\ s.rows[h].run /\ s.rows[h].creating /\ s.rows[h].created
+  /\ s' = [s EXCEPT !.rows[h].creating = FALSE]
 StartFailed(h) ==
-  /\ s.rows[h].run /\ s.rows[h].client /\ ~s.rows[h].active /\ ~s.rows[h].known /\ s.rows[h].partial = 0
-  /\ s' = [s EXCEPT !.rows[h].run = FALSE, !.rows[h].client = FALSE,
-       !.rows[h].status = "finished", !.rows[h].outcome = "failed",
-       !.rows[h].finishes = @ + 1, !.rows[h].finishedAt = s.now]
-Close(h) ==
-  /\ s.rows[h].status \in {"pending", "finished"}
-  /\ IF s.rows[h].run THEN Stop(h,"closed")
-     ELSE s' = [s EXCEPT !.rows[h].status = "closed",
-       !.rows[h].outcome = IF s.rows[h].outcome = "none" THEN "stopped"
-         ELSE IF Mutant = "close-outcome" THEN "stopped" ELSE @,
-       !.rows[h].closeChanged = s.rows[h].outcome # "none" /\ Mutant = "close-outcome",
-       !.rows[h].finishedAt = IF s.rows[h].outcome = "none" THEN s.now ELSE @]
-ReadClosed(h) ==
-  /\ s.rows[h].status = "closed" /\ s.rows[h].retained /\ ~s.missingRead
-  /\ s' = [s EXCEPT !.missingRead = Mutant = "hide-closed"]
-Sweep(h) ==
-  /\ s.rows[h].status = "closed" /\ s.rows[h].retained
-  /\ s.now >= s.rows[h].finishedAt + 1 \/ Mutant = "early-sweep"
-  /\ s' = [s EXCEPT !.rows[h].retained = FALSE,
-       !.rows[h].closedEarly = s.now < s.rows[h].finishedAt + 1]
+  /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].creating /\ ~s.rows[h].created
+  /\ s' = [s EXCEPT !.rows[h] = Finished(@, "none", 0, <<>>, TRUE, FALSE,
+       IF @.stop = "none" THEN "failed" ELSE StopOutcome(@.stop))]
+RecordFailed(h) ==
+  /\ Case \in {"all", "record-failure"}
+  /\ s.rows[h].run /\ s.rows[h].creating /\ s.rows[h].created
+  /\ LET row == [s.rows[h] EXCEPT !.attempts = @ + 1]
+     IN s' = [s EXCEPT !.rows[h] = Finished(row, "none", 0, <<>>, TRUE, FALSE,
+       IF row.stop = "none" THEN "failed" ELSE StopOutcome(row.stop))]
+
+\* While a row is open, the kernel journal is adversarial. After finalize its contents are
+\* irrelevant to the tick; the retained kernel flag witnesses a durable tail.
+Message(h, text) ==
+  /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
+  /\ s.rows[h].event = "none" /\ s.rows[h].messages < 2
+  /\ s' = [s EXCEPT !.rows[h].text = text, !.rows[h].messages = @ + 1]
+Usage(h, input, output) ==
+  /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
+  /\ s.rows[h].event = "none" /\ Len(s.rows[h].usage) < 2
+  /\ s' = [s EXCEPT !.rows[h].usage = Append(@, [input |-> input, output |-> output])]
+KernelEvent(h, event) ==
+  /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel /\ ~s.rows[h].quarantined
+  /\ s.rows[h].event = "none"
+  /\ s' = [s EXCEPT !.rows[h].event = event]
+KernelEnd(h) ==
+  /\ Case = "all" /\ s.rows[h].run /\ s.rows[h].kernel
+  /\ s' = [s EXCEPT !.rows[h].kernel = FALSE]
 Restart ==
-  /\ s.owner = 1
-  /\ s' = [s EXCEPT !.owner = 2, !.restarted = TRUE,
-       !.rows = [h \in Helpers |-> [s.rows[h] EXCEPT !.client = FALSE]]]
-Effect(h) ==
-  /\ s.rows[h].active /\ s.rows[h].effects < 2
-  /\ s' = [s EXCEPT !.rows[h].effects = @ + 1,
-       !.rows[h].lateEffect = @ \/ s.rows[h].stop # "none",
-       !.rows[h].restartEffect = @ \/ (s.restarted /\ s.rows[h].owner # s.owner),
-       !.rows[h].tailEffect = @ \/ (~s.rows[h].run /\ ~s.rows[h].known)]
-NormalWaiting(h) ==
-  /\ ~s.normalEnd /\ s.rows[h].run /\ s.rows[h].active
-  /\ s.rows[h].known /\ ~s.rows[h].asked /\ s.rows[h].stop = "none"
-  /\ s.rows[h].partial > 0
-  /\ s' = [s EXCEPT !.rows[h].active = FALSE, !.normalEnd = TRUE]
-Clock == /\ s.now < 3 /\ s' = [s EXCEPT !.now = @ + 1]
-Lifecycle(h) == Claim(h) \/ Create(h) \/ RecordSession(h) \/ RecordFailure(h) \/ Message(h)
-  \/ (\E why \in {"closed","ceiling","deadline"}: Stop(h,why)) \/ OverwriteStop(h)
-  \/ (\E input \in 0..(IF Case = "effects" THEN 2 ELSE 3), output \in 0..1 : Usage(h,input,output))
-  \/ CeilingStop(h)
-  \/ Question(h) \/ Cancel(h) \/ End(h) \/ Reset(h) \/ ClientExit(h) \/ RunnerTimeout(h)
-  \/ Finish(h,TRUE) \/ Finish(h,FALSE) \/ StaleFinish(h) \/ StartFailed(h)
-  \/ Close(h) \/ ReadClosed(h) \/ Sweep(h)
-Next == (\E h \in Helpers :
-  (\E actor \in {"owner","helper"}, hasMay \in BOOLEAN : Add(h,actor,hasMay))
-  \/ (Case # "auth" /\ (IF Case = "capacity" THEN Claim(h) ELSE Lifecycle(h))) \/ (Case = "effects" /\ Effect(h)))
-  \/ (Case # "auth" /\ (Clock \/ Restart)) \/ (\E h \in Helpers : NormalWaiting(h))
+  /\ Case \in {"all", "restart", "quarantine", "cancel-failure", "lost-id"}
+  /\ s.owner = 1 /\ Running # {}
+  /\ s' = [s EXCEPT !.owner = 2,
+       !.rows = [h \in Helpers |-> [s.rows[h] EXCEPT
+         !.quarantined = Case = "quarantine"]]]
+Close(h) ==
+  /\ s.rows[h].status = "pending" /\ s.rows[h].stop # "closed"
+  /\ LET row == SetStop(s.rows[h], "closed")
+     IN s' = [s EXCEPT !.rows[h] = IF row.run THEN row ELSE
+       Finished(row, "none", 0, <<>>, FALSE, FALSE, "stopped")]
+
+\* A minute advances only after its finite tick pass. Each HTTP operation returns or times out
+\* within HELPER_CALL_MS; the atomic row step represents these bounded calls, not a successful RPC.
+\* v7.2: a separate Schedule remains runnable while a reminder turn never returns.
+TickStart ==
+  /\ (Mutant # "shared-schedule" \/ ~s.reminderBusy)
+  /\ s.phase = "idle" /\ s.lastTick < s.now
+  /\ s' = [s EXCEPT !.phase = "scan", !.todo = Running]
+CancelDelivered(reply) == reply \in {"accepted", "no_active_turn"}
+ReadReplies(row) ==
+  IF row.quarantined THEN {"404"}
+  ELSE IF Case = "snapshot-failure" THEN {"error", "timeout", "junk"}
+  ELSE IF Case = "all" THEN {"ok", "error", "timeout", "junk", "404"}
+  ELSE {"ok"}
+CancelReplies(row) ==
+  IF row.quarantined THEN {"no_active_turn"}
+  ELSE IF Case = "cancel-failure" THEN {"error", "timeout", "other"}
+  ELSE IF Case = "all" THEN {"accepted", "no_active_turn", "error", "timeout", "other"}
+  ELSE {"accepted"}
+TickRow(h, read, reply) ==
+  /\ s.phase = "scan" /\ h \in s.todo
+  /\ read \in ReadReplies(s.rows[h]) /\ reply \in CancelReplies(s.rows[h])
+  /\ LET before == s.rows[h]
+         readable == before.known /\ read = "ok"
+         event == IF readable THEN before.event ELSE "none"
+         text == IF readable THEN before.text ELSE 0
+         usage == IF readable THEN before.usage ELSE <<>>
+         oldOwner == before.owner # s.owner
+         atCeiling == s.now >= before.fired + Ceiling
+         row == IF event # "none" \/ oldOwner \/ ~readable THEN before
+           ELSE IF MeasuredWork(usage, 0) > 3 THEN SetStop(before, "ceiling")
+           ELSE IF s.now >= before.fired + Deadline THEN SetStop(before, "deadline")
+           ELSE before
+         cancelNeeded == before.known /\ (oldOwner \/ row.stop # "none" \/ atCeiling)
+         delivered == cancelNeeded /\ CancelDelivered(reply)
+         cancelRow == IF cancelNeeded THEN [row EXCEPT !.attempts = @ + 1,
+           !.delivered = @ \/ delivered] ELSE row
+         restartFinish == oldOwner /\ (~before.known \/ delivered \/ Mutant = "restart-undelivered")
+         end == event # "none" \/ restartFinish
+           \/ (atCeiling /\ Mutant # "no-ceiling")
+           \/ (Mutant = "cancel-finish" /\ delivered)
+         outcome == IF row.stop # "none" THEN StopOutcome(row.stop)
+           ELSE IF event # "none" THEN EventOutcome(event, text)
+           ELSE IF restartFinish THEN "interrupted" ELSE "deadline"
+         result == IF before.run /\ end THEN Finished(cancelRow, event, text, usage, FALSE, delivered,
+           IF Mutant = "wrong-event" /\ event # "none" THEN "done" ELSE outcome)
+           ELSE cancelRow
+     IN s' = [s EXCEPT !.rows[h] = result, !.todo = @ \ {h}]
+TickDone ==
+  /\ s.phase = "scan" /\ s.todo = {}
+  /\ s' = [s EXCEPT !.phase = "idle", !.lastTick = s.now]
+Clock ==
+  /\ s.phase = "idle" /\ s.lastTick = s.now /\ s.now < Ceiling + 1
+  /\ s' = [s EXCEPT !.now = @ + 1]
+DoubleFinalize(h) ==
+  /\ Mutant = "finalize-twice" /\ Len(s.rows[h].commits) = 1
+  /\ s' = [s EXCEPT !.rows[h].commits = Append(@, Head(@))]
+
+Next == TickStart \/ TickDone \/ Clock \/ Restart \/
+  (\E h \in Helpers : Claim(h) \/ Create(h) \/ Record(h) \/ LoseId(h)
+    \/ StartFailed(h) \/ RecordFailed(h) \/ Close(h) \/ KernelEnd(h) \/ DoubleFinalize(h)
+    \/ (\E text \in Texts : Message(h, text))
+    \/ (\E input \in 0..2, output \in 0..1 : Usage(h, input, output))
+    \/ (\E event \in Terms \ {"none"} : KernelEvent(h, event))
+    \/ (\E read \in {"ok", "error", "timeout", "junk", "404"},
+           reply \in {"accepted", "no_active_turn", "error", "timeout", "other"} : TickRow(h, read, reply)))
 Spec == Init /\ [][Next]_vars
-FairSpec == Spec /\ WF_vars(Clock) /\ \A h \in Helpers :
-  WF_vars(Cancel(h)) /\ WF_vars(End(h)) /\ WF_vars(Reset(h)) /\ WF_vars(RunnerTimeout(h)) /\ WF_vars(Finish(h,TRUE))
-  /\ WF_vars(CeilingStop(h))
-TypeOK == /\ s.now \in 0..3 /\ s.owner \in {1,2}
-  /\ \A h \in Helpers : s.rows[h].status \in {"absent","pending","finished","closed"}
-Authorized == \A h \in Helpers : s.rows[h].authorized
-MayRequired == \A h \in Helpers : s.rows[h].mayPresent
-MayUnchanged == \A h \in Helpers : s.rows[h].status # "absent" => s.rows[h].may = "opaque"
+FairSpec == Spec /\ WF_vars(Clock) /\ WF_vars(TickStart) /\ WF_vars(TickDone)
+  /\ \A h \in Helpers : WF_vars(\E read \in {"ok", "error", "timeout", "junk", "404"},
+    reply \in {"accepted", "no_active_turn", "error", "timeout", "other"} : TickRow(h, read, reply))
+
+TypeOK == /\ s.reminderBusy \in BOOLEAN
+  /\ s.now \in 0..(Ceiling + 1) /\ s.owner \in {1, 2}
+  /\ s.lastTick \in -1..s.now /\ s.phase \in {"idle", "scan"} /\ s.todo \subseteq Helpers
+  /\ \A h \in Helpers : /\ s.rows[h].status \in {"pending", "finished", "closed"}
+      /\ s.rows[h].event \in Terms /\ s.rows[h].stop \in Stops /\ s.rows[h].text \in Texts
+      /\ s.rows[h].run \in BOOLEAN /\ Len(s.rows[h].usage) <= 2
 OneRun == Cardinality(Running) <= 1
-WithinLimits == \A h \in Helpers : s.rows[h].steps <= 2
-WorkMeasured == \A h \in Helpers : s.rows[h].workProof
-WorkStops == \A h \in Helpers : s.rows[h].run /\ s.rows[h].active
-  /\ s.rows[h].stop = "none" /\ s.rows[h].work > 3 => s.rows[h].ceilingPending
-OutcomeOnce == \A h \in Helpers : s.rows[h].finishes <= 1
-StopOnce == \A h \in Helpers : s.rows[h].stopProof
-ClosedFinal == \A h \in Helpers : s.rows[h].status = "closed" => s.rows[h].outcome # "none"
-SlotFreedAfterEnd == \A h \in Helpers : s.rows[h].endedProof
-QuestionFailed == \A h \in Helpers : s.rows[h].asked /\ s.rows[h].outcome # "none" /\ s.rows[h].stop = "none" => s.rows[h].outcome # "done"
-PartialKept == \A h \in Helpers : s.rows[h].finishes > 0 /\ ~s.rows[h].finishedByTick
-  => s.rows[h].saved = s.rows[h].partial
-KeepClosed == \A h \in Helpers : ~s.rows[h].closedEarly
-ClosedReadable == ~s.missingRead
-CloseKeepsOutcome == \A h \in Helpers : ~s.rows[h].closeChanged
+OutcomeOnce == \A h \in Helpers : Len(s.rows[h].commits) <= 1
+StopOnce == \A h \in Helpers : s.rows[h].stop = FirstStop(s.rows[h].stops)
+EndAllowed(commit) == ~commit.claimed \/ commit.startFault \/ commit.event # "none"
+  \/ (commit.oldOwner /\ (~commit.known \/ commit.delivered))
+  \/ commit.at >= commit.fired + Ceiling
+ExpectedOutcome(commit) ==
+  IF FirstStop(commit.stops) # "none" THEN StopOutcome(FirstStop(commit.stops))
+  ELSE IF commit.startFault THEN "failed"
+  ELSE IF commit.event # "none" THEN EventOutcome(commit.event, commit.text)
+  ELSE IF commit.oldOwner /\ (~commit.known \/ commit.delivered) THEN "interrupted"
+  ELSE "deadline"
+OutcomeJustified == \A h \in Helpers : \A i \in 1..Len(s.rows[h].commits) : EndAllowed(s.rows[h].commits[i])
+OutcomeMatches == \A h \in Helpers :
+  /\ \A i \in 1..Len(s.rows[h].commits) :
+    s.rows[h].commits[i].outcome = ExpectedOutcome(s.rows[h].commits[i])
+  /\ Len(s.rows[h].commits) > 0 => s.rows[h].outcome = ExpectedOutcome(Head(s.rows[h].commits))
+RestartDelivered == \A h \in Helpers : \A i \in 1..Len(s.rows[h].commits) :
+  LET c == s.rows[h].commits[i]
+  IN c.oldOwner /\ c.known /\ ~c.startFault /\ c.event = "none" /\ c.at < c.fired + Ceiling => c.delivered
+PartialKept == \A h \in Helpers :
+  /\ \A i \in 1..Len(s.rows[h].commits) :
+    s.rows[h].commits[i].saved = Usable(s.rows[h].commits[i].text)
+  /\ Len(s.rows[h].commits) > 0 => s.rows[h].saved = Usable(Head(s.rows[h].commits).text)
+WorkMeasured == \A h \in Helpers :
+  /\ \A i \in 1..Len(s.rows[h].commits) :
+    /\ s.rows[h].commits[i].steps = Len(s.rows[h].commits[i].usage)
+    /\ s.rows[h].commits[i].work = MeasuredWork(s.rows[h].commits[i].usage, 0)
+  /\ Len(s.rows[h].commits) > 0 =>
+    /\ s.rows[h].steps = Len(Head(s.rows[h].commits).usage)
+    /\ s.rows[h].work = MeasuredWork(Head(s.rows[h].commits).usage, 0)
+RowConsistent == \A h \in Helpers :
+  /\ (s.rows[h].outcome = "none") = (Len(s.rows[h].commits) = 0)
+  /\ s.rows[h].outcome # "none" => ~s.rows[h].run
+  /\ s.rows[h].status = "closed" => s.rows[h].outcome # "none" \/ s.rows[h].run
+BoundedEnd == \A h \in Helpers : s.rows[h].claimed /\ s.lastTick >= s.rows[h].fired + Ceiling
+  => s.rows[h].outcome # "none"
 NoSilentEnd == \A h \in Helpers : s.rows[h].run ~> (s.rows[h].outcome # "none")
-\* Witnesses of accepted consequences, not guarantees or extra mechanisms.
-NoRestartEffect == \A h \in Helpers : ~s.rows[h].restartEffect
-NoLateEffect == \A h \in Helpers : ~s.rows[h].lateEffect
-NoDuplicateEffect == \A h \in Helpers : s.rows[h].effects < 2
-NoTailEffect == \A h \in Helpers : ~s.rows[h].tailEffect
-NoNormalWaiting == ~s.normalEnd
-NoCeilingRace == \A h \in Helpers : ~s.rows[h].ceilingLost
-TickRetainsText == \A h \in Helpers : s.rows[h].finishedByTick => s.rows[h].saved = s.rows[h].partial
+\* Accepted consequence: durable work may outlive the table claim after restart/ceiling/lost-id.
+NoDetachedWork == \A h \in Helpers : ~s.rows[h].run => ~s.rows[h].kernel
 =============================================================================
