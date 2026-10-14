@@ -49,8 +49,9 @@ existing boundary.
    `goal resume`; a stale button gets the tool's refusal in plain words.
 4. Put the owner's answer into `plan` through `goal update`, keeping sources
    and agreed boundaries. New permission also updates `may`. "Проверь сейчас"
-   calls `goal update` with `next_check: "now"`. Repeat a named time in the
-   confirmation.
+   calls `goal update` with `next_check: "now"`. After the receipt, say you will
+   write only if something new is found; a check with no news stays silent.
+   Repeat a named time in the confirmation.
 5. Tell an expired pause once in the conversation and offer to continue.
    A third consecutive failure has its own Outcome to retell with the pause.
 
