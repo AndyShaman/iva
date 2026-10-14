@@ -719,3 +719,18 @@ void test("протухшая метка хода не приписывает в
   }
   assert.equal(lines(DATA, trace.traceDay()).length, before + 1);
 });
+
+void test("native draft stop intake uses its update id and private chat in Trace", () => {
+  const before = lines(DATA, trace.traceDay()).length;
+  trace.traceBridgeAdmission(
+    {
+      update_id: 991,
+      stopped_message_generation: { chat: { id: 77 }, draft_id: 41 },
+    },
+    "owned",
+  );
+  const event = lines(DATA, trace.traceDay())
+    .slice(before)
+    .find((row) => row.turn === "tg:77:stop:991");
+  assert.ok(event);
+});

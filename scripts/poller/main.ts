@@ -366,7 +366,11 @@ export async function main({
         {
           offset,
           timeout: pollSeconds,
-          allowed_updates: ["message", "callback_query"],
+          allowed_updates: [
+            "message",
+            "callback_query",
+            "stopped_message_generation",
+          ],
         },
         { timeoutMs: pollSeconds > 1 ? 40_000 : 10_000 },
       )) as TelegramResponse;

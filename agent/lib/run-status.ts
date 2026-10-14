@@ -2,7 +2,6 @@
 // канал (agent/channels/telegram.ts) читают/пишут файлы data/run-status.d/*.json.
 //
 // Зачем: мост решает, доставлять сообщение в eve или буферизовать (агент занят),
-// берёт отсюда sessionId+turnId для отмены хода по кнопке ⏹ Стоп, а канал
 // пишет сюда пульс живого хода, чтобы жнец моста не снял его как протухший.
 // Отдельный файл на chatKey не даёт параллельной записи одного чата потерять статус
 // другого. Запись одного ключа защищена O_EXCL-локом и атомарна (unique tmp+rename).
@@ -49,7 +48,6 @@ const errorCode = (error: unknown): string | undefined =>
 
 // Путь от cwd, как в usage.ts, а НЕ от import.meta.url: канал инлайнится в кэш
 // authored-modules eve, откуда «две папки вверх» указывают в node_modules/.cache.
-// Оба процесса (iva.service и мост) стартуют из одного WorkingDirectory (корень установки Ивы).
 const DATA_DIR = dataDir();
 const LEGACY_STATUS_FILE = join(DATA_DIR, "run-status.json");
 const STATUS_DIR = join(DATA_DIR, "run-status.d");
@@ -74,8 +72,6 @@ const LOCK_RETRY_MS = 10;
 export const QUEUED_STATUS_CLEARED = {
   queuedIngressId: null,
   queuedIngressAt: null,
-  queuedStatusAt: null,
-  queuedStatusMessageId: null,
   queuedSessionId: null,
 } as const;
 
@@ -337,6 +333,13 @@ function updateChatStatus(
       updatedAt: stamp(prev),
     };
     delete next[RETIRED_SESSION_ROUTING_FIELD];
+    for (const field of [
+      "statusMessageId",
+      "statusAt",
+      "queuedStatusMessageId",
+      "queuedStatusAt",
+    ])
+      delete next[field];
     for (const key of Object.keys(next))
       if (next[key] === null) delete next[key];
     writeCurrent(file, next);

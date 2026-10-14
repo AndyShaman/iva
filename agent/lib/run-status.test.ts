@@ -551,3 +551,38 @@ test("a write with touch: false moves generation but keeps updatedAt", async () 
   const touched = status.setChatStatusIf(chatKey, { status: "running" }, {});
   assert.ok((touched?.updatedAt ?? 0) > (first.updatedAt ?? 0));
 });
+
+test("legacy status UI fields remain readable and disappear from the next written record", () => {
+  const key = "legacy-ui:";
+  const dir = join(dataDir, "run-status.d");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${Buffer.from(key).toString("base64url")}.json`);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      status: "running",
+      sessionId: "s",
+      turnId: "t",
+      statusMessageId: 1,
+      statusAt: 2,
+      queuedStatusMessageId: 3,
+      queuedStatusAt: 4,
+    }),
+  );
+  assert.equal(status.getChatStatus(key)?.sessionId, "s");
+  status.setChatStatus(key, { draftId: 41 });
+  const written = JSON.parse(readFileSync(file, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  for (const field of [
+    "statusMessageId",
+    "statusAt",
+    "queuedStatusMessageId",
+    "queuedStatusAt",
+  ])
+    assert.equal(Object.hasOwn(written, field), false);
+  assert.equal(written.sessionId, "s");
+  assert.equal(written.turnId, "t");
+  assert.equal(written.draftId, 41);
+});

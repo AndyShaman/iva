@@ -7,6 +7,10 @@ import { tg } from "./transport.ts";
 
 type ErrorLike = { code?: unknown; message?: unknown };
 type TelegramUpdate = {
+  stopped_message_generation?: {
+    chat: { id: string | number };
+    message_thread_id?: number;
+  };
   message?: { chat?: { id?: unknown }; message_thread_id?: unknown };
   callback_query?: {
     message?: { chat?: { id?: unknown }; message_thread_id?: unknown };
@@ -92,7 +96,10 @@ async function fastForwardOffset({
 // Ключ сериализации — чат/тема Telegram; активную сессию eve маршрутизирует по sessionId.
 // one chat (+ forum topic) — one session, deliver into it one at a time with a pause.
 function chatKey(update: TelegramUpdate) {
-  const msg = update.message ?? update.callback_query?.message;
+  const msg =
+    update.message ??
+    update.callback_query?.message ??
+    update.stopped_message_generation;
   const chatId = msg?.chat?.id;
   if (chatId === undefined) return null;
   const threadId = msg?.message_thread_id;

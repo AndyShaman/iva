@@ -244,7 +244,6 @@ class Machine {
           alertImpl: () => Promise.resolve("sent" as const),
           alertResolvedImpl: () => {},
           alertDataDir: root,
-          deleteMessageImpl: () => Promise.resolve(),
           now: () => 1_000,
           logImpl: () => {},
           resetPendingImpl: () => false,

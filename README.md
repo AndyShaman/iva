@@ -188,7 +188,7 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 #### v0.4.16
 
 - 📨 **Messages sent while Iva is busy reach her together**: if you send several messages or files while she is answering, Iva gets them at once and answers once instead of replying to each in turn. Commands, replies to her messages and button taps still go separately. In «Interrupt» mode a new message waits until Iva has picked up the ones already collected.
-- 💬 **During long work you can see what Iva is busy with**: what the model writes along the way («Searching mail…», «Putting a draft together…») now shows in the status line next to the ⏹ button and does not vanish. No extra messages in the chat, the status changes at most once every 15 seconds, and the answer arrives as before.
+- 💬 **During long work you can see what Iva is busy with**: a private chat shows a streaming draft with the current tool. The native ■ control stops the turn. Groups and topics show typing and use `/stop`. The final answer arrives as a separate reply.
 - 🔎 **Iva searches on her own first, then asks**: before asking you a question, she checks her memory, chats and mail, the web and the server, and in the question she says what she has already checked. What to choose and whether something may be done she still asks you.
 - 📄 **Replacements in Word files no longer double up**: in a merged table cell, replacing «100» with «1000» gave «10000». Now each replacement is made once, and page breaks, tabs and pictures next to the text stay in place.
 

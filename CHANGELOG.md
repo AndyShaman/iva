@@ -11,6 +11,7 @@
 
 - 🔧 **Кавычки сохраняют данные команд**: защита bash пропускает сообщения `git commit -m`, конвейеры `journalctl | sed | grep` с `at/batch` в строке и справку `"iva" restart --help`; исполняемые таймеры и перезапуск продолжают проверяться. Shell guards preserve quoted command data and recognize the quoted Iva help command.
 - 🎯 **Goal следит до результата**: помощник проверяет ответ или изменение по расписанию, ведёт план и действует в названных границах; Ива приносит результат или вопрос, а закрывает goal владелец. Scheduled helper checks follow a goal until the owner's closure.
+- 💬 **Ответ появляется в черновике**: в личном чате Ива показывает текст по мере написания и текущий инструмент; нативная кнопка ■ останавливает выбранный ход. Во время работы виден индикатор «печатает», итог приходит отдельным ответом. Private chats stream a draft with the current tool and native stop control; the final reply arrives separately.
 
 - ⏹ **Стоп подтверждает остановку выбранного хода**: следующий ход в том же разговоре получает своё состояние; кнопка перезапуска от предыдущего хода сохраняет его идентификатор и оставляет следующий ход работать. Stop confirmation and restart buttons now track the selected turn within its session.
 

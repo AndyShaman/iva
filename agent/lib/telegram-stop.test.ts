@@ -1,269 +1,247 @@
-/* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
-import test from "node:test";
+/* eslint-disable @typescript-eslint/require-await -- async test doubles retain the transport contract. */
 import assert from "node:assert/strict";
+import test from "node:test";
 import fc from "fast-check";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  handleTelegramDraftStop,
+  requestTurnCancel,
+  handleTelegramDraftStopRequest,
+  type StopCancelRequest,
+} from "./telegram-stop.ts";
 
-// Сценарии long-poll живут в тестах моста (scripts/poller/control.test.ts). Здесь —
-// webhook-режим, где моста нет: нажатие ловит канал и ждёт подтверждения сам.
-const traceRoot = mkdtempSync(join(tmpdir(), "iva-stop-"));
-process.env.ASSISTANT_DATA_DIR = join(traceRoot, "data");
-mkdirSync(process.env.ASSISTANT_DATA_DIR, { recursive: true });
-process.on("exit", () => rmSync(traceRoot, { recursive: true, force: true }));
-
-const { handleTelegramStopCallback, waitForTurnStop } =
-  await import("./telegram-stop.ts");
-type StopCancelRequest = import("./telegram-stop.ts").StopCancelRequest;
-type StopStatus = import("./telegram-stop.ts").StopStatus;
-
-const allowed = () => new Set(["42"]);
-const query = {
-  id: "cq-1",
-  data: "iva_cancel",
-  from: { id: 42 },
-  message: { chat: { id: 7, type: "private" } },
-};
-
-test("cancelled-turn-replaced-by-next-turn-in-same-session confirms the captured turn", async () => {
-  const store = statusStore({
-    status: "running",
-    sessionId: "same-session",
-    turnId: "old-turn",
-  });
-  const cancelled: StopCancelRequest[] = [];
-  const { notices, deps } = tapDeps({
-    confirmTimeoutMs: 1,
-    getStatusImpl: store.read,
-    cancelImpl: async (request: StopCancelRequest) => {
-      cancelled.push(request);
-      store.set({
-        status: "running",
-        sessionId: "same-session",
-        turnId: "next-turn",
-      });
-      return { status: "accepted" };
-    },
-  });
-  assert.equal(await handleTelegramStopCallback(query, deps), "requested");
-  assert.equal(cancelled[0]?.turnId, "old-turn");
-  assert.deepEqual(notices, []);
-});
-
-test("stop confirmation keeps session and turn identity; legacy snapshots use the session (seed 101414)", async () => {
-  await fc.assert(
-    fc.asyncProperty(
-      fc.string({ minLength: 1 }),
-      fc.string({ minLength: 1 }),
-      fc.boolean(),
-      fc.boolean(),
-      async (sessionId, turnId, sameSession, sameTurn) => {
-        const current = {
-          status: "running",
-          sessionId: sameSession ? sessionId : sessionId + "next",
-          turnId: sameTurn ? turnId : turnId + "next",
-        };
-        assert.equal(
-          await waitForTurnStop("fixture", sessionId, {
-            turnId,
-            getStatusImpl: () => current,
-            timeoutMs: 0,
-          }),
-          !(sameSession && sameTurn),
-        );
-        assert.equal(
-          await waitForTurnStop("fixture", sessionId, {
-            getStatusImpl: () => current,
-            timeoutMs: 0,
-          }),
-          !sameSession,
-        );
-      },
-    ),
-    { seed: 101414, numRuns: 100 },
-  );
-});
-
-// Запись хода под двойником: подтверждение — это изменение записи, а не ответ роута.
-function statusStore(initial: StopStatus = null) {
-  let value = initial;
+const native = { chat: { id: 7, type: "private" }, draft_id: 41 };
+function options(snapshot: Record<string, unknown> | null) {
+  const calls: StopCancelRequest[] = [];
   return {
-    read: () => value,
-    set: (next: StopStatus) => {
-      value = next;
-    },
-  };
-}
-
-// Общая обвязка: копим ответы на колбэк, честные сообщения и запросы к роуту.
-function tapDeps(overrides: Record<string, unknown> = {}) {
-  const acks: Array<string | undefined> = [];
-  const notices: string[] = [];
-  const cancels: StopCancelRequest[] = [];
-  return {
-    acks,
-    notices,
-    cancels,
+    calls,
     deps: {
-      ackImpl: async (text?: string) => {
-        acks.push(text);
-        return { ok: true };
-      },
-      notifyImpl: async (text: string) => {
-        notices.push(text);
-        return { ok: true };
-      },
-      allowedImpl: allowed,
-      secret: "test-secret",
-      cancelImpl: async (input: StopCancelRequest) => {
-        cancels.push(input);
+      allowedImpl: () => new Set(["7"]),
+      urlImpl: () => "http://localhost/cancel",
+      secret: "secret",
+      getStatusImpl: () => snapshot,
+      cancelImpl: async (req: StopCancelRequest) => {
+        calls.push(req);
         return { status: "accepted" };
       },
-      ...overrides,
+      logImpl: () => {},
     },
   };
 }
-
-test("a stop without the webhook secret says the turn wasn't stopped", async () => {
-  const { acks, notices, cancels, deps } = tapDeps({
-    secret: "",
-    getStatusImpl: () => ({ status: "running", sessionId: "s-1" }),
+void test("native stop cancels the snapshot pair even if the next turn replaces it during the request", async () => {
+  const f = options({
+    status: "running",
+    sessionId: "s",
+    turnId: "old",
+    draftId: 41,
   });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  assert.equal(outcome, "failed");
-  assert.deepEqual(acks, ["Не удалось остановить ход."]);
-  // Неполный конфиг — не зависший агент: роут не трогаем и ничего не ждём.
-  assert.deepEqual(cancels, []);
-  assert.deepEqual(notices, []);
-});
-
-test("nothing running is answered without touching the cancel route", async () => {
-  const { acks, cancels, deps } = tapDeps({ getStatusImpl: () => null });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  assert.equal(outcome, "idle");
-  assert.deepEqual(acks, ["Сейчас ничего не выполняется."]);
-  assert.deepEqual(cancels, []);
-});
-
-test("an accepted stop that never confirms tells the chat honestly", async () => {
-  const { acks, notices, deps } = tapDeps({
-    confirmTimeoutMs: 20,
-    getStatusImpl: () => ({ status: "running", sessionId: "s-2" }),
-  });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  // «Принято» — ещё не остановка: ответ на колбэк про отмену, честный текст — про факт.
-  assert.equal(outcome, "requested");
-  assert.deepEqual(acks, ["Останавливаю…"]);
-  // Окно теста — 20 мс: текст называет округлённое окно, а не константу по умолчанию.
-  assert.deepEqual(notices, ["Ход не остановился за 1 с."]);
-});
-
-test("a silent cancel route is answered like a slow one and still waits", async () => {
-  const { acks, notices, deps } = tapDeps({
-    confirmTimeoutMs: 20,
-    getStatusImpl: () => ({ status: "running", sessionId: "s-3" }),
-    cancelImpl: async () => {
-      throw new Error("cancel route is down");
+  let reads = 0;
+  assert.equal(
+    await handleTelegramDraftStop(native, {
+      ...f.deps,
+      getStatusImpl: () => {
+        reads++;
+        return reads === 1
+          ? { sessionId: "s", turnId: "old", draftId: 41 }
+          : { sessionId: "s", turnId: "new", draftId: 42 };
+      },
+    }),
+    "requested",
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(f.calls, [
+    {
+      url: "http://localhost/cancel",
+      secret: "secret",
+      sessionId: "s",
+      turnId: "old",
     },
-  });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  assert.equal(outcome, "unresponsive");
-  assert.deepEqual(acks, ["Останавливаю…"]);
-  assert.deepEqual(notices, ["Ход не остановился за 1 с."]);
+  ]);
 });
-
-test("a turn that stops inside the window needs no honest text", async () => {
-  const store = statusStore({ status: "running", sessionId: "s-4" });
-  const { acks, notices, deps } = tapDeps({
-    confirmTimeoutMs: 5000,
-    getStatusImpl: store.read,
+void test("repeated stop after cancellation or a newer draft is harmless; an already cancelled exact turn is idle", async () => {
+  let st: Record<string, unknown> = {
+    sessionId: "s",
+    turnId: "old",
+    draftId: 41,
+  };
+  let actualCancels = 0;
+  let cancelled = false;
+  const f = options(st);
+  const deps = {
+    ...f.deps,
+    getStatusImpl: () => st,
     cancelImpl: async () => {
-      setTimeout(() => store.set({ status: "idle", sessionId: null }), 10);
+      if (cancelled) return { status: "no_active_turn" };
+      cancelled = true;
+      actualCancels++;
       return { status: "accepted" };
     },
-  });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  assert.equal(outcome, "requested");
-  assert.deepEqual(acks, ["Останавливаю…"]);
-  assert.deepEqual(notices, []);
+  };
+  assert.equal(await handleTelegramDraftStop(native, deps), "requested");
+  assert.equal(await handleTelegramDraftStop(native, deps), "idle");
+  assert.equal(actualCancels, 1);
+  st = { sessionId: "s", turnId: "new", draftId: 42 };
+  assert.equal(await handleTelegramDraftStop(native, deps), "ignored");
+  st = { sessionId: "s", turnId: null, draftId: 41, compacting: true };
+  assert.equal(await handleTelegramDraftStop(native, deps), "ignored");
+  st = { status: "idle" };
+  assert.equal(await handleTelegramDraftStop(native, deps), "ignored");
+  assert.equal(actualCancels, 1);
 });
-
-test("a tap outside a private chat only asks for a private chat", async () => {
-  const { acks, cancels, deps } = tapDeps({
-    getStatusImpl: () => ({ status: "running", sessionId: "s-5" }),
-  });
-
-  const outcome = await handleTelegramStopCallback(
-    { ...query, message: { chat: { id: -100500, type: "supergroup" } } },
-    deps,
+void test("strangers and non-private chats produce a journal entry and zero cancellation", async () => {
+  const f = options({ sessionId: "s", turnId: "t", draftId: 41 });
+  const logs: unknown[][] = [];
+  for (const event of [
+    { ...native, chat: { id: 99, type: "private" } },
+    { ...native, chat: { id: 7, type: "group" } },
+  ])
+    assert.equal(
+      await handleTelegramDraftStop(event, {
+        ...f.deps,
+        logImpl: (...args) => {
+          logs.push(args);
+        },
+      }),
+      "ignored",
+    );
+  assert.equal(f.calls.length, 0);
+  assert.equal(logs.length, 2);
+});
+void test("secret absence and network failure remain explicit stop outcomes", async () => {
+  const f = options({ sessionId: "s", turnId: "t", draftId: 41 });
+  assert.equal(
+    await handleTelegramDraftStop(native, { ...f.deps, secret: "" }),
+    "failed",
   );
-
-  assert.equal(outcome, "ignored");
-  assert.deepEqual(acks, [
-    "Открой личный чат со мной, чтобы использовать это управление.",
-  ]);
-  assert.deepEqual(cancels, []);
+  assert.equal(f.calls.length, 0);
+  assert.equal(
+    await handleTelegramDraftStop(native, {
+      ...f.deps,
+      cancelImpl: async () => {
+        throw new Error("network");
+      },
+    }),
+    "unresponsive",
+  );
+});
+void test("/stop still cancels a stale record and handles pre-turn or no_active_turn", async () => {
+  const f = options({
+    status: "idle",
+    updatedAt: 0,
+    sessionId: "s",
+    turnId: "old",
+  });
+  assert.equal(
+    await requestTurnCancel("7:", {
+      ...f.deps,
+      url: "http://localhost/cancel",
+    }),
+    "requested",
+  );
+  assert.equal(f.calls[0].turnId, "old");
+  assert.equal(
+    await requestTurnCancel("7:", {
+      ...f.deps,
+      url: "http://localhost/cancel",
+      getStatusImpl: () => ({ status: "running" }),
+    }),
+    "idle",
+  );
+  assert.equal(
+    await requestTurnCancel("7:", {
+      ...f.deps,
+      url: "http://localhost/cancel",
+      cancelImpl: async () => ({ status: "no_active_turn" }),
+    }),
+    "idle",
+  );
+});
+void test("webhook authentication rejects before stop or original dispatch; clone preserves the ordinary update body", async () => {
+  let originalCalls = 0;
+  const original = async (req: Request) => {
+    originalCalls++;
+    assert.deepEqual(await req.json(), {
+      update_id: 1,
+      message: { text: "hi" },
+    });
+    return new Response("original");
+  };
+  const request = (secret: string) =>
+    new Request("http://localhost/eve/v1/telegram", {
+      method: "POST",
+      headers: { "x-telegram-bot-api-secret-token": secret },
+      body: JSON.stringify({ update_id: 1, message: { text: "hi" } }),
+    });
+  assert.equal(
+    (await handleTelegramDraftStopRequest(request("wrong"), original, "secret"))
+      .status,
+    401,
+  );
+  assert.equal(originalCalls, 0);
+  assert.equal(
+    await (
+      await handleTelegramDraftStopRequest(
+        request("secret"),
+        original,
+        "secret",
+      )
+    ).text(),
+    "original",
+  );
+  assert.equal(originalCalls, 1);
+});
+void test("PBT draft identity, compaction and foreign stops never cancel another pair (seed 101415)", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(
+        fc.record({
+          draft: fc.integer({ min: 1, max: 4 }),
+          turn: fc.option(fc.integer({ min: 1, max: 4 }), { nil: null }),
+          stop: fc.integer({ min: 1, max: 4 }),
+          allowed: fc.boolean(),
+          private: fc.boolean(),
+        }),
+        { maxLength: 50 },
+      ),
+      async (events) => {
+        for (const e of events) {
+          const f = options({
+            sessionId: "s",
+            turnId: e.turn === null ? null : `t${e.turn}`,
+            draftId: e.draft,
+          });
+          await handleTelegramDraftStop(
+            {
+              chat: {
+                id: e.allowed ? 7 : 99,
+                type: e.private ? "private" : "group",
+              },
+              draft_id: e.stop,
+            },
+            f.deps,
+          );
+          assert.equal(
+            f.calls.length,
+            e.allowed && e.private && e.turn !== null && e.stop === e.draft
+              ? 1
+              : 0,
+          );
+          if (f.calls.length) assert.equal(f.calls[0].turnId, `t${e.turn}`);
+        }
+      },
+    ),
+    { seed: 101415, numRuns: 100 },
+  );
 });
 
-test("a tap from outside the allowlist is ignored", async () => {
-  const { acks, cancels, deps } = tapDeps({
-    allowedImpl: () => new Set(["7"]),
-    getStatusImpl: () => ({ status: "running", sessionId: "s-6" }),
-  });
-
-  const outcome = await handleTelegramStopCallback(query, deps);
-
-  assert.equal(outcome, "ignored");
-  assert.deepEqual(acks, [undefined]);
-  assert.deepEqual(cancels, []);
-});
-
-test("the confirmation wait sleeps the remainder of the window, not a whole step", async () => {
-  let clock = 1000;
-  const slept: number[] = [];
-
-  const stopped = await waitForTurnStop("7:", "s-7", {
-    getStatusImpl: () => ({ status: "running", sessionId: "s-7" }),
-    timeoutMs: 1200,
-    pollMs: 500,
-    now: () => clock,
-    sleepImpl: async (ms: number) => {
-      slept.push(ms);
-      clock += ms;
-    },
-  });
-
-  assert.equal(stopped, false);
-  assert.deepEqual(slept, [500, 500, 200]);
-});
-
-test("the confirmation wait ends as soon as the record drops the session", async () => {
-  const store = statusStore({ status: "running", sessionId: "s-8" });
-  const slept: number[] = [];
-
-  const stopped = await waitForTurnStop("7:", "s-8", {
-    getStatusImpl: () => {
-      const seen = store.read();
-      store.set({ status: "idle", sessionId: null });
-      return seen;
-    },
-    timeoutMs: 5000,
-    sleepImpl: async (ms: number) => {
-      slept.push(ms);
-    },
-  });
-
-  assert.equal(stopped, true);
-  assert.deepEqual(slept, [500]);
+void test("malformed native stop cannot use an absent draft id to cancel a running turn", async () => {
+  const f = options({ sessionId: "s", turnId: "t" });
+  for (const draft_id of [0, -1, NaN, 1.5, undefined])
+    assert.equal(
+      await handleTelegramDraftStop(
+        { chat: native.chat, draft_id: draft_id as number },
+        f.deps,
+      ),
+      "ignored",
+    );
+  assert.equal(f.calls.length, 0);
 });

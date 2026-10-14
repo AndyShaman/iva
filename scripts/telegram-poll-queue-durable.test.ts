@@ -585,7 +585,7 @@ test("a direct acceptance 503 resets immediately, notifies once, then retries", 
   ]);
   assert.equal(result.statusBeforeRetry.status, "idle");
   assert.equal(result.statusBeforeRetry.ingressId, undefined);
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 77 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
     [["1", "Couldn't process the message - repeat it or use /new"]],
@@ -605,7 +605,7 @@ test("a reply to a closed session is delivered once, then leaves the durable inb
     "терминальный класс не повторяется ни в этом проходе, ни в следующем",
   );
   // Ранний «Работаю…» убран, чат снова свободен, пользователю сказано, что вышло.
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 79 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.equal(result.finalStatus.status, "idle");
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
@@ -630,7 +630,7 @@ test("a direct acceptance timeout rejects once and returns to Telegram polling",
     ["/eve/v1/telegram/accepted"],
     "a timed-out POST must never be repeated because it may still start later",
   );
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 78 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
     [["1", "Couldn't process the message - repeat it or use /new"]],

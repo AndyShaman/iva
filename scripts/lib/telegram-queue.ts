@@ -60,6 +60,7 @@ export type TelegramQueueUpdate = {
   update_id: number;
   message?: TelegramQueueMessage;
   callback_query?: TelegramCallbackQuery;
+  stopped_message_generation?: import("#lib/telegram-stop.ts").TelegramDraftStop;
   [key: string]: unknown;
 };
 
@@ -153,7 +154,19 @@ export function isTelegramQueueUpdate(
     "update_id" in value &&
     Number.isSafeInteger(value.update_id) &&
     optionalField(value, "message", isTelegramQueueMessage) &&
-    optionalField(value, "callback_query", isTelegramCallbackQuery)
+    optionalField(value, "callback_query", isTelegramCallbackQuery) &&
+    optionalField(
+      value,
+      "stopped_message_generation",
+      (event) =>
+        isRecord(event) &&
+        isRecord(event.chat) &&
+        (typeof event.chat.id === "number" ||
+          typeof event.chat.id === "string") &&
+        Number.isSafeInteger(event.draft_id) &&
+        Number(event.draft_id) > 0 &&
+        optionalField(event, "message_thread_id", Number.isSafeInteger),
+    )
   );
 }
 

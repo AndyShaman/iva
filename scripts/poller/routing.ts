@@ -41,7 +41,6 @@ import {
   acknowledgeTelegramQueueItems,
   acknowledgeQueued,
   clearFailedDirectIngress,
-  deleteStaleWorkingMessage,
   enqueueTelegramQueueUpdate,
   hasPrivateResetIntent,
   loadQueue,
@@ -88,10 +87,6 @@ type DirectDeliveryOptions = {
   alertImpl?: typeof alertOnce;
   alertResolvedImpl?: typeof alertResolved;
   alertDataDir?: string;
-  deleteMessageImpl?: (
-    key: string,
-    messageId: string | number,
-  ) => MaybePromise<unknown>;
   now?: () => number;
   trImpl?: (en: string, ru: string) => string;
   logImpl?: (...parts: unknown[]) => void;
@@ -108,7 +103,6 @@ async function deliverDirectUpdate(
     alertImpl = alertOnce,
     alertResolvedImpl = alertResolved,
     alertDataDir = DATA_DIR,
-    deleteMessageImpl = deleteStaleWorkingMessage,
     now = Date.now,
     trImpl = tr,
     logImpl = log,
@@ -140,7 +134,6 @@ async function deliverDirectUpdate(
         startedAt,
         statusImpl,
         setStatusIfImpl,
-        deleteMessageImpl,
         now,
       });
     } catch (error) {
@@ -251,7 +244,6 @@ export async function routeMessageUpdate(
     alertImpl = alertOnce,
     alertResolvedImpl = alertResolved,
     alertDataDir = DATA_DIR,
-    deleteMessageImpl = deleteStaleWorkingMessage,
     now = Date.now,
     trImpl = tr,
     allowedUserIds = ALLOWED,
@@ -290,10 +282,6 @@ export async function routeMessageUpdate(
     alertImpl?: typeof alertOnce;
     alertResolvedImpl?: typeof alertResolved;
     alertDataDir?: string;
-    deleteMessageImpl?: (
-      key: string,
-      messageId: string | number,
-    ) => MaybePromise<unknown>;
     now?: () => number;
     trImpl?: (en: string, ru: string) => string;
     allowedUserIds?: ReadonlySet<string>;
@@ -350,7 +338,6 @@ export async function routeMessageUpdate(
     alertImpl,
     alertResolvedImpl,
     alertDataDir,
-    deleteMessageImpl,
     now,
     trImpl,
     logImpl,

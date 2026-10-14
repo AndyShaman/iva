@@ -132,8 +132,6 @@ async function claimChat(
       staleMs: RUN_STALE_MS,
       getStatusImpl: getChatStatus,
       setStatusIfImpl: setChatStatusIf,
-      removeWorkingStatusImpl: (messageId) =>
-        leaveOrphanStatus(row, messageId, deps),
       onWorkingStatusError: (error) =>
         deps.log("remind: run-status claim failed:", error),
     });
@@ -141,22 +139,6 @@ async function claimChat(
     deps.log("remind: run-status claim failed:", error);
     return false;
   }
-}
-
-/**
- * Осиротевший индикатор мёртвого хода: канал сам удаляет такое сообщение, а ребёнку удалять
- * нечем — его Bot API-шов живёт в мосте (scripts/lib/telegram-send.ts только отправляет).
- * Молча бросить его нельзя, поэтому он остаётся видимым в журнале.
- */
-function leaveOrphanStatus(
-  row: Reminder,
-  messageId: number,
-  deps: Wiring,
-): Promise<void> {
-  deps.log(
-    `reminders: ${row.id} working status ${messageId} of a dead turn stays in the chat`,
-  );
-  return Promise.resolve();
 }
 
 /** Пульс живого хода: без него долгий ход выглядит протухшим и стоп его не находит. */
@@ -174,7 +156,7 @@ function releaseChat(chatKey: string, sessionId: string): void {
   setChatStatusIf(
     chatKey,
     { sessionId },
-    { status: "idle", sessionId: null, turnId: null },
+    { status: "idle", sessionId: null, turnId: null, draftId: null },
   );
 }
 

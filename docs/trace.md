@@ -67,9 +67,10 @@ content (`data.traceTrimmed: true`). Names, timings and sizes always survive.
 prints and accepts, what the Insight failure list gives and what `iva diagnose --turn` takes.
 A bare `turn_N` names the newest turn with that number.
 
-Callback updates (`⏹ Stop`, `/menu` buttons) get the key `tg:<chatId>:cb:<callbackId>`,
+Callback updates (`/menu` buttons) get the key `tg:<chatId>:cb:<callbackId>`,
 and **only the Bridge produces it**: callbacks never reach `runTelegramInbound`, so those
 `bridge.*` lines stay orphans with no `turn.bound` and no `inbound.*`.
+Native draft stops (`stopped_message_generation`) use `tg:<chatId>:stop:<update_id>` at intake; `stop.*` records the verified session and turn pair.
 
 ## Event catalogue
 
@@ -111,7 +112,7 @@ read as that object, as eve and the repeat guard read it. Lines written before t
 carry `result` as an object and no `failure`.
 
 **`gate.outbound` can appear without a matching `outbox.*`.** Every service reply the
-channel sends (a working-status message, an error explanation, a media notice) passes the
+channel sends (a draft frame, an error explanation, a media notice) passes the
 same outbound gate but not the Outbox seam, so it produces a gate line alone. Do not wait
 for a delivery event after each gate verdict.
 

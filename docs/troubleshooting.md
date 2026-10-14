@@ -82,7 +82,7 @@ From Telegram, `/new` resets only the current chat or forum topic. `/restart` re
 
 After upgrading a legacy group with no recorded Eve token, send `/new` as a reply to Iva's latest message once. Future resets use the exact token stored by the new channel events.
 
-When the ⏹ Stop button does not stop the turn within a minute, the owner's private chat gets the honest text (`The turn hasn't stopped within 60s.`; Russian installations show `Ход не остановился за 60 с.`) and a `Restart Iva` button. That button is the only thing that restarts the agent: it kills work in every chat, so press it only when the turn is really wedged. It stays valid for that same turn until the stale-run reaper drops the record (about 30 minutes) — a press after that answers `This turn is over already.` and changes nothing. Groups get the honest text without the button.
+The native ■ control stops the turn shown in the private chat draft. With the bridge, `/stop` also stops the current turn. If a turn remains stuck, use `/restart` from the command menu in your private chat. Restart interrupts work in every chat. In webhook mode the native ■ control is available; `/stop` and `/restart` reach the model as text.
 
 The notice `The conversation grew large, so I started a fresh one. Memory is intact.` means replay exceeded 30 seconds; with a retained first-turn baseline, replay also grew to more than twice that turn. Russian installations show `Диалог разросся, начала новый. Память на месте.` Iva finishes the current turn before resetting only that chat. Vault memory remains intact. Send the next message normally. For a smoke test, set `TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS` to a positive number of milliseconds.
 

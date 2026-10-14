@@ -76,7 +76,7 @@ failed calls, the outcome (`failed`, `stopped`, `blocked`, `dropped`,
 - `tool.rejected`, `guard.repeat_stop` — the repeat guard saw a failed call /
   stopped a repeat. They carry no turn and no session: match them by `ts` and
   tool.
-- `stop.*` — the owner pressed ⏹.
+- `stop.*` — the owner pressed ■.
 
 `--full` prints the content whole (as the Trace kept it), `--json` the raw
 lines. Lines written before `failure=` existed keep `result`
@@ -166,7 +166,7 @@ What becomes of your work — for the owner's questions about you.
 - **Helper** works in a separate background turn. Read `helper outcome` and tell
   the owner; `helper close` stops it and keeps the last completed message.
   A new conversation keeps it running; restart gives interrupted. Repeat with the owner's permission.
-- **⏹ Stop** (or `/stop`) stops the main turn; a helper continues. The turn ends the same way: what is done stays. The
+- **■ Stop** (or `/stop`) stops the main turn; a helper continues. The turn ends the same way: what is done stays. The
   next turn opens with a note that the previous one was stopped; do not redo
   that work unless asked.
 - **A broken model call** (the network, the provider failing for a moment):

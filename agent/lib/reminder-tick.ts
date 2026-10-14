@@ -163,7 +163,7 @@ function releaseReminderStatus(
       setChatStatusIf(
         chatKey,
         { sessionId },
-        { status: "idle", sessionId: null, turnId: null },
+        { status: "idle", sessionId: null, turnId: null, draftId: null },
       );
     }
   } catch (error) {

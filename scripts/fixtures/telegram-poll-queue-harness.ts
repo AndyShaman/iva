@@ -465,7 +465,7 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
         status: "running",
         ingressId: "33333333333333333333333333333333",
         ingressAt: Date.now(),
-        statusMessageId: 79,
+        draftId: 79,
         sessionId: null,
         turnId: null,
       });
@@ -481,7 +481,7 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
           status: "running",
           ingressId: "11111111111111111111111111111111",
           ingressAt: Date.now(),
-          statusMessageId: 77,
+          draftId: 77,
           sessionId: null,
           turnId: null,
         });
@@ -508,7 +508,7 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
         status: "running",
         ingressId: "22222222222222222222222222222222",
         ingressAt: Date.now(),
-        statusMessageId: 78,
+        draftId: 78,
         sessionId: null,
         turnId: null,
       });

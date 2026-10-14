@@ -18,8 +18,6 @@ const queue = await import("./queue.ts");
 const SIGN = {
   queuedIngressId: "ingress-Q",
   queuedIngressAt: 1_000,
-  queuedStatusAt: 1_010,
-  queuedStatusMessageId: 61,
   queuedSessionId: "session-1",
 };
 const SIGN_FIELDS = Object.keys(SIGN);
@@ -29,7 +27,6 @@ const clearsSign = (patch: Record<string, unknown>) =>
 
 void test("the reaper deletes the queued sign of the stale record it closes", async () => {
   const now = 2_000_000;
-  const deleted: unknown[] = [];
   let written: Record<string, unknown> = {};
   const reaped = await queue.reapStaleRuns({
     listStatusesImpl: () => [
@@ -51,10 +48,6 @@ void test("the reaper deletes the queued sign of the stale record it closes", as
     },
     resetImpl: () => Promise.resolve(),
     sendImpl: () => Promise.resolve(),
-    deleteMessageImpl: (_key, messageId) => {
-      deleted.push(messageId);
-      return Promise.resolve();
-    },
     now: () => now,
     inFlight: new Map(),
     staleMs: 30_000,
@@ -64,7 +57,6 @@ void test("the reaper deletes the queued sign of the stale record it closes", as
 
   assert.equal(reaped, 1);
   assert.ok(clearsSign(written), JSON.stringify(written));
-  assert.deepEqual(deleted.sort(), [61, 77]);
 });
 
 void test("/new deletes the queued sign together with the status message", async () => {
@@ -76,15 +68,8 @@ void test("/new deletes the queued sign together with the status message", async
     statusMessageId: 77,
     ...SIGN,
   });
-  const deleted: unknown[] = [];
 
-  await queue.completeScopedResetState(chatKey, {
-    deleteMessageImpl: (_key, messageId) => {
-      deleted.push(messageId);
-    },
-  });
-
-  assert.deepEqual(deleted.sort(), [61, 77]);
+  await queue.completeScopedResetState(chatKey, {});
   const after = getChatStatus(chatKey);
   assert.equal(after?.status, "idle");
   for (const field of SIGN_FIELDS)
@@ -92,7 +77,6 @@ void test("/new deletes the queued sign together with the status message", async
 });
 
 void test("a failed direct delivery clears its early record and the queued sign on it", async () => {
-  const deleted: unknown[] = [];
   let written: Record<string, unknown> = {};
   const startedAt = 5_000;
   const cleared = await queue.clearFailedDirectIngress("1:", {
@@ -111,13 +95,9 @@ void test("a failed direct delivery clears its early record and the queued sign 
       written = patch;
       return { status: "idle" };
     },
-    deleteMessageImpl: (_key, messageId) => {
-      deleted.push(messageId);
-    },
     now: () => startedAt + 20,
   });
 
   assert.equal(cleared, true);
   assert.ok(clearsSign(written), JSON.stringify(written));
-  assert.deepEqual(deleted.sort(), [40, 61]);
 });

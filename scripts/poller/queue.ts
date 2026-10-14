@@ -49,7 +49,6 @@ type RunStatus = Record<string, unknown> & {
   sessionId?: unknown;
   ingressId?: unknown;
   ingressAt?: unknown;
-  statusMessageId?: unknown;
 };
 type ResetResult = { status?: unknown; [key: string]: unknown };
 type ResetRequest = { chatKey: string; target: TelegramResetTarget };
@@ -298,7 +297,6 @@ export async function completeScopedResetState(
     resetRequestedAt,
     clearQueueImpl = clearChatQueue,
     setStatusImpl = setChatStatus,
-    deleteMessageImpl = deleteStaleWorkingMessage,
   }: {
     clearQueue?: boolean;
     discardThroughUpdateId?: number;
@@ -312,10 +310,6 @@ export async function completeScopedResetState(
       chatKey: string,
       patch: Record<string, unknown>,
     ) => unknown;
-    deleteMessageImpl?: (
-      chatKey: string,
-      messageId: string | number,
-    ) => unknown;
   } = {},
 ) {
   // For private chats the queue belongs to the reset session, so clear it
@@ -325,23 +319,13 @@ export async function completeScopedResetState(
     await clearQueueImpl(chatKey, discardThroughUpdateId, resetRequestedAt);
   }
 
-  // /new clears sessionId before a late terminal event can finish the Working…
-  // message, so delete it here from the pre-reset snapshot.
-  const current = getChatStatus(chatKey);
-
-  // Delete before clearing state: a crash after delete is harmless (message
-  // already gone); a crash before either step still leaves state pointing at
-  // the message for the next /new attempt.
-  await deleteRecordIndicators(chatKey, current, deleteMessageImpl);
-
   setStatusImpl(chatKey, {
     status: "idle",
     sessionId: null,
     turnId: null,
-    statusMessageId: null,
+    draftId: null,
     ingressId: null,
     ingressAt: null,
-    statusAt: null,
     turnAt: null,
     firstOutputAt: null,
     latencyLogged: null,
@@ -666,59 +650,19 @@ async function sendStaleRunNotice(chatKey: string, text: string) {
     );
 }
 
-async function deleteStaleWorkingMessage(
-  chatKey: string,
-  messageId: string | number,
-) {
-  const target = telegramTargetOf(chatKey);
-  if (!target) return;
-  await tg("deleteMessage", {
-    chat_id: target.chat_id,
-    message_id: messageId,
-  });
-}
-
-/**
- * Запись чата уходит в idle без хода-наследника (/new, жнец, сорвавшаяся прямая доставка):
- * из чата уходят её индикаторы — статус хода и знак очереди (specs/IdleCompaction.tla,
- * SignOwned). Удаление best-effort, как у любого старого статуса.
- */
-async function deleteRecordIndicators(
-  chatKey: string,
-  status: RunStatus | null | undefined,
-  deleteMessageImpl: (chatKey: string, messageId: string | number) => unknown,
-): Promise<void> {
-  for (const messageId of [
-    status?.statusMessageId,
-    status?.queuedStatusMessageId,
-  ]) {
-    if (messageId === undefined || messageId === null) continue;
-    try {
-      await deleteMessageImpl(chatKey, messageId as string | number);
-    } catch {
-      // Старый индикатор удаляется best-effort.
-    }
-  }
-}
-
-async function clearFailedDirectIngress(
+function clearFailedDirectIngress(
   chatKey: string,
   {
     baselineGeneration,
     startedAt,
     statusImpl = getChatStatus,
     setStatusIfImpl = setChatStatusIf,
-    deleteMessageImpl = deleteStaleWorkingMessage,
     now = Date.now,
   }: {
     baselineGeneration: number;
     startedAt: number;
     statusImpl?: StatusImpl;
     setStatusIfImpl?: SetStatusIfImpl;
-    deleteMessageImpl?: (
-      chatKey: string,
-      messageId: string | number,
-    ) => unknown;
     now?: () => number;
   },
 ) {
@@ -734,7 +678,7 @@ async function clearFailedDirectIngress(
     current.ingressAt > observedAt ||
     statusGeneration(current) <= baselineGeneration
   ) {
-    return false;
+    return Promise.resolve(false);
   }
 
   const cleared = setStatusIfImpl(
@@ -750,10 +694,9 @@ async function clearFailedDirectIngress(
       status: "idle",
       sessionId: null,
       turnId: null,
-      statusMessageId: null,
+      draftId: null,
       ingressId: null,
       ingressAt: null,
-      statusAt: null,
       turnAt: null,
       firstOutputAt: null,
       latencyLogged: null,
@@ -763,10 +706,9 @@ async function clearFailedDirectIngress(
       resetAt: observedAt,
     },
   );
-  if (!cleared) return false;
+  if (!cleared) return Promise.resolve(false);
 
-  await deleteRecordIndicators(chatKey, current, deleteMessageImpl);
-  return true;
+  return Promise.resolve(true);
 }
 
 function sameRetirement(
@@ -979,7 +921,6 @@ export async function reapStaleRuns({
   setStatusIfImpl = setChatStatusIf,
   resetImpl = releaseScopedSession,
   sendImpl = sendStaleRunNotice,
-  deleteMessageImpl = deleteStaleWorkingMessage,
   now = Date.now,
   inFlight = queueInFlight,
   staleMs = RUN_STALE_MS,
@@ -1047,10 +988,9 @@ export async function reapStaleRuns({
           status: "idle",
           sessionId: null,
           turnId: null,
-          statusMessageId: null,
+          draftId: null,
           ingressId: null,
           ingressAt: null,
-          statusAt: null,
           turnAt: null,
           firstOutputAt: null,
           latencyLogged: null,
@@ -1078,7 +1018,6 @@ export async function reapStaleRuns({
     }
 
     await notifyInterruptedTurn(key, status, sendImpl, trImpl, safeLog);
-    await deleteRecordIndicators(key, status, deleteMessageImpl);
   }
   return reaped;
 }
@@ -1132,7 +1071,6 @@ export {
   undrainableLegacyLogged,
   statusGeneration,
   sendStaleRunNotice,
-  deleteStaleWorkingMessage,
   clearFailedDirectIngress,
   acknowledgeQueued,
   QUEUE_DELIVERY_TIMEOUT_MS,

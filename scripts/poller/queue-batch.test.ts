@@ -582,7 +582,6 @@ function routeOptions(overrides: Partial<RouteOptions> = {}): RouteOptions {
       send().then((sent) => (sent ? "sent" : "failed")),
     alertResolvedImpl: () => {},
     alertDataDir: root,
-    deleteMessageImpl: () => Promise.resolve(),
     now: () => 1_000,
     logImpl: () => {},
     resetPendingImpl: () => false,

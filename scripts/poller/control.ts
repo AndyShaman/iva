@@ -1,32 +1,14 @@
-import { createHash } from "node:crypto";
 import { botCommands, helpText, startText, tr } from "#lib/i18n.ts";
 import {
   resetTargetForControl,
   type TelegramResetTarget,
 } from "../lib/telegram-reset.ts";
-// Из статуса мосту нужны только кнопка ⏹ и «Остановлено»: они в модуле без гейта, чтобы
-// сломанный модуль гейта не мешал мосту стартовать.
 import {
-  stoppedText,
-  TELEGRAM_STOP_CALLBACK,
-} from "#lib/telegram-status-stop.ts";
-import {
-  cancellableSessionId,
+  handleTelegramDraftStop,
   isPendingStopOutcome,
   replyOutcomeOf,
   requestTurnCancel,
-  stopAlreadyStoppedText,
-  stopConfirmSeconds,
-  stopNotStoppedText,
   stopOutcomeText,
-  stopRestartAlreadyText,
-  stopRestartButtonText,
-  stopRestartFailedText,
-  stopRestartingText,
-  stopRestartedText,
-  stopRestartWarningText,
-  waitForTurnStop,
-  STOP_CONFIRM_TIMEOUT_MS,
   type StopCancelRequest,
   type StopCancelResult,
   type StopOutcome,
@@ -39,7 +21,7 @@ import {
   type TelegramQueueUpdate as TelegramUpdate,
 } from "../lib/telegram-queue.ts";
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
-import { getChatStatus, RUN_STALE_MS } from "#lib/run-status.ts";
+import { getChatStatus } from "#lib/run-status.ts";
 import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 import { isBreakNotice, isRetryTap } from "#lib/error-humanizer.ts";
 import { turnQuestion } from "#lib/turn-question.ts";
@@ -142,10 +124,6 @@ export type ControlDeps = {
   ) => Promise<SentMessage | null>;
   ackImpl?: (callbackQueryId: string, text?: string) => Promise<unknown>;
   cancelImpl?: CancelImpl;
-  // Окно ожидания подтверждения отмены: подменяется в тестах, чтобы не ждать его целиком.
-  confirmTimeoutMs?: number;
-  // Сколько фон следит за сообщением «ход не остановился», пока ход не закончится.
-  watchTimeoutMs?: number;
   // Куда уходит работа после ответа циклу: фон моста (по умолчанию) или двойник в тесте.
   scheduleImpl?: (key: string, task: () => Promise<void>) => boolean;
   performResetImpl?: PerformResetImpl;
@@ -191,15 +169,6 @@ function hasCallbackData(
   callback: TelegramCallbackQuery,
 ): callback is ControlCallbackQuery {
   return typeof callback.data === "string";
-}
-
-function telegramCallSucceeded(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as TelegramResult).ok === true &&
-    (value as TelegramResult).result === true
-  );
 }
 
 function replySucceeded(value: SentMessage | null | undefined): boolean {
@@ -382,7 +351,6 @@ function fullQuestion(
 
 const PRIVATE_ONLY_COMMANDS = new Set(["/menu", "/model", "/think"]);
 
-// ⏹ Стоп: кнопка статус-сообщения и /stop. В long-poll обе двери ведут сюда, в мост:
 // он перехватывает апдейт раньше любой доставки, поэтому «Стоп» доходит и до занятого
 // агента. Решение «есть ли что останавливать» и сам POST на cancel-роут живут в
 // agent/lib/telegram-stop.ts — там же, где второй вход (onCallbackQuery канала для
@@ -620,8 +588,6 @@ const DEFAULT_CONTROL_IO: Omit<ControlIo, "cancelImpl"> = {
   performResetImpl: performScopedReset,
   resetRetryPendingImpl: isPrivateResetRetryPending,
   resetIntentPendingImpl: hasPrivateResetIntent,
-  confirmTimeoutMs: STOP_CONFIRM_TIMEOUT_MS,
-  watchTimeoutMs: RUN_STALE_MS,
   scheduleImpl: scheduleBridgeTask,
   pluginTapImpl: (tap) => handlePluginProposalTap(tap),
   deleteImpl: deleteGotItMessage,
@@ -682,6 +648,16 @@ async function handleControl(
   deps: ControlDeps = {},
 ): Promise<ControlResult> {
   const io = controlIo(deps);
+  if (update.stopped_message_generation) {
+    await handleTelegramDraftStop(update.stopped_message_generation, {
+      allowedImpl: () => ALLOWED,
+      urlImpl: () => CANCEL_ROUTE,
+      secret: SECRET,
+      cancelImpl: io.cancelImpl,
+      logImpl: log,
+    });
+    return true;
+  }
   const claimed = await handleCallback(update, io);
   return claimed === UNCLAIMED ? handleMessage(update, io) : claimed;
 }
@@ -693,22 +669,12 @@ type CallbackContext = {
   io: ControlIo;
 };
 type CallbackKind =
-  | "stop"
-  | "stopRestart"
-  | "update"
-  | "wizard"
-  | "menu"
-  | "plugin"
-  | "gotIt"
-  | "passthrough"
-  | "tap";
+  "update" | "wizard" | "menu" | "plugin" | "gotIt" | "passthrough" | "tap";
 
 // Порядок важен: первое совпадение решает. Всё, что не совпало, — кнопка модели.
 const CALLBACK_KINDS: ReadonlyArray<
   readonly [CallbackKind, (data: string) => boolean]
 > = [
-  ["stop", (data) => data === TELEGRAM_STOP_CALLBACK],
-  ["stopRestart", (data) => parseStopRestartToken(data) !== null],
   ["update", (data) => parseUpdateCallbackData(data) !== null],
   ["wizard", isWizardCallbackData],
   ["menu", (data) => data.startsWith("iva_menu:")],
@@ -717,10 +683,7 @@ const CALLBACK_KINDS: ReadonlyArray<
   ["passthrough", isUnclaimedCallbackData],
 ];
 
-// Кнопки моста (/update, /model, /think, /menu, ⏹, «Перезапустить Iva») — не HITL-колбэки eve.
 const BRIDGE_CALLBACK_KINDS = new Set<CallbackKind>([
-  "stop",
-  "stopRestart",
   "update",
   "wizard",
   "menu",
@@ -730,8 +693,6 @@ const CALLBACK_HANDLERS: Record<
   CallbackKind,
   (context: CallbackContext) => Claim
 > = {
-  stop: handleStopTap,
-  stopRestart: handleStopRestartTap,
   update: ({ callback }) => handleUpdateCallback(callback),
   // Wizard errors must not escape and crash the bridge. A failed handler returns
   // false so the callback enters durable inbox ownership before offset advances.
@@ -908,285 +869,7 @@ async function deleteGotItMessage(
   return result?.ok === true;
 }
 
-// ⏹ Стоп у статус-сообщения. Тап никогда не уходит в eve: колбэк наш, а отмену
-// мост делает сам через cancel-роут канала. У канала есть свой обработчик той же
-// кнопки (agent/lib/telegram-stop.ts), но он для webhook-режима, где моста нет:
-// здесь апдейт перехватывается раньше любой доставки.
-async function handleStopTap({ update, callback, io }: CallbackContext) {
-  // Чужой тап в группе: гасим спиннер молча и ничего не отменяем.
-  if (!isTrustedSender(callback.from))
-    return telegramCallSucceeded(await io.ackImpl(callback.id));
-  const status = getChatStatus(chatKey(update) ?? "");
-  const outcome = await requestTurnStop(update, {
-    cancelImpl: io.cancelImpl,
-    getStatusImpl: () => status,
-  });
-  // Ждать подтверждение цикл не будет: задача уходит фоном ещё до ответа на колбэк.
-  watchUnstoppedTurn(update, callbackChat(callback), outcome, io, status);
-  const acknowledged = telegramCallSucceeded(
-    await io.ackImpl(callback.id, stopOutcomeText(replyOutcomeOf(outcome))),
-  );
-  return isPendingStopOutcome(outcome) || acknowledged;
-}
-
-// ── Фон «Стопа» ──
-//
-// Ответ роута «принято» — не остановка: ход заканчивает turn.cancelled, и видно его только
-// по записи run-status. Ждёт его фон, а не цикл моста: одна задача на зависший ход, поэтому
-// серия нажатий ⏹ ждёт ту же самую, а второй ход в том же чате — свою.
-//
-function watchUnstoppedTurn(
-  update: TelegramUpdate,
-  chat: TelegramMessage["chat"],
-  outcome: StopOutcome,
-  io: ControlIo,
-  status: ReturnType<typeof getChatStatus>,
-): void {
-  // idle и failed ждать нечего: там уже сказано, что отменять нечего.
-  if (!isPendingStopOutcome(outcome)) return;
-  const key = chatKey(update);
-  const chatId = chat?.id;
-  if (key === null || chatId === undefined) return;
-  const sessionId = cancellableSessionId(status);
-  if (sessionId === null) return;
-  const turnId = status?.turnId;
-  io.scheduleImpl(`stop:${key}:${stopRestartToken(sessionId, turnId)}`, () =>
-    watchStopOutcome({ chat, chatId, key, sessionId, turnId, io }),
-  );
-}
-
-async function watchStopOutcome(input: {
-  chat: TelegramMessage["chat"];
-  chatId: number;
-  key: string;
-  sessionId: string;
-  turnId: unknown;
-  io: ControlIo;
-}): Promise<void> {
-  const { chatId, key, sessionId, turnId, io } = input;
-  if (
-    await waitForTurnStop(key, sessionId, {
-      turnId,
-      timeoutMs: io.confirmTimeoutMs,
-    })
-  )
-    return;
-  const messageId = await sendStopNotStopped(input);
-  if (messageId === null) return;
-  // Позднее подтверждение снимает кнопку рестарта с завершившегося хода.
-  if (
-    await waitForTurnStop(key, sessionId, {
-      turnId,
-      timeoutMs: io.watchTimeoutMs,
-    })
-  )
-    await editStopMessage(chatId, messageId, stoppedText());
-}
-
-// Честный текст в чат: в личке владельца с кнопкой рестарта и предупреждением, что он рвёт
-// работу во всех чатах, в группе — без кнопки: рестарт просит только владелец и только в
-// личке (групповые тапы отбивает общий гард моста). Кнопка — обычный inline-ряд, не rich:
-// её клавиатуру снимает правка.
-async function sendStopNotStopped({
-  chat,
-  chatId,
-  sessionId,
-  turnId,
-  io,
-}: {
-  chat: TelegramMessage["chat"];
-  chatId: number;
-  sessionId: string;
-  turnId: unknown;
-  io: ControlIo;
-}): Promise<number | null> {
-  // Число в тексте — то же окно, которое фон только что отработал.
-  const text = stopNotStoppedText(stopConfirmSeconds(io.confirmTimeoutMs));
-  if (!isPrivateTelegramChat(chat)) {
-    await io
-      .replyImpl(chatId, text)
-      .catch((error: unknown) =>
-        log("stop notice failed:", errorMessage(error)),
-      );
-    return null;
-  }
-  const response = await controlTg("sendMessage", {
-    chat_id: chatId,
-    text: `${text}\n${stopRestartWarningText()}`,
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: stopRestartButtonText(),
-            callback_data: stopRestartCallbackData(sessionId, turnId),
-            style: "danger",
-          },
-        ],
-      ],
-    },
-  }).catch((error: unknown) => {
-    log("stop notice failed:", errorMessage(error));
-    return null;
-  });
-  return sentMessageId(response);
-}
-
-function sentMessageId(response: unknown): number | null {
-  const result = (response as TelegramResult | null)?.result as
-    { message_id?: unknown } | undefined;
-  return typeof result?.message_id === "number" ? result.message_id : null;
-}
-
-// Правка сообщения «Стоп»: текст меняется, клавиатура снимается — кнопка рестарта по
-// законченному ходу не должна остаться в чате.
-const editStopMessage = (
-  chatId: number,
-  messageId: number,
-  text: string,
-): Promise<unknown> =>
-  controlTg("editMessageText", {
-    chat_id: chatId,
-    message_id: messageId,
-    text,
-    reply_markup: { inline_keyboard: [] },
-  }).catch((error: unknown) => {
-    log("stop message edit failed:", errorMessage(error));
-    return null;
-  });
-
-// Тап по кнопке рестарта закрывает серию: сообщение с ней больше не актуально, а фоновое
-// ожидание не должно переписать его на «Остановлено» после того, как сброс оборвал ход.
-const deleteStopMessage = (
-  chatId: number,
-  messageId: number,
-): Promise<unknown> =>
-  controlTg("deleteMessage", {
-    chat_id: chatId,
-    message_id: messageId,
-  }).catch((error: unknown) => {
-    log("stop message delete failed:", errorMessage(error));
-    return null;
-  });
-
-// Кнопка «Перезапустить Iva». Префикс — свой, в пространстве iva_*: мост забирает такой
-// колбэк себе и не отдаёт его eve. Отпечаток пары sessionId/turnId укладывается в 64 байта.
-const STOP_RESTART_CALLBACK = "iva_stoprestart:";
-const STOP_RESTART_TOKEN_PATTERN = /^[0-9a-f]{12}$/u;
-
-function stopRestartToken(sessionId: string, turnId?: unknown): string {
-  const target =
-    typeof turnId === "string" && turnId
-      ? JSON.stringify([sessionId, turnId])
-      : sessionId;
-  return createHash("sha256").update(target).digest("hex").slice(0, 12);
-}
-
-function stopRestartCallbackData(sessionId: string, turnId: unknown): string {
-  return `${STOP_RESTART_CALLBACK}${stopRestartToken(sessionId, turnId)}`;
-}
-
-function parseStopRestartToken(data: string): string | null {
-  if (!data.startsWith(STOP_RESTART_CALLBACK)) return null;
-  const token = data.slice(STOP_RESTART_CALLBACK.length);
-  return STOP_RESTART_TOKEN_PATTERN.test(token) ? token : null;
-}
-
-// Тот ли это ход: запись всё ещё держит running с той же сессией, чей отпечаток стоит в data.
-async function handleStopRestartTap({ update, callback, io }: CallbackContext) {
-  const token = parseStopRestartToken(callback.data);
-  // Рестарт просит только владелец и только в личке: чужой тап гасим молча, а групповой
-  // отбивает общий гард моста ещё до нас.
-  if (!isTrustedSender(callback.from) || token === null)
-    return telegramCallSucceeded(await io.ackImpl(callback.id));
-  const chat = callbackChat(callback);
-  const chatId = chat?.id;
-  const key = chatKey(update);
-  const messageId = callback.message?.message_id;
-  // Кнопка живёт ровно столько, сколько живёт тот самый ход: подтверждение или новый ход
-  // меняют запись, и старое нажатие рестарта не жмёт.
-  if (
-    key === null ||
-    chatId === undefined ||
-    !stopTurnStillWaiting(key, token)
-  ) {
-    await io.ackImpl(callback.id, stopAlreadyStoppedText());
-    return true;
-  }
-  const scheduled = io.scheduleImpl(`stop-restart:${key}`, () =>
-    restartStoppedTurn({ update, key, chatId, messageId, token, io }),
-  );
-  await io.ackImpl(
-    callback.id,
-    scheduled ? stopRestartingText() : stopRestartAlreadyText(),
-  );
-  return true;
-}
-
-function stopTurnStillWaiting(key: string, token: string): boolean {
-  const status = getChatStatus(key);
-  const sessionId = cancellableSessionId(status);
-  return (
-    status?.status === "running" &&
-    sessionId !== null &&
-    stopRestartToken(sessionId, status?.turnId) === token
-  );
-}
-
 // Сброс разговора и рестарт юнита — тем же performScopedReset, что у /new и /restart, и тем же
-// вызовом systemctl, что у /restart (KillMode в юните не задан, поэтому рестарт сносит eve
-// вместе с осиротевшими процессами). Второго пути рестарта нет: restartService один на всех.
-// Сброс — best-effort: интент записан ДО запроса к агенту, и восстановление повторит его, а
-// рестарт лечит зависший процесс независимо от того, успел ли ответить сброс.
-async function restartStoppedTurn({
-  update,
-  key,
-  chatId,
-  messageId,
-  token,
-  io,
-}: {
-  update: TelegramUpdate;
-  key: string;
-  chatId: number;
-  messageId: number | undefined;
-  token: string;
-  io: ControlIo;
-}): Promise<void> {
-  if (typeof messageId === "number") await deleteStopMessage(chatId, messageId);
-  // Пока убирали кнопку, подтверждение могло прийти: ход уже остановлен, и рестарт зря оборвал
-  // бы работу в остальных чатах. Решение принимает та же запись, что и в обработчике тапа, и
-  // спрашиваем её именно до сброса: после сброса запись обнуляет он сам, и «остановлен» в ней
-  // перестало бы что-либо значить.
-  if (!stopTurnStillWaiting(key, token)) {
-    await io
-      .replyImpl(chatId, stopAlreadyStoppedText())
-      .catch((error: unknown) =>
-        log("stop restart reply failed:", errorMessage(error)),
-      );
-    return;
-  }
-  try {
-    const target = resetTargetFor(update, key);
-    if (target !== null) {
-      await io.performResetImpl(key, target, {
-        clearQueue: true,
-        discardThroughUpdateId: update.update_id,
-      });
-    }
-  } catch (error) {
-    log("stop restart reset failed:", errorMessage(error));
-  }
-  const restarted = await restartService();
-  await io
-    .replyImpl(
-      chatId,
-      restarted ? stopRestartedText() : stopRestartFailedText(),
-    )
-    .catch((error: unknown) =>
-      log("stop restart reply failed:", errorMessage(error)),
-    );
-}
-
 function tapGroupHint(
   trusted: boolean,
   chat: TelegramMessage["chat"],
@@ -1578,17 +1261,15 @@ async function openMenu({ chatId, from }: ControlCommand) {
   return true;
 }
 
-// /stop — interrupt the current turn, the same door as the ⏹ Stop button.
 // Out-of-band so it reaches a busy agent (an ordinary message would be queued by
 // the gate below and never processed).
-async function stopCommand({ update, io, chatId, msg }: ControlCommand) {
+async function stopCommand({ update, io, chatId }: ControlCommand) {
   const status = getChatStatus(chatKey(update) ?? "");
   const outcome = await requestTurnStop(update, {
     cancelImpl: io.cancelImpl,
     getStatusImpl: () => status,
   });
   // Ждать подтверждение цикл не будет: о неостановленном ходе скажет фон.
-  watchUnstoppedTurn(update, msg.chat, outcome, io, status);
   // Успех виден по статус-сообщению: turn.cancelled перепишет его на «Остановлено».
   if (isPendingStopOutcome(outcome)) return true;
   return replyConfirmed(io, chatId, stopOutcomeText(replyOutcomeOf(outcome)));
@@ -1824,7 +1505,6 @@ async function restartFailed(cmd: OutOfBandCommand): Promise<boolean> {
   return cmd === "/restart" && !(await restartService());
 }
 
-// Единственный вызов рестарта сервиса: им пользуются и /restart, и кнопка «Стоп». Ждём его
 // с дедлайном: systemd сам отказывает по TimeoutStartSec (по умолчанию 90 с), поэтому ждать
 // дольше — значит ждать зависший вызов. Отказ виден вызывающему как false, как и любой другой.
 const SERVICE_RESTART_TIMEOUT_MS = 120_000;

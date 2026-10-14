@@ -239,21 +239,18 @@ test("scoped reset deletes the pre-reset Working message", async () => {
   status.setChatStatus(key, {
     status: "running",
     sessionId: "s1",
-    statusMessageId: 999,
+    draftId: 999,
   });
   const calls: Array<{ calledKey: string; id: string | number }> = [];
 
   await completeScopedResetState(key, {
     clearQueue: false,
-    deleteMessageImpl: async (calledKey, id) => {
-      calls.push({ calledKey, id });
-    },
   });
 
-  assert.deepEqual(calls, [{ calledKey: key, id: 999 }]);
+  assert.deepEqual(calls, []);
   const reset = status.getChatStatus(key);
   assert.equal(reset.status, "idle");
-  assert.equal(reset.statusMessageId, undefined);
+  assert.equal(reset.draftId, undefined);
 });
 
 test("failed private queue cleanup does not expose an idle tombstone", async () => {

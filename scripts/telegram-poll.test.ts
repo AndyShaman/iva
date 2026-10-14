@@ -61,7 +61,6 @@ type RouteOptions = {
   ) => Promise<"sent" | "throttled" | "failed">;
   alertResolvedImpl: (dataDir: string, key: string) => void;
   alertDataDir: string;
-  deleteMessageImpl: (chatKey: string, messageId: number) => Promise<unknown>;
   now: () => number;
   trImpl: (english: string, russian: string) => string;
   logImpl: (...parts: unknown[]) => void;
@@ -79,7 +78,6 @@ type ReaperOptions = {
     target: { sessionId: string } | { address: { chatId: string } },
   ) => Promise<unknown>;
   sendImpl: (chatKey: string, text: string) => Promise<unknown>;
-  deleteMessageImpl: (chatKey: string, messageId: number) => Promise<unknown>;
   now: () => number;
   inFlight: Map<string, InFlight>;
   staleMs: number;
@@ -228,7 +226,6 @@ function routeDeps(overrides: Partial<RouteOptions> = {}): RouteOptions {
       (await send()) ? "sent" : "failed",
     alertResolvedImpl: () => {},
     alertDataDir: "/tmp/iva-routing-test-alerts",
-    deleteMessageImpl: async () => {},
     now: () => 1_000,
     trImpl: (_en, ru) => ru,
     logImpl: () => {},
@@ -380,8 +377,6 @@ test("a direct acceptance timeout is rejected after one cleanup and notification
         return current;
       },
       sendFailureImpl: async (key, text) => calls.push(["send", key, text]),
-      deleteMessageImpl: async (key, messageId) =>
-        calls.push(["delete", key, messageId]),
       deliverImpl: async (_update, options) => {
         deliveries++;
         assert.equal(options.timeoutMs, 90_000);
@@ -393,7 +388,7 @@ test("a direct acceptance timeout is rejected after one cleanup and notification
           updatedAt: 1_000,
           ingressId: "timed-out-ingress",
           ingressAt: 1_000,
-          statusMessageId: 73,
+          draftId: 73,
         };
         timeoutReports++;
         await options.onAcceptanceFailure({
@@ -412,7 +407,7 @@ test("a direct acceptance timeout is rejected after one cleanup and notification
   assert.equal(calls.filter(([kind]) => kind === "cas").length, 1);
   assert.deepEqual(
     calls.filter(([kind]) => kind === "delete"),
-    [["delete", "1:", 73]],
+    [],
   );
   assert.deepEqual(
     calls.filter(([kind]) => kind === "send"),
@@ -445,8 +440,6 @@ test("direct acceptance failures clear each matching ingress and notify the chat
         return current;
       },
       sendFailureImpl: async (key, text) => calls.push(["send", key, text]),
-      deleteMessageImpl: async (key, messageId) =>
-        calls.push(["delete", key, messageId]),
       deliverImpl: async (_update, { onAcceptanceFailure }) => {
         current = {
           status: "running",
@@ -454,7 +447,7 @@ test("direct acceptance failures clear each matching ingress and notify the chat
           updatedAt: 1_000,
           ingressId: "ingress-first",
           ingressAt: 1_000,
-          statusMessageId: 71,
+          draftId: 71,
         };
         await onAcceptanceFailure({
           kind: "dispatch",
@@ -473,7 +466,7 @@ test("direct acceptance failures clear each matching ingress and notify the chat
           updatedAt: 1_000,
           ingressId: "ingress-retry",
           ingressAt: 1_000,
-          statusMessageId: 72,
+          draftId: 72,
         };
         await onAcceptanceFailure({
           kind: "dispatch",
@@ -494,10 +487,7 @@ test("direct acceptance failures clear each matching ingress and notify the chat
   assert.equal(calls.filter(([kind]) => kind === "cas").length, 2);
   assert.deepEqual(
     calls.filter(([kind]) => kind === "delete"),
-    [
-      ["delete", "1:", 71],
-      ["delete", "1:", 72],
-    ],
+    [],
   );
   assert.deepEqual(
     calls.filter(([kind]) => kind === "send"),
@@ -545,7 +535,7 @@ test("reply-to-bot bypass clears its failed early status before delivery returns
           updatedAt: 2_000,
           ingressId: "reply-ingress",
           ingressAt: 2_000,
-          statusMessageId: 81,
+          draftId: 81,
         };
         await onAcceptanceFailure({
           kind: "dispatch",
@@ -590,9 +580,6 @@ test("a reply to a closed session ends the update instead of returning it to the
         }
         return current;
       },
-      deleteMessageImpl: async (_key, messageId) => {
-        deleted.push(messageId);
-      },
       sendFailureImpl: async () => {
         notifications++;
       },
@@ -605,7 +592,7 @@ test("a reply to a closed session ends the update instead of returning it to the
           updatedAt: 1_000,
           ingressId: "closed-session-ingress",
           ingressAt: 1_000,
-          statusMessageId: 91,
+          draftId: 91,
         };
         return "closed-session";
       },
@@ -616,7 +603,7 @@ test("a reply to a closed session ends the update instead of returning it to the
   assert.equal(result, "terminal-drop");
   assert.equal(deliveries, 1, "терминальный класс не ретраится");
   assert.equal(current.status, "idle");
-  assert.deepEqual(deleted, [91]);
+  assert.deepEqual(deleted, []);
   assert.equal(notifications, 1);
   assert.deepEqual(logs, [
     "dropped update 10 for 1: — the target session is closed",
@@ -727,7 +714,7 @@ const staleStatus = {
   updatedAt: reaperNow - 31_000,
   sessionId: "session-1",
   turnId: "turn-1",
-  statusMessageId: 77,
+  draftId: 77,
 };
 
 function reaperDeps(
@@ -739,7 +726,6 @@ function reaperDeps(
     setStatusIfImpl: () => ({ status: "idle" }),
     resetImpl: async () => {},
     sendImpl: async () => {},
-    deleteMessageImpl: async () => {},
     now: () => reaperNow,
     inFlight: new Map(),
     staleMs: 30_000,
@@ -759,8 +745,6 @@ test("reapStaleRuns flips one stale run, resets Eve, notifies, and removes worki
       },
       resetImpl: async (key, target) => calls.push(["reset", key, target]),
       sendImpl: async (key, text) => calls.push(["send", key, text]),
-      deleteMessageImpl: async (key, messageId) =>
-        calls.push(["delete", key, messageId]),
     }),
   );
 
@@ -775,7 +759,6 @@ test("reapStaleRuns flips one stale run, resets Eve, notifies, and removes worki
   assert.deepEqual(calls.slice(1), [
     ["reset", "1:", { sessionId: "session-1" }],
     ["send", "1:", "Предыдущий ход оборвался - повтори запрос или /new"],
-    ["delete", "1:", 77],
   ]);
 });
 
@@ -953,19 +936,18 @@ test("a long silent turn survives the reaper while its heartbeat runs; a dead on
 
 test("reapStaleRuns swallows and logs a notification failure", async () => {
   const logs: string[] = [];
-  let deleted = 0;
+  const deleted = 0;
   const reaped = await reapStaleRuns(
     reaperDeps([{ chatKey: "1:", status: staleStatus }], {
       sendImpl: async () => {
         throw new Error("Telegram unavailable");
       },
-      deleteMessageImpl: async () => deleted++,
       logImpl: (...args) => logs.push(args.join(" ")),
     }),
   );
 
   assert.equal(reaped, 1);
-  assert.equal(deleted, 1);
+  assert.equal(deleted, 0);
   assert.equal(logs.length, 1);
   assert.match(
     logs[0],

@@ -312,11 +312,7 @@ test("ход под порогом чат не занимает; ход на п�
   assert.equal(busy?.status, "running");
   assert.equal(busy?.sessionId, "s-over");
   assert.equal(busy?.compacting, true);
-  assert.equal(
-    busy?.statusMessageId,
-    undefined,
-    "своего «Работаю…» у пересказа нет",
-  );
+  assert.equal(busy?.draftId, undefined, "своего «Работаю…» у пересказа нет");
   assert.equal(runStatus.isRunning("42:"), true);
 });
 
@@ -448,11 +444,11 @@ test("порядок steer: сообщение уходит в eve и сразу
   assert.equal(await incoming(45, "s-steer"), 1, "сообщение доставлено в eve");
   // Чат занят пересказом: раннего статуса нет, запись пересказа не тронута, но под
   // сообщением сразу знак очереди — без него минута пересказа выглядит как тишина.
-  assert.equal(sentStatuses(), 1, "знак очереди под сообщением");
+  assert.equal(sentStatuses(), 0, "временных сообщений нет");
   assert.equal(statusOf(45)?.compacting, true);
   assert.equal(statusOf(45)?.ingressId, undefined);
-  const sign = statusOf(45)?.queuedStatusMessageId;
-  assert.equal(typeof sign, "number");
+  const sign = statusOf(45)?.queuedIngressId;
+  assert.equal(typeof sign, "string");
 
   await s.waiting(); // eve оборвала пересказ и запарковала сессию
   assert.equal(statusOf(45)?.status, "idle");
@@ -461,9 +457,9 @@ test("порядок steer: сообщение уходит в eve и сразу
   assert.equal(running?.status, "running");
   assert.equal(running?.sessionId, "s-steer");
   assert.equal(running?.compacting, undefined);
-  assert.equal(sentStatuses(), 1, "знак стал «Работаю…» хода, второго нет");
-  assert.equal(running?.statusMessageId, sign);
-  assert.equal(running?.queuedStatusMessageId, undefined);
+  assert.equal(sentStatuses(), 0, "ход представлен черновиком");
+  assert.equal(typeof running?.draftId, "number");
+  assert.equal(running?.queuedIngressId, undefined);
   assert.equal(typeof running?.ingressAt, "number");
   assert.equal(compactCalls.length, 1, "оборванный ход ничего не просил");
 });

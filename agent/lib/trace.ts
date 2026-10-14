@@ -439,6 +439,10 @@ function traceUpdateKey(chatId: unknown, messageId: unknown): string {
 }
 
 type TelegramUpdateLike = {
+  stopped_message_generation?: {
+    chat?: { id?: unknown };
+    draft_id?: unknown;
+  } | null;
   update_id?: unknown;
   message?: {
     message_id?: unknown;
@@ -461,14 +465,24 @@ function updateFacts(update: TelegramUpdateLike): {
 } {
   const message = update.message ?? undefined;
   const callback = update.callback_query ?? undefined;
-  const chatId = message?.chat?.id ?? callback?.message?.chat?.id;
+  const stop = update.stopped_message_generation;
+  const chatId =
+    message?.chat?.id ?? callback?.message?.chat?.id ?? stop?.chat?.id;
   return {
     updateId: typeof update.update_id === "number" ? update.update_id : null,
     chatId: chatId ?? null,
     messageId: message
       ? scalarText(message.message_id)
-      : `cb:${scalarText(callback?.id)}`,
-    kind: message ? "message" : callback ? "callback" : "unknown",
+      : stop
+        ? `stop:${scalarText(update.update_id)}`
+        : `cb:${scalarText(callback?.id)}`,
+    kind: message
+      ? "message"
+      : callback
+        ? "callback"
+        : stop
+          ? "stopped_message_generation"
+          : "unknown",
   };
 }
 

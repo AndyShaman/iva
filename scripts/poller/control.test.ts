@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
-  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -13,7 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
-import { requestTelegramCancel } from "#lib/telegram-cancel-client.ts";
 import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
 
 type Event = string | [string, string, number | undefined, string | undefined];
@@ -128,7 +125,7 @@ writeFileSync(
 );
 process.env.TELEGRAM_BOT_TOKEN = "424242:test-token";
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = "test-secret";
-process.env.TELEGRAM_ALLOWED_USER_IDS = "42";
+process.env.TELEGRAM_ALLOWED_USER_IDS = "42,7";
 process.env.IVA_PORT = "8723";
 delete process.env.ASSISTANT_HOST;
 delete process.env.AGENT_LANGUAGE; // без настроек язык моста — ru
@@ -164,8 +161,13 @@ function runningTurn(overrides: Record<string, unknown> = {}) {
     status: "running",
     sessionId: "session-1",
     turnId: "turn-1",
+    draftId: 41,
     ...overrides,
   });
+}
+
+function nativeStop(): ControlUpdate {
+  return { update_id: 5, stopped_message_generation: { chat, draft_id: 41 } };
 }
 
 function stopButton(): ControlUpdate {
@@ -446,7 +448,7 @@ test("the ⏹ Stop button cancels through the channel route, never through Eve",
   runningTurn();
   const { cancels, acks, replies, deps } = recordingDeps();
 
-  const consumed = await handleControl(stopButton(), deps);
+  const consumed = await handleControl(nativeStop(), deps);
 
   assert.equal(consumed, true); // тап съеден мостом и в eve не уходит
   assert.deepEqual(cancels, [
@@ -457,7 +459,7 @@ test("the ⏹ Stop button cancels through the channel route, never through Eve",
       turnId: "turn-1",
     },
   ]);
-  assert.deepEqual(acks, [["cq-5", "Останавливаю…"]]);
+  assert.deepEqual(acks, []);
   assert.deepEqual(replies, []);
 });
 
@@ -488,11 +490,11 @@ test("Stop on an idle chat explains itself and never calls cancel", async () => 
   });
   const { cancels, acks, replies, deps } = recordingDeps();
 
-  assert.equal(await handleControl(stopButton(), deps), true);
+  assert.equal(await handleControl(nativeStop(), deps), true);
   assert.equal(await handleControl(stopCommand(), deps), true);
 
   assert.deepEqual(cancels, []);
-  assert.deepEqual(acks, [["cq-5", "Сейчас ничего не выполняется."]]);
+  assert.deepEqual(acks, []);
   assert.deepEqual(replies, [[7, "Сейчас ничего не выполняется."]]);
 });
 
@@ -505,25 +507,25 @@ test("an early running status without a session is not cancellable", async () =>
   });
   const { cancels, acks, deps } = recordingDeps();
 
-  assert.equal(await handleControl(stopButton(), deps), true);
+  assert.equal(await handleControl(nativeStop(), deps), true);
 
   assert.deepEqual(cancels, []);
-  assert.deepEqual(acks, [["cq-5", "Сейчас ничего не выполняется."]]);
+  assert.deepEqual(acks, []);
 });
 
 test("an untrusted tap on someone else's Stop button is swallowed", async () => {
   runningTurn();
   const { cancels, acks, deps } = recordingDeps();
-  const update = stopButton();
-  (update.callback_query as Record<string, unknown>).from = {
+  const update = nativeStop();
+  (update.stopped_message_generation as Record<string, unknown>).chat = {
     id: 999,
-    is_bot: false,
+    type: "private",
   };
 
   assert.equal(await handleControl(update, deps), true);
   assert.deepEqual(cancels, []);
   // Спиннер кнопки гасим, но ход чужого пользователя не трогаем и ничего не объясняем.
-  assert.deepEqual(acks, [["cq-5", undefined]]);
+  assert.deepEqual(acks, []);
 });
 
 // Терминальное событие отмены глазами моста: такую запись оставляет turn.cancelled.
@@ -561,7 +563,7 @@ test("a stale run record still reaches the cancel route while it remembers the s
   backdateRunStatus("session-1", 31 * 60_000);
   const cancels: CancelCall[] = [];
   const acks: Array<[string, string | undefined]> = [];
-  const consumed = await handleControl(stopButton(), {
+  const consumed = await handleControl(nativeStop(), {
     cancelImpl: async (input: CancelCall) => {
       cancels.push(input);
       stopTurn("7:");
@@ -582,7 +584,7 @@ test("a stale run record still reaches the cancel route while it remembers the s
       turnId: "turn-1",
     },
   ]);
-  assert.deepEqual(acks, [["cq-5", "Останавливаю…"]]);
+  assert.deepEqual(acks, []);
 });
 
 test("a stale run record whose turn is already gone ends as idle", async () => {
@@ -590,7 +592,7 @@ test("a stale run record whose turn is already gone ends as idle", async () => {
   backdateRunStatus("session-1", 31 * 60_000);
   const cancels: CancelCall[] = [];
   const acks: Array<[string, string | undefined]> = [];
-  const consumed = await handleControl(stopButton(), {
+  const consumed = await handleControl(nativeStop(), {
     cancelImpl: async (input: CancelCall) => {
       cancels.push(input);
       return { ok: true, status: "no_active_turn" };
@@ -603,782 +605,7 @@ test("a stale run record whose turn is already gone ends as idle", async () => {
 
   assert.equal(consumed, true);
   assert.equal(cancels.length, 1);
-  assert.deepEqual(acks, [["cq-5", "Сейчас ничего не выполняется."]]);
-});
-
-// ── Фон «Стопа» ──
-//
-// Цикл моста отдаёт работу планировщику и уходит за следующим апдейтом: ожидание
-// подтверждения живёт там, в фоне. Двойник планировщика показывает тесту и то, что ушло в
-// фон, и когда задача выполнится. Настоящий фон между тестами жить не должен.
-function recordingScheduler() {
-  const pending = new Map<string, () => Promise<void>>();
-  return {
-    keys: () => [...pending.keys()],
-    scheduleImpl: (key: string, task: () => Promise<void>) => {
-      if (pending.has(key)) return false;
-      pending.set(key, task);
-      return true;
-    },
-    // Задача снимается со слота сразу: второй такой же ключ — это уже другой заход.
-    run: async (key: string) => {
-      const task = pending.get(key);
-      if (task === undefined) throw new Error(`nothing scheduled for ${key}`);
-      pending.delete(key);
-      await task();
-    },
-  };
-}
-
-function inlineKeyboard(
-  call: BotCall | undefined,
-): Array<Array<Record<string, unknown>>> | null {
-  const markup = call?.body.reply_markup as
-    { inline_keyboard?: unknown } | undefined;
-  return Array.isArray(markup?.inline_keyboard)
-    ? (markup.inline_keyboard as Array<Array<Record<string, unknown>>>)
-    : null;
-}
-
-// Сообщение с кнопкой рестарта — единственный sendMessage с inline-клавиатурой.
-const restartButtonMessage = (calls: BotCall[]) =>
-  calls.find(
-    (call) => call.method === "sendMessage" && inlineKeyboard(call) !== null,
-  );
-
-const restartButtonData = (calls: BotCall[]) => {
-  const button = inlineKeyboard(restartButtonMessage(calls))?.[0]?.[0];
-  assert.ok(button, "в сообщении нет кнопки рестарта");
-  return String(button.callback_data);
-};
-
-// Ждём наблюдаемый эффект фона: он идёт параллельно тесту, а не по нашей команде.
-async function waitForBotCall(
-  calls: BotCall[],
-  match: (call: BotCall) => boolean,
-): Promise<BotCall> {
-  for (let attempt = 0; attempt < 300; attempt++) {
-    const found = calls.find(match);
-    if (found !== undefined) return found;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Bot API call did not happen");
-}
-
-function restartTap(
-  updateId: number,
-  data: string,
-  {
-    from = trustedFrom,
-    chat: targetChat = chat,
-  }: {
-    from?: typeof trustedFrom;
-    chat?: { id: number; type: string };
-  } = {},
-): ControlUpdate {
-  return {
-    update_id: updateId,
-    callback_query: {
-      id: `cq-${updateId}`,
-      from,
-      message: { message_id: 500, date: 1, chat: targetChat },
-      data,
-    },
-  };
-}
-
-// Принятая отмена без подтверждения: роут отвечает, ход не заканчивается.
-const acceptedCancel = async () => ({ ok: true, status: "accepted" }) as const;
-
-// Двойник молчащего cancel-роута: запрос уходит, ответа нет — так выглядит зависший агент.
-// Таймаут клиента уважаем (сигнал обрывает ожидание), иначе тест повис бы навсегда.
-function silentRouteCancel(
-  timeoutMs: number,
-): (input: CancelCall) => Promise<unknown> {
-  return (input) =>
-    requestTelegramCancel({
-      ...input,
-      timeoutMs,
-      fetchImpl: (_url, init) =>
-        new Promise<Response>((_resolve, reject) => {
-          const abort = () =>
-            reject(
-              init.signal?.reason instanceof Error
-                ? init.signal.reason
-                : new Error("cancel route timed out"),
-            );
-          if (init.signal?.aborted === true) abort();
-          else init.signal?.addEventListener("abort", abort);
-        }),
-    });
-}
-
-// Отпечаток тот же, что мост кладёт в data кнопки: так выглядит нажатие, пришедшее из
-// прошлой жизни моста — от кнопки остались только её байты да запись хода на диске.
-function previousLifeRestartData(
-  sessionId: string,
-  turnId?: string | null,
-): string {
-  return `iva_stoprestart:${createHash("sha256")
-    .update(turnId ? JSON.stringify([sessionId, turnId]) : sessionId)
-    .digest("hex")
-    .slice(0, 12)}`;
-}
-
-// Нажатие кнопки рестарта и общая обвязка её обработки: акки, сбросы и ответы в чат.
-function restartDeps(scheduler: ReturnType<typeof recordingScheduler>) {
-  const acks: Array<[string, string | undefined]> = [];
-  const resets: ResetCall[] = [];
-  const replies: string[] = [];
-  return {
-    acks,
-    resets,
-    replies,
-    deps: {
-      cancelImpl: acceptedCancel,
-      confirmTimeoutMs: 20,
-      watchTimeoutMs: 20,
-      scheduleImpl: scheduler.scheduleImpl,
-      performResetImpl: async (
-        key: string,
-        target: Record<string, unknown>,
-        options: Record<string, unknown>,
-      ) => {
-        resets.push([key, target, options]);
-      },
-      replyImpl: async (_chatId: number | undefined, text: string) => {
-        replies.push(text);
-        return { message_id: 1 };
-      },
-      ackImpl: async (id: string, text?: string) => {
-        acks.push([id, text]);
-        return { ok: true, result: true };
-      },
-    },
-  };
-}
-
-// Кнопка из сообщения, которое мост отправил на прошлой серии нажатий ⏹.
-async function restartButtonOf(
-  scheduler: ReturnType<typeof recordingScheduler>,
-  calls: BotCall[],
-  deps: Record<string, unknown>,
-): Promise<string> {
-  assert.equal(await handleControl(stopButton(), deps), true);
-  await scheduler.run(scheduler.keys()[0]);
-  return restartButtonData(calls);
-}
-
-test("the Stop handler hands the wait to the background and never blocks the bridge", async () => {
-  runningTurn({ sessionId: "session-slow" });
-  const scheduler = recordingScheduler();
-  const acks: Array<[string, string | undefined]> = [];
-  const deps = {
-    cancelImpl: acceptedCancel,
-    scheduleImpl: scheduler.scheduleImpl,
-    ackImpl: async (id: string, text?: string) => {
-      acks.push([id, text]);
-      return { ok: true, result: true };
-    },
-  };
-
-  const started = Date.now();
-  assert.equal(await handleControl(stopButton(), deps), true);
-  const waitingMs = Date.now() - started;
-
-  // Окно ожидания по умолчанию — 60 с: тест идёт мгновенно только потому, что цикл его не ждёт.
-  assert.ok(waitingMs < 1000, `мост держал цикл ${waitingMs} мс`);
-  assert.deepEqual(acks, [["cq-5", "Останавливаю…"]]);
-  assert.equal(scheduler.keys().length, 1, "ожидание не ушло в фон");
-  // Оно и правда висит: подтверждения не было, ход всё ещё «идёт».
-  assert.equal(status.getChatStatus("7:")?.status, "running");
-
-  // И пока оно висит, цикл обслуживает следующий апдейт.
-  const { replies, deps: otherDeps } = recordingDeps();
-  const otherStarted = Date.now();
-  assert.equal(await handleControl(textUpdate(8, "/help"), otherDeps), true);
-  assert.ok(Date.now() - otherStarted < 1000);
-  assert.equal(replies.length, 1);
-});
-
-test("an unstopped turn offers the owner a restart button, and only the button restarts", async () => {
-  runningTurn({ sessionId: "session-button" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const resets: ResetCall[] = [];
-      const replies: Array<[number | undefined, string]> = [];
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        performResetImpl: async (
-          key: string,
-          target: Record<string, unknown>,
-          options: Record<string, unknown>,
-        ) => {
-          resets.push([key, target, options]);
-        },
-        replyImpl: async (chatId: number | undefined, text: string) => {
-          replies.push([chatId, text]);
-          return { message_id: 1 };
-        },
-        ackImpl: async () => ({ ok: true, result: true }),
-      };
-
-      // Серия нажатий ⏹ — одна фоновая задача, значит одно сообщение.
-      for (let tap = 0; tap < 3; tap++)
-        assert.equal(await handleControl(stopButton(), deps), true);
-      assert.equal(scheduler.keys().length, 1);
-      await scheduler.run(scheduler.keys()[0]);
-
-      const notice = await waitForBotCall(
-        calls,
-        (call) =>
-          call.method === "sendMessage" && inlineKeyboard(call) !== null,
-      );
-      // Окно теста — 20 мс, в тексте — округлённое окно (меньше секунды не называем).
-      assert.match(String(notice.body.text), /Ход не остановился за 1 с\./u);
-      assert.match(String(notice.body.text), /оборвёт работу во всех чатах/u);
-      assert.equal(
-        inlineKeyboard(notice)?.[0]?.[0]?.text,
-        "🔁 Перезапустить Iva",
-      );
-      // Авторестарта нет: пока кнопку не нажали, сервис не трогаем.
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-
-      const data = restartButtonData(calls);
-      assert.equal(await handleControl(restartTap(30, data), deps), true);
-      // Второе нажатие — та же серия: второй задачи и второго рестарта не будет.
-      assert.equal(await handleControl(restartTap(31, data), deps), true);
-      assert.equal(scheduler.keys().length, 1);
-      await scheduler.run(scheduler.keys()[0]);
-
-      assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
-      assert.deepEqual(resets, [
-        [
-          "7:",
-          { sessionId: "session-button" },
-          { clearQueue: true, discardThroughUpdateId: 30 },
-        ],
-      ]);
-      assert.deepEqual(replies, [[7, "♻️ Iva перезапущена"]]);
-      // Сообщение с кнопкой убрано: рестарт говорит о себе сам.
-      assert.deepEqual(
-        calls
-          .filter((call) => call.method === "deleteMessage")
-          .map((call) => call.body.message_id),
-        [500],
-      );
-    });
-  });
-});
-
-test("a confirmation after the message rewrites it and takes the button away", async () => {
-  runningTurn({ sessionId: "session-late" });
-  const scheduler = recordingScheduler();
-  await withBotApi(botOk, async (calls) => {
-    const replies: string[] = [];
-    const deps = {
-      cancelImpl: acceptedCancel,
-      confirmTimeoutMs: 20,
-      scheduleImpl: scheduler.scheduleImpl,
-      replyImpl: async (_chatId: number | undefined, text: string) => {
-        replies.push(text);
-        return { message_id: 1 };
-      },
-      ackImpl: async () => ({ ok: true, result: true }),
-    };
-
-    assert.equal(await handleControl(stopButton(), deps), true);
-    // Задачу не ждём: она висит на подтверждении — ровно то, что проверяется.
-    const waiting = scheduler.run(scheduler.keys()[0]);
-    await waitForBotCall(
-      calls,
-      (call) => call.method === "sendMessage" && inlineKeyboard(call) !== null,
-    );
-
-    // Ход всё-таки остановился: сообщение обязано сказать это, а кнопка — исчезнуть.
-    stopTurn("7:");
-    const edited = await waitForBotCall(
-      calls,
-      (call) =>
-        call.method === "editMessageText" &&
-        String(call.body.text).includes("Остановлено"),
-    );
-    await waiting;
-
-    assert.equal(edited.body.message_id, 500);
-    assert.deepEqual(inlineKeyboard(edited), []);
-    assert.deepEqual(replies, []);
-  });
-});
-
-test("a group gets the honest text about the unstopped turn and no restart button", async () => {
-  const groupId = -100500;
-  status.setChatStatus(`${groupId}:`, {
-    status: "running",
-    sessionId: "group-session",
-    turnId: "turn-group",
-  });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const resets: ResetCall[] = [];
-      const replies: Array<[number | undefined, string]> = [];
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        performResetImpl: async (
-          key: string,
-          target: Record<string, unknown>,
-          options: Record<string, unknown>,
-        ) => {
-          resets.push([key, target, options]);
-        },
-        replyImpl: async (chatId: number | undefined, text: string) => {
-          replies.push([chatId, text]);
-          return { message_id: 1 };
-        },
-        ackImpl: async () => ({ ok: true, result: true }),
-      };
-
-      assert.equal(
-        await handleControl(
-          {
-            update_id: 7,
-            message: {
-              message_id: 7,
-              date: 1,
-              chat: { id: groupId, type: "supergroup" },
-              from: trustedFrom,
-              text: "/stop",
-            },
-          },
-          deps,
-        ),
-        true,
-      );
-      await scheduler.run(scheduler.keys()[0]);
-
-      // Текст честный, кнопки нет: рестарт из группы не предлагается.
-      assert.deepEqual(replies, [[groupId, "Ход не остановился за 1 с."]]);
-      assert.equal(restartButtonMessage(calls), undefined);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-  stopTurn(`${groupId}:`);
-});
-
-test("a restart button tap from a group or a stranger never restarts", async () => {
-  runningTurn({ sessionId: "session-guard" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const acks: Array<[string, string | undefined]> = [];
-      const resets: ResetCall[] = [];
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        performResetImpl: async (
-          key: string,
-          target: Record<string, unknown>,
-          options: Record<string, unknown>,
-        ) => {
-          resets.push([key, target, options]);
-        },
-        replyImpl: async () => ({ message_id: 1 }),
-        ackImpl: async (id: string, text?: string) => {
-          acks.push([id, text]);
-          return { ok: true, result: true };
-        },
-      };
-
-      assert.equal(await handleControl(stopButton(), deps), true);
-      await scheduler.run(scheduler.keys()[0]);
-      const data = restartButtonData(calls);
-      acks.length = 0;
-
-      // Чужой в личке и владелец в группе: спиннер гасим, рестарта нет.
-      assert.equal(
-        await handleControl(
-          restartTap(40, data, { from: { id: 999, is_bot: false } }),
-          deps,
-        ),
-        true,
-      );
-      assert.equal(
-        await handleControl(
-          restartTap(41, data, { chat: { id: -100500, type: "supergroup" } }),
-          deps,
-        ),
-        true,
-      );
-
-      assert.deepEqual(acks, [
-        ["cq-40", undefined],
-        [
-          "cq-41",
-          "Открой личный чат со мной, чтобы использовать это управление.",
-        ],
-      ]);
-      assert.equal(scheduler.keys().length, 0);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-  stopTurn("7:");
-});
-
-test("a restart button tap after the turn is over never restarts", async () => {
-  runningTurn({ sessionId: "session-stale" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const acks: Array<[string, string | undefined]> = [];
-      const resets: ResetCall[] = [];
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        performResetImpl: async (
-          key: string,
-          target: Record<string, unknown>,
-          options: Record<string, unknown>,
-        ) => {
-          resets.push([key, target, options]);
-        },
-        replyImpl: async () => ({ message_id: 1 }),
-        ackImpl: async (id: string, text?: string) => {
-          acks.push([id, text]);
-          return { ok: true, result: true };
-        },
-      };
-
-      assert.equal(await handleControl(stopButton(), deps), true);
-      await scheduler.run(scheduler.keys()[0]);
-      const data = restartButtonData(calls);
-      acks.length = 0;
-
-      // Ход закончился сам: кнопка по нему уже ничего не решает.
-      stopTurn("7:");
-      assert.equal(await handleControl(restartTap(42, data), deps), true);
-
-      assert.deepEqual(acks, [["cq-42", "Этот ход уже завершился."]]);
-      assert.equal(scheduler.keys().length, 0);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-});
-
-for (const entry of ["button", "command"] as const) {
-  test(`stop ${entry} observes the captured turn replaced during cancel`, async () => {
-    runningTurn({ sessionId: "same-session", turnId: "old-turn" });
-    const scheduler = recordingScheduler();
-    await withBotApi(botOk, async (calls) => {
-      const { deps } = restartDeps(scheduler);
-      assert.equal(
-        await handleControl(
-          entry === "button" ? stopButton() : textUpdate(91, "/stop"),
-          {
-            ...deps,
-            cancelImpl: async (request: CancelCall) => {
-              assert.equal(request.turnId, "old-turn");
-              runningTurn({ sessionId: "same-session", turnId: "next-turn" });
-              return { status: "accepted" };
-            },
-          },
-        ),
-        true,
-      );
-      await scheduler.run(scheduler.keys()[0]);
-      assert.equal(restartButtonMessage(calls), undefined);
-    });
-  });
-}
-
-test("a restart button for an older turn leaves the next turn in the same session running", async () => {
-  runningTurn({ sessionId: "same-session", turnId: "old-turn" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const { acks, resets, deps } = restartDeps(scheduler);
-      const data = await restartButtonOf(scheduler, calls, deps);
-      acks.length = 0;
-      runningTurn({ sessionId: "same-session", turnId: "next-turn" });
-      assert.equal(await handleControl(restartTap(92, data), deps), true);
-      assert.deepEqual(acks, [["cq-92", "Этот ход уже завершился."]]);
-      assert.equal(scheduler.keys().length, 0);
-      assert.deepEqual(resets, []);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.equal(status.getChatStatus("7:")?.turnId, "next-turn");
-    });
-  });
-});
-
-test("the restart button's reset removes the working status message", async () => {
-  runningTurn({ sessionId: "session-working" });
-  // «Работаю… ⏹» этого хода: после рестарта сообщение обязано исчезнуть — иначе в чате
-  // останется кнопка по ходу, которого больше нет.
-  status.setChatStatus("7:", { statusMessageId: 501 });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    // Роут сброса — не Bot API: у него свой ответ, иначе настоящий сброс не пройдёт.
-    const respond = (method: string) =>
-      method === "reset"
-        ? { ok: true, status: "reset" }
-        : { ok: true, result: { message_id: 500 } };
-    await withBotApi(respond, async (calls) => {
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        // Настоящий сброс: то же, что делают /new и /restart.
-        performResetImpl: queue.performScopedReset,
-        replyImpl: async () => ({ message_id: 1 }),
-        ackImpl: async () => ({ ok: true, result: true }),
-      };
-
-      assert.equal(await handleControl(stopButton(), deps), true);
-      await scheduler.run(scheduler.keys()[0]);
-      const data = restartButtonData(calls);
-      assert.equal(await handleControl(restartTap(50, data), deps), true);
-      await scheduler.run(scheduler.keys()[0]);
-
-      assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
-      assert.deepEqual(
-        calls
-          .filter((call) => call.method === "deleteMessage")
-          .map((call) => call.body.message_id),
-        [500, 501],
-      );
-      // Сброс закрыл ход: чат снова свободен.
-      assert.equal(status.getChatStatus("7:")?.status, "idle");
-    });
-  });
-});
-
-test("a restart that systemd refuses is reported and the reset still happens", async () => {
-  runningTurn({ sessionId: "session-refused" });
-  const scheduler = recordingScheduler();
-  // systemctl отказывает: честный текст обязан сказать об этом, а не про перезапуск.
-  await withFakeSystemctl(1, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const resets: ResetCall[] = [];
-      const replies: string[] = [];
-      const deps = {
-        cancelImpl: acceptedCancel,
-        confirmTimeoutMs: 20,
-        watchTimeoutMs: 20,
-        scheduleImpl: scheduler.scheduleImpl,
-        performResetImpl: async (
-          key: string,
-          target: Record<string, unknown>,
-          options: Record<string, unknown>,
-        ) => {
-          resets.push([key, target, options]);
-        },
-        replyImpl: async (_chatId: number | undefined, text: string) => {
-          replies.push(text);
-          return { message_id: 1 };
-        },
-        ackImpl: async () => ({ ok: true, result: true }),
-      };
-
-      assert.equal(await handleControl(stopButton(), deps), true);
-      await scheduler.run(scheduler.keys()[0]);
-      assert.equal(
-        await handleControl(restartTap(60, restartButtonData(calls)), deps),
-        true,
-      );
-      await scheduler.run(scheduler.keys()[0]);
-
-      assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
-      // Сброс сделан независимо от исхода рестарта: он лечит зависший ход сам.
-      assert.equal(resets.length, 1);
-      assert.deepEqual(replies, ["⚠️ Не удалось перезапустить Iva"]);
-    });
-  });
-});
-
-test("the honest text names the window it actually waited", async () => {
-  runningTurn({ sessionId: "session-window" });
-  const scheduler = recordingScheduler();
-  await withBotApi(botOk, async (calls) => {
-    const { deps } = restartDeps(scheduler);
-    // Ждём две секунды, а не дефолтные шестьдесят: число в тексте — то же окно, что отработало.
-    const waiting = { ...deps, confirmTimeoutMs: 2000 };
-
-    assert.equal(await handleControl(stopButton(), waiting), true);
-    await scheduler.run(scheduler.keys()[0]);
-
-    const notice = await waitForBotCall(
-      calls,
-      (call) => call.method === "sendMessage" && inlineKeyboard(call) !== null,
-    );
-    assert.match(String(notice.body.text), /Ход не остановился за 2 с\./u);
-    assert.doesNotMatch(String(notice.body.text), /60/u);
-  });
-  stopTurn("7:");
-});
-
-test("the first restart press says the restart has started, the second says it is running", async () => {
-  runningTurn({ sessionId: "session-ack" });
-  const scheduler = recordingScheduler();
-  await withBotApi(botOk, async (calls) => {
-    const { acks, deps } = restartDeps(scheduler);
-    const data = await restartButtonOf(scheduler, calls, deps);
-    acks.length = 0;
-
-    assert.equal(await handleControl(restartTap(80, data), deps), true);
-    assert.equal(await handleControl(restartTap(81, data), deps), true);
-
-    // Молчаливого ответа нет: первое нажатие слышит «начал», повтор — «уже идёт».
-    assert.deepEqual(acks, [
-      ["cq-80", "♻️ Перезапускаю Iva"],
-      ["cq-81", "♻️ Перезапуск Iva уже идёт"],
-    ]);
-    // Рестарт ровно один: второй тап остался той же задачей.
-    assert.equal(scheduler.keys().length, 1);
-  });
-  stopTurn("7:");
-});
-
-test("a restart tap that lands after the turn stopped never restarts", async () => {
-  runningTurn({ sessionId: "session-race" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const { resets, replies, deps } = restartDeps(scheduler);
-      const data = await restartButtonOf(scheduler, calls, deps);
-
-      // Тап ушёл в фон, а ход успел подтвердить остановку до старта задачи.
-      assert.equal(await handleControl(restartTap(70, data), deps), true);
-      stopTurn("7:");
-      await scheduler.run(scheduler.keys()[0]);
-
-      assert.deepEqual(replies, ["Этот ход уже завершился."]);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-});
-
-test("a silent cancel route ends with one honest message and no restart", async () => {
-  runningTurn({ sessionId: "session-silent" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async (calls) => {
-      const { resets, deps } = restartDeps(scheduler);
-      const deps2 = { ...deps, cancelImpl: silentRouteCancel(20) };
-
-      // Роут молчит дольше таймаута: серия нажатий — одна задача, одно сообщение.
-      for (let tap = 0; tap < 3; tap++)
-        assert.equal(await handleControl(stopButton(), deps2), true);
-      assert.equal(scheduler.keys().length, 1);
-      await scheduler.run(scheduler.keys()[0]);
-
-      assert.equal(
-        calls.filter(
-          (call) =>
-            call.method === "sendMessage" && inlineKeyboard(call) !== null,
-        ).length,
-        1,
-      );
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-  stopTurn("7:");
-});
-
-for (const turnId of ["turn-1", null])
-  test(`a restart button from a previous bridge life still restarts a live turn: ${turnId ?? "legacy"}`, async () => {
-    // Кнопку сняли до перезапуска моста: в памяти процесса о ней ничего нет — решение
-    // принимают отпечаток sessionId в callback_data и запись хода на диске.
-    runningTurn({ sessionId: "session-old-bridge", turnId });
-    const scheduler = recordingScheduler();
-    await withFakeSystemctl(0, async (argsLog) => {
-      await withBotApi(botOk, async () => {
-        const { resets, replies, acks, deps } = restartDeps(scheduler);
-
-        assert.equal(
-          await handleControl(
-            restartTap(
-              90,
-              previousLifeRestartData("session-old-bridge", turnId),
-            ),
-            deps,
-          ),
-          true,
-        );
-        await scheduler.run(scheduler.keys()[0]);
-
-        assert.deepEqual(acks, [["cq-90", "♻️ Перезапускаю Iva"]]);
-        assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
-        assert.deepEqual(resets, [
-          [
-            "7:",
-            { sessionId: "session-old-bridge" },
-            { clearQueue: true, discardThroughUpdateId: 90 },
-          ],
-        ]);
-        assert.deepEqual(replies, ["♻️ Iva перезапущена"]);
-      });
-    });
-  });
-
-test("a restart button on a record the reaper cleared never restarts", async () => {
-  runningTurn({ sessionId: "session-reaped" });
-  backdateRunStatus("session-reaped", 31 * 60_000);
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async () => {
-      // Жнец гоняется каждой итерацией цикла моста: он и снимает зависшую запись.
-      assert.ok((await queue.reapStaleRuns()) >= 1);
-      assert.equal(status.getChatStatus("7:")?.status, "idle");
-
-      const { resets, acks, deps } = restartDeps(scheduler);
-      assert.equal(
-        await handleControl(
-          restartTap(91, previousLifeRestartData("session-reaped")),
-          deps,
-        ),
-        true,
-      );
-
-      assert.deepEqual(acks, [["cq-91", "Этот ход уже завершился."]]);
-      assert.equal(scheduler.keys().length, 0);
-      assert.equal(systemctlCalls(argsLog), "");
-      assert.deepEqual(resets, []);
-    });
-  });
-});
-
-test("repeated taps after the turn is gone stay harmless", async () => {
-  runningTurn();
-  const { cancels, acks, deps } = recordingDeps();
-
-  await handleControl(stopButton(), deps);
-  status.setChatStatus("7:", { status: "idle", sessionId: null, turnId: null });
-  await handleControl(stopButton(), deps);
-  await handleControl(stopButton(), deps);
-
-  assert.equal(cancels.length, 1);
-  assert.deepEqual(acks.slice(1), [
-    ["cq-5", "Сейчас ничего не выполняется."],
-    ["cq-5", "Сейчас ничего не выполняется."],
-  ]);
+  assert.deepEqual(acks, []);
 });
 
 test("/start is answered by the bridge and never becomes a model turn", async () => {
@@ -1533,7 +760,6 @@ test("settings commands reject every non-private chat before state or Bot API ef
 
 test("local callbacks reject non-private chats before cancellation or dispatch", async () => {
   for (const data of [
-    "iva_cancel",
     "iva_update:do",
     "iva_model:keep",
     "iva_think:keep",
@@ -1565,6 +791,7 @@ test("a non-private rejection does not reveal controls to an untrusted user", as
   const { cancels, acks, deps } = recordingDeps();
   const update = stopButton();
   const callback = update.callback_query as Record<string, unknown>;
+  callback.data = "iva_menu:r:o";
   callback.from = { id: 999, is_bot: false };
   callback.message = {
     message_id: 4,
@@ -1574,7 +801,7 @@ test("a non-private rejection does not reveal controls to an untrusted user", as
 
   assert.equal(await handleControl(update, deps), true);
   assert.deepEqual(cancels, []);
-  assert.deepEqual(acks, [["cq-5", undefined]]);
+  assert.deepEqual(acks, []);
 });
 
 // Кнопка, написанная моделью: её data — реплика пользователя, поэтому тап уходит
@@ -1839,9 +1066,18 @@ test("a falsey callback ack does not claim a local control", async () => {
     turnId: null,
   });
 
-  const consumed = await handleControl(stopButton(), {
-    ackImpl: async () => null,
-  });
+  const consumed = await handleControl(
+    {
+      ...stopButton(),
+      callback_query: {
+        ...(stopButton().callback_query as Record<string, unknown>),
+        data: "iva_model:keep",
+      },
+    },
+    {
+      ackImpl: async () => null,
+    },
+  );
 
   assert.equal(consumed, false);
 });
@@ -1853,9 +1089,18 @@ test("a false callback ack result does not claim a local control", async () => {
     turnId: null,
   });
 
-  const consumed = await handleControl(stopButton(), {
-    ackImpl: async () => ({ ok: true, result: false }),
-  });
+  const consumed = await handleControl(
+    {
+      ...stopButton(),
+      callback_query: {
+        ...(stopButton().callback_query as Record<string, unknown>),
+        data: "iva_model:keep",
+      },
+    },
+    {
+      ackImpl: async () => ({ ok: true, result: false }),
+    },
+  );
 
   assert.equal(consumed, false);
 });
@@ -2583,10 +1828,6 @@ const edits = (calls: BotCall[]) =>
   calls
     .filter((call) => call.method === "editMessageText")
     .map((call) => JSON.stringify(call.body));
-
-// Журнал двойника systemctl: пусто — рестарта не было (файла ещё нет).
-const systemctlCalls = (argsLog: string) =>
-  existsSync(argsLog) ? readFileSync(argsLog, "utf8") : "";
 
 // systemctl подменяется скриптом на PATH: тест никогда не трогает настоящий сервис.
 async function withFakeSystemctl<T>(
@@ -4024,4 +3265,19 @@ test("a model's own «Повторить» button under another message brings n
   assert.equal(await handleControl(update, deps), false);
   const turnText = (update.message as { text?: string }).text ?? "";
   assert.doesNotMatch(turnText, /СКРЫТЫЙ-ВОПРОС/u);
+});
+
+test("native stop is handled before admission and leaves the next turn and compaction alone", async () => {
+  runningTurn();
+  const { cancels, replies, acks, deps } = recordingDeps();
+  assert.equal(await handleControl(nativeStop(), deps), true);
+  assert.equal(cancels.length, 1);
+  runningTurn({ turnId: "turn-new", draftId: 42 });
+  assert.equal(await handleControl(nativeStop(), deps), true);
+  assert.equal(cancels.length, 1);
+  runningTurn({ turnId: null, draftId: 41, compacting: true });
+  assert.equal(await handleControl(nativeStop(), deps), true);
+  assert.equal(cancels.length, 1);
+  assert.deepEqual(replies, []);
+  assert.deepEqual(acks, []);
 });
