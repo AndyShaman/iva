@@ -51,7 +51,16 @@ const chatContext = {
   channel: { kind: "channel:telegram" },
 };
 const reminderContext = {
-  session: { id: "reminder-1", turn: { id: "turn-1", sequence: 0 } },
+  session: {
+    id: "reminder-1",
+    turn: { id: "turn-1", sequence: 0 },
+    auth: {
+      initiator: {
+        authenticator: "iva-bearer",
+        attributes: { iva_turn: "reminder" },
+      },
+    },
+  },
   channel: { kind: "http" },
 };
 const childContext = {
@@ -83,6 +92,51 @@ const daily = () => {
         .join("")
     : "";
 };
+
+for (const kind of ["cli", "http"]) {
+  test(`root ${kind} service replies stay out of the day`, (t) => {
+    resetDaily(t);
+    completed("служебный ответ", "stop", {
+      ...chatContext,
+      channel: { kind },
+    });
+    assert.equal(daily(), "");
+  });
+}
+
+test("HTTP background replies require a recognized bearer turn", (t) => {
+  resetDaily(t);
+  for (const initiator of [
+    { authenticator: "iva-bearer", attributes: {} },
+    { authenticator: "iva-bearer", attributes: { iva_turn: "unknown" } },
+    { authenticator: "local-dev", attributes: { iva_turn: "watch" } },
+  ]) {
+    completed("служебный ответ API", "stop", {
+      ...reminderContext,
+      session: { ...reminderContext.session, auth: { initiator } },
+    });
+  }
+  assert.equal(daily(), "");
+});
+
+for (const turn of ["watch", "brief", "insight", "signal", "alert"]) {
+  test(`${turn} replies are written to the day`, (t) => {
+    resetDaily(t);
+    completed(`видимый ответ ${turn}`, "stop", {
+      ...reminderContext,
+      session: {
+        ...reminderContext.session,
+        auth: {
+          initiator: {
+            authenticator: "iva-bearer",
+            attributes: { iva_turn: turn },
+          },
+        },
+      },
+    });
+    assert.match(daily(), new RegExp(`\\[iva\\]\\nвидимый ответ ${turn}`));
+  });
+}
 
 test("child text is skipped while chat and Reminder Turns are written", (t) => {
   resetDaily(t);

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **В дневном файле остаются ответы владельцу**: служебные ответы CLI и HTTP пропускаются; ответы в Telegram, напоминания, Watch, Brief и другие видимые фоновые ответы сохраняются. Daily transcripts skip CLI and HTTP service replies while keeping Telegram and visible background replies.
+
 - ⏹ **Стоп подтверждает остановку выбранного хода**: следующий ход в том же разговоре получает своё состояние; кнопка перезапуска от предыдущего хода сохраняет его идентификатор и оставляет следующий ход работать. Stop confirmation and restart buttons now track the selected turn within its session.
 
 - 🔧 **Сбой хода по расписанию сохраняет причину**: после отказа модели напоминание и Signal используют исходный текст, а Alert, Watch, Brief и Insight сохраняют провал вместо отправки промежуточной фразы. Scheduled turns preserve model failures instead of publishing intermediate replies.
