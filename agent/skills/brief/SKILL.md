@@ -14,6 +14,9 @@ and what the next step is.
 In a group chat (`/digest` there) other people read the answer: show only the open
 tasks (step 1), nothing from mail, calendar, personal Telegram or Connections.
 
+Load `watch` and follow its shared procedure for each substantial item; apply
+it only to the sources allowed here.
+
 Walk everything the owner has connected, with your own tools, read only:
 
 1. Tasks: load `task-management`, call `tasks` with `action="list"`. Overdue and due
@@ -24,15 +27,17 @@ Walk everything the owner has connected, with your own tools, read only:
    today's meetings, letters and chats that wait for the owner.
 3. Every Connection and plugin: `connection_search` lists them; look at each one for
    what is new or due today.
-4. Goals from CORE: one concrete step towards a goal today, if one fits.
+4. Goals from CORE: the shared procedure chooses a concrete step for today.
 5. Weather for the owner's city (from memory, `memory_search`). No city known — ask
    once and save the answer with `write_card`.
 6. Habits — only the ones the owner named; never invent a routine.
 7. Mail, calendar or Telegram not connected — offer to connect it once and save the
    fact that you offered with `write_card`; next time check memory and do not repeat.
-   Do not suggest anything a Card tagged `insight` marks as declined.
 
 ## Write
+
+Keep the shared procedure's source, why now and prepared next step inside the
+existing overview or action message.
 
 - Unfixed failures from the prompt open the overview, before anything else: one
   point each, in plain words, what broke and the cause. Each then gets its own
