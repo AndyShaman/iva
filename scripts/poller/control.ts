@@ -1269,8 +1269,7 @@ async function stopCommand({ update, io, chatId }: ControlCommand) {
     cancelImpl: io.cancelImpl,
     getStatusImpl: () => status,
   });
-  // Ждать подтверждение цикл не будет: о неостановленном ходе скажет фон.
-  // Успех виден по статус-сообщению: turn.cancelled перепишет его на «Остановлено».
+  // Принятая отмена завершается событиями хода; /stop отвечает только при отказе или idle.
   if (isPendingStopOutcome(outcome)) return true;
   return replyConfirmed(io, chatId, stopOutcomeText(replyOutcomeOf(outcome)));
 }

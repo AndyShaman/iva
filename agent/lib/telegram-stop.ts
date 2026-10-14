@@ -185,7 +185,7 @@ async function cancelTurnAndConfirm(
 
 // POST на cancel-роут: синхронная часть пути «Стоп». Что роут ответил — journal, а не
 // истина: «принято» лишь значит, что сигнал отмены взят, поэтому наружу уходит
-// «отмена в пути», а факт остановки смотрит фоновое ожидание.
+// «отмена в пути», а факт остановки приходит терминальным событием хода.
 async function sendTurnCancel(
   attempt: TurnCancelAttempt,
 ): Promise<StopOutcome> {
@@ -201,7 +201,7 @@ async function sendTurnCancel(
     );
   } catch (error) {
     // Молчащий роут, отказ соединения, 5xx: отменять было что, ответа на отмену нет.
-    // Ход при этом мог не остановиться — это выяснит фоновое ожидание.
+    // Ход при этом мог остаться живым; повторная /stop отправит новую отмену.
     attempt.logImpl("turn cancel failed:", error);
     return "unresponsive";
   }

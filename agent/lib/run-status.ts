@@ -6,7 +6,7 @@
 // Отдельный файл на chatKey не даёт параллельной записи одного чата потерять статус
 // другого. Запись одного ключа защищена O_EXCL-локом и атомарна (unique tmp+rename).
 // ЛЮБАЯ успешная запись двигает generation и updatedAt — на updatedAt держится и
-// жнец, и пульс (agent/lib/telegram-turn-start.ts). Одно исключение — запись знака очереди
+// жнец, и пульс (agent/lib/telegram-turn-start.ts). Одно исключение — запись входа очереди
 // (setChatStatusIf с touch: false): она не продлевает жизнь чужому ходу.
 //
 // chatKey = `${chatId}:${threadId ?? ""}` — тот же ключ, что chatKey() Bridge.
@@ -65,10 +65,8 @@ const LOCK_TIMEOUT_MS = positiveMs(
 );
 const LOCK_RETRY_MS = 10;
 
-// Знак очереди: сообщение встало за живым ходом и уже видит лоадер. Поля живут в записи
-// чата и переезжают вместе с ней при захвате; знак забирает или удаляет следующий ход чата
-// (agent/lib/telegram-turn-start.ts), а запись, ушедшая в idle без хода-наследника, удаляет
-// его сама (specs/IdleCompaction.tla, SignOwned). Снимаются все поля разом — этим патчем.
+// Вход очереди хранит время и сессию сообщения, ожидающего живой ход.
+// Следующий ход забирает свой вход; reset и захват очищают поля одним патчем.
 export const QUEUED_STATUS_CLEARED = {
   queuedIngressId: null,
   queuedIngressAt: null,
@@ -359,7 +357,7 @@ export function setChatStatus(
 
 // Atomic compare-and-set для terminal Eve events: reset может успеть удалить
 // sessionId между ранним read и записью позднего события. touch: false — запись, которая не
-// говорит «ход жив» (знак очереди), updatedAt не двигает: иначе запись мёртвого хода
+// говорит «ход жив» (вход очереди), updatedAt не двигает: иначе запись мёртвого хода
 // прожила бы ещё RUN_STALE_MS. generation растёт всегда — на нём держатся CAS.
 export function setChatStatusIf(
   chatKey: string,
