@@ -289,6 +289,26 @@ export const acknowledgeTelegramQueueItems = (
     acknowledgeQueueItems(QUEUE_FILE, chatKey, updateIds),
   );
 
+const deleteLegacyMessage = (chatKey: string, messageId: string | number) =>
+  tg("deleteMessage", {
+    chat_id: chatKey.split(":")[0],
+    message_id: messageId,
+  });
+
+async function deleteLegacyStatusMessages(
+  chatKey: string,
+  status: Record<string, unknown> | null,
+  deleteMessageImpl: typeof deleteLegacyMessage,
+): Promise<void> {
+  for (const id of new Set([
+    status?.statusMessageId,
+    status?.queuedStatusMessageId,
+  ])) {
+    if (typeof id === "string" || typeof id === "number")
+      await deleteMessageImpl(chatKey, id).catch(() => {});
+  }
+}
+
 export async function completeScopedResetState(
   chatKey: string,
   {
@@ -297,6 +317,7 @@ export async function completeScopedResetState(
     resetRequestedAt,
     clearQueueImpl = clearChatQueue,
     setStatusImpl = setChatStatus,
+    deleteMessageImpl = deleteLegacyMessage,
   }: {
     clearQueue?: boolean;
     discardThroughUpdateId?: number;
@@ -310,6 +331,7 @@ export async function completeScopedResetState(
       chatKey: string,
       patch: Record<string, unknown>,
     ) => unknown;
+    deleteMessageImpl?: typeof deleteLegacyMessage;
   } = {},
 ) {
   // For private chats the queue belongs to the reset session, so clear it
@@ -319,6 +341,7 @@ export async function completeScopedResetState(
     await clearQueueImpl(chatKey, discardThroughUpdateId, resetRequestedAt);
   }
 
+  const previous = getChatStatus(chatKey);
   setStatusImpl(chatKey, {
     status: "idle",
     sessionId: null,
@@ -335,6 +358,7 @@ export async function completeScopedResetState(
     ...QUEUED_STATUS_CLEARED,
     resetAt: Date.now(),
   });
+  await deleteLegacyStatusMessages(chatKey, previous, deleteMessageImpl);
 }
 
 export async function persistPrivateResetIntent(
@@ -921,6 +945,7 @@ export async function reapStaleRuns({
   setStatusIfImpl = setChatStatusIf,
   resetImpl = releaseScopedSession,
   sendImpl = sendStaleRunNotice,
+  deleteMessageImpl = deleteLegacyMessage,
   now = Date.now,
   inFlight = queueInFlight,
   staleMs = RUN_STALE_MS,
@@ -1006,6 +1031,7 @@ export async function reapStaleRuns({
     }
     if (!flipped) continue;
     reaped++;
+    await deleteLegacyStatusMessages(key, status, deleteMessageImpl);
 
     if (typeof status.sessionId === "string" && status.sessionId.length > 0) {
       try {

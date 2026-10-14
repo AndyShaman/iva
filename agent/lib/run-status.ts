@@ -331,13 +331,20 @@ function updateChatStatus(
       updatedAt: stamp(prev),
     };
     delete next[RETIRED_SESSION_ROUTING_FIELD];
-    for (const field of [
-      "statusMessageId",
-      "statusAt",
-      "queuedStatusMessageId",
-      "queuedStatusAt",
-    ])
-      delete next[field];
+    // Keep inherited message IDs through heartbeats until the bridge can delete
+    // them. A terminal record or a different pair must retire the old Stop key.
+    if (
+      next.status !== "running" ||
+      next.sessionId !== prev.sessionId ||
+      next.turnId !== prev.turnId
+    )
+      for (const field of [
+        "statusMessageId",
+        "statusAt",
+        "queuedStatusMessageId",
+        "queuedStatusAt",
+      ])
+        delete next[field];
     for (const key of Object.keys(next))
       if (next[key] === null) delete next[key];
     writeCurrent(file, next);

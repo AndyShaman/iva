@@ -465,6 +465,14 @@ test("the ⏹ Stop button cancels through the channel route, never through Eve",
 
 test("the legacy iva_cancel button stays out of the inbox and cancels the recorded pair", async () => {
   runningTurn();
+  writeFileSync(
+    join(
+      dataDir,
+      "run-status.d",
+      `${Buffer.from("7:").toString("base64url")}.json`,
+    ),
+    JSON.stringify({ ...status.getChatStatus("7:"), statusMessageId: 4 }),
+  );
   const { cancels, acks, deps } = recordingDeps();
   assert.equal(await handleControl(stopButton(), deps), true);
   assert.equal(cancels.length, 1);
