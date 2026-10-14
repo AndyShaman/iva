@@ -31,6 +31,7 @@ type Handle = Pick<TelegramHandle, "request" | "chatId" | "post"> &
   Partial<Pick<TelegramHandle, "messageThreadId">>;
 
 const QUESTION_EDIT_TIMEOUT_MS = 5000;
+const QUESTION_PREVIEW_PART_LIMIT = 16000;
 class QuestionPostRejected extends Error {}
 class QuestionMessageUnavailable extends Error {}
 class QuestionStatusTooLong extends Error {}
@@ -454,6 +455,23 @@ async function settlePreview(
     retire(state, requestId, preview);
     return true;
   } catch (error) {
+    if (
+      preview.rich &&
+      error instanceof QuestionStatusTooLong &&
+      (preview.prompt.length > QUESTION_PREVIEW_PART_LIMIT ||
+        (preview.settledStatus?.length ?? 0) > QUESTION_PREVIEW_PART_LIMIT)
+    ) {
+      // Shorten the display once; the accepted choice and its label stay intact.
+      for (const key of ["prompt", "settledStatus"] as const) {
+        const text = preview[key] ?? "";
+        if (text.length > QUESTION_PREVIEW_PART_LIMIT)
+          preview[key] = text
+            .slice(0, QUESTION_PREVIEW_PART_LIMIT)
+            .replace(/[\uD800-\uDBFF]$/u, "")
+            .replace(/(?<!\\)((?:\\\\)*)\\$/u, "$1");
+      }
+      return settlePreview(state, tg, requestId, preview, deadline);
+    }
     if (error instanceof QuestionMessageUnavailable) {
       retire(state, requestId, preview);
       return true;
