@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Сбой хода по расписанию сохраняет причину**: после отказа модели напоминание и Signal используют исходный текст, а Alert, Watch, Brief и Insight сохраняют провал вместо отправки промежуточной фразы. Scheduled turns preserve model failures instead of publishing intermediate replies.
+
 - 🔘 **Повтор старой кнопки остаётся повтором**: даже после сотен других нажатий та же кнопка в работающем Bridge получает «Уже выбрано» и сохраняет один ход. A previously chosen button stays deduplicated after hundreds of other taps in the same Bridge process.
 
 - 🔧 **Google CLI обновляется проверенным архивом**: обновлятор использует ту же закреплённую версию и проверку SHA-256, что установщик; подключённый аккаунт сохраняется. Updates install Google CLI through the installer’s pinned archive and checksum verification.

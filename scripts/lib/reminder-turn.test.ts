@@ -129,6 +129,23 @@ function failureOf(work: Promise<unknown>): Promise<unknown> {
   );
 }
 
+for (const mark of ["cancel", "limit", "cancel-and-limit"] as const) {
+  void test(`recoverable failure preserves ${mark} priority`, async () => {
+    const spy = spyTurn(async function* () {
+      yield { type: "message.completed", data: { message: "intermediate" } };
+      yield { type: "turn.failed", data: { message: "provider unavailable" } };
+      if (mark !== "limit") yield { type: "turn.cancelled" };
+      if (mark !== "cancel") yield SESSION_LIMIT_REQUESTED;
+      yield { type: "session.waiting" };
+    });
+    const turn = await runReminderTurn("fixture", OPTIONS, { createClient: spy.createClient });
+    assert.equal(turn.cancelled, mark !== "limit");
+    assert.equal(turn.sessionLimit, mark === "limit" ? true : undefined);
+    assert.equal(turn.status, mark === "limit" ? "failed" : "waiting");
+    assert.equal(turn.message, mark === "limit" ? "the turn hit the eve session token limit" : "intermediate");
+  });
+}
+
 void test("the last message.completed text is returned and the session is reset", async () => {
   const spy = spyTurn(async function* () {
     // Each gap stays under the idle window while the whole turn runs past it: a window that

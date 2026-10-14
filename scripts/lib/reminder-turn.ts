@@ -563,6 +563,8 @@ async function settleTurn(
     await stopParkedTurn(session, log, "session-limit");
     return limitedTurn(feedback);
   }
+  if (state.failure !== undefined && !state.cancelled)
+    return { status: "failed", cancelled: false, message: state.failure, feedback };
   const { status, cancelled } = turnBoundary(state);
   return {
     status,
