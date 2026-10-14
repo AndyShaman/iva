@@ -49,7 +49,7 @@ function handle(
   };
 }
 
-await test("обычный финал гасит статус и убирает сообщение, повтор — no-op", async () => {
+await test("обычный финал освобождает запись хода без сообщений, повтор — no-op", async () => {
   const key = runStatus.chatKeyOf("77", undefined);
   runStatus.setChatStatus(key, {
     status: "running",
@@ -93,7 +93,7 @@ await test("отмена переписывает статус и оставля
   assert.equal(runStatus.getChatStatus(key)?.wasCancelled, true);
 });
 
-await test("сбой Bot API на уборке не рушит терминал хода", async () => {
+await test("освобождение записи после сбоя хода обходится без Bot API", async () => {
   const key = runStatus.chatKeyOf("77", undefined);
   runStatus.setChatStatus(key, {
     status: "running",
@@ -113,8 +113,7 @@ await test("сбой Bot API на уборке не рушит терминал 
 });
 
 await test("чужая живая сессия не трогается поздним финишем", async () => {
-  // Regression anchor from code review: a late terminal must not delete another
-  // session's status message. Not a full discriminator of the current impl.
+  // Поздний terminal освобождает только запись своей сессии.
   const key = runStatus.chatKeyOf("77", undefined);
   // Живая чужая сессия — поздний terminal от старой сессии должен быть no-op.
   runStatus.setChatStatus(key, {
@@ -139,9 +138,8 @@ await test("чужая живая сессия не трогается позд�
   assert.equal(live?.draftId, 777);
 });
 
-await test("своя сессия гасит статус-сообщение", async () => {
-  // Regression anchor from code review: a late terminal must not delete another
-  // session's status message. Not a full discriminator of the current impl.
+await test("своя сессия освобождает запись хода без Bot API", async () => {
+  // Поздний terminal освобождает только запись своей сессии.
   const key = runStatus.chatKeyOf("77", undefined);
   runStatus.setChatStatus(key, {
     status: "running",
@@ -161,9 +159,9 @@ await test("своя сессия гасит статус-сообщение", a
   assert.equal(runStatus.getChatStatus(key)?.status, "idle");
 });
 
-await test("знак очереди переживает любой финал хода: его заберёт следующий ход", async () => {
+await test("вход очереди переживает любой финал хода: его заберёт следующий ход", async () => {
   // eve хранит буфер входа и после отмены (steer отменяет ход ради нового сообщения), и
-  // после сбоя хода: сообщение со знаком начнёт следующий ход. Знак мигать не должен.
+  // после сбоя хода: сохранённый вход начнёт следующий ход.
   const key = runStatus.chatKeyOf("77", undefined);
   const queued = {
     queuedIngressId: "ingress-Q",
@@ -396,7 +394,7 @@ await test("PBT смешивает ходы, шаги, инструменты, �
             if (op === "own-stop" || op === "old-stop") {
               const cancelled: Array<{ sessionId: string; turnId?: string }> =
                 [];
-              const own =
+              const own: boolean =
                 op === "own-stop" && (phase === "running" || phase === "final");
               await handleTelegramDraftStop(
                 {
@@ -478,7 +476,7 @@ await test("PBT смешивает ходы, шаги, инструменты, �
             const markdown = (
               frames().at(-1)?.body.rich_message as { markdown: string }
             ).markdown;
-            const expected =
+            const expected: string =
               [words.join(" "), tool ? "⚙ <code>bash: go</code>" : ""]
                 .filter(Boolean)
                 .join("\n\n") || "<tg-thinking>Thinking…</tg-thinking>";
