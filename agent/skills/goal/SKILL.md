@@ -51,6 +51,8 @@ existing boundary.
    and agreed boundaries. New permission also updates `may`. "Проверь сейчас"
    calls `goal update` with `next_check: "now"`. After the receipt, say you will
    write only if something new is found; a check with no news stays silent.
+   Promise to report a failure only after the third consecutive failure;
+   the first two stay silent.
    Repeat a named time in the confirmation.
 5. Tell an expired pause once in the conversation and offer to continue.
    A third consecutive failure has its own Outcome to retell with the pause.
