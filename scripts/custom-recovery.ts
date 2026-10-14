@@ -55,7 +55,7 @@ export function runCustomRecovery(args: readonly string[]): void {
       `${JSON.stringify({
         ok: true,
         ...resolved,
-        next: "npm run build, then ask the owner to send /restart",
+        next: "Follow update-recovery: Activate corrected sources for this installation",
       })}\n`,
     );
   } catch (error) {

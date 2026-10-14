@@ -576,6 +576,82 @@ test("the recovery CLI reports resolve failures as JSON", (t) => {
   assert.equal(result.stderr, "");
 });
 
+test("279-A: successful recovery delegates activation for Version and developer checkout", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-recovery-next-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const kind of ["version", "developer"]) {
+    const root = join(
+      dir,
+      kind === "version" ? "versions/0.4.17-0123456789ab" : ".iva-dev-checkout",
+    );
+    const dataDir = join(dir, `${kind} data with spaces`);
+    const recoveryDir = join(dataDir, "update-conflicts/test");
+    write(recoveryDir, "local/agent/instructions.md", "owner rules\n");
+    write(
+      dataDir,
+      "custom/manifest.json",
+      JSON.stringify({
+        ...readCustomManifest(dataDir),
+        entries: {
+          "agent/instructions.md": {
+            originSha256: null,
+            localSha256: null,
+            baseBlob: null,
+            tombstone: false,
+            conflict: { localSha256: null, recoveryDir },
+          },
+        },
+      }),
+    );
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    copyFileSync(
+      join(PROJECT_ROOT, "scripts/custom-recovery.ts"),
+      join(root, "scripts/custom-recovery.ts"),
+    );
+    symlinkSync(
+      join(PROJECT_ROOT, "scripts/lib"),
+      join(root, "scripts/lib"),
+      "dir",
+    );
+    symlinkSync(
+      join(PROJECT_ROOT, "node_modules"),
+      join(root, "node_modules"),
+      "dir",
+    );
+    write(root, "package.json", '{"type":"module"}');
+    if (kind === "developer") write(root, ".iva-dev", "");
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, "scripts/custom-recovery.ts"),
+        "resolve",
+        "agent/instructions.md",
+        "local",
+      ],
+      {
+        cwd: root,
+        env: { ...process.env, ASSISTANT_DATA_DIR: dataDir },
+        encoding: "utf8",
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      {
+        ok: true,
+        path: "agent/instructions.md",
+        side: "local",
+        next: "Follow update-recovery: Activate corrected sources for this installation",
+      },
+      kind,
+    );
+    assert.equal(
+      readFileSync(join(dataDir, "custom/agent/instructions.md"), "utf8"),
+      "owner rules\n",
+    );
+  }
+});
+
 test("a markdown rule file in the slot is live, not built", (t) => {
   const { root, dataDir, base } = fixture(t);
   mkdirSync(join(dataDir, "custom/agent/instructions"), { recursive: true });
