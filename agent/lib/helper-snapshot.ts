@@ -39,6 +39,7 @@ export function foldHelperSnapshot(
     if (!event || typeof event.type !== "string")
       throw Error("invalid helper snapshot");
     const d = (event.data ?? {}) as Record<string, unknown>;
+    if (event.type === "session.completed") assert.equal(event.data, undefined);
     if (Object.hasOwn(ends, event.type) && event.type !== "session.completed") {
       assert.equal(Object.getPrototypeOf(event.data), Object.prototype);
       if (event.type !== "session.failed")
@@ -47,8 +48,11 @@ export function foldHelperSnapshot(
       if (event.type.endsWith(".failed"))
         assert.equal(typeof d.message, "string");
     }
-    if (event.type === "message.completed" && typeof d.message === "string")
-      text = d.message;
+    if (event.type === "message.completed") {
+      assert.equal(Object.getPrototypeOf(event.data), Object.prototype);
+      assert.ok(d.message === null || typeof d.message === "string");
+      if (typeof d.message === "string") text = d.message;
+    }
     if (event.type === "step.started" && typeof d.modelId === "string")
       started = d.modelId;
     if (event.type === "step.completed") {

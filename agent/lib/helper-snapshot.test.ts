@@ -233,3 +233,67 @@ test(`v7 K1: malformed consumed event fields reject the snapshot; seed ${seed}`,
   );
   assert.equal(foldHelperSnapshot([{ type: "session.completed" }]).ended, true);
 });
+
+test(`snapshot shape: session.completed rejects data; seed ${seed}`, async () => {
+  const { foldHelperSnapshot } = await import("./helper-snapshot.ts");
+  assert.throws(() =>
+    foldHelperSnapshot([{ type: "session.completed", data: 7 }]),
+  );
+  fc.assert(
+    fc.property(fc.jsonValue(), (data) => {
+      assert.throws(() =>
+        foldHelperSnapshot([{ type: "session.completed", data }]),
+      );
+    }),
+    { seed, numRuns: 500 },
+  );
+  assert.equal(
+    foldHelperSnapshot([{ type: "session.completed" }]).outcome,
+    "empty",
+  );
+});
+
+test(`snapshot shape: message.completed validates data and message; seed ${seed}`, async () => {
+  const { foldHelperSnapshot } = await import("./helper-snapshot.ts");
+  for (const data of [7, { message: 7 }])
+    assert.throws(() =>
+      foldHelperSnapshot([{ type: "message.completed", data }]),
+    );
+  const invalid = fc
+    .jsonValue()
+    .filter((value) => value !== null && typeof value !== "string");
+  fc.assert(
+    fc.property(invalid, (message) => {
+      assert.throws(() =>
+        foldHelperSnapshot([{ type: "message.completed", data: { message } }]),
+      );
+    }),
+    { seed, numRuns: 500 },
+  );
+  const invalidData = fc.oneof(
+    fc
+      .jsonValue()
+      .filter(
+        (data) =>
+          data === null || typeof data !== "object" || Array.isArray(data),
+      ),
+    fc.constant(undefined),
+    fc.constant({}),
+  );
+  fc.assert(
+    fc.property(invalidData, (data) => {
+      assert.throws(() =>
+        foldHelperSnapshot([{ type: "message.completed", data }]),
+      );
+    }),
+    { seed, numRuns: 500 },
+  );
+  assert.equal(
+    foldHelperSnapshot([
+      { type: "message.completed", data: { message: "saved" } },
+      { type: "message.completed", data: { message: null } },
+      { type: "session.completed" },
+    ]).text,
+    "saved",
+  );
+});

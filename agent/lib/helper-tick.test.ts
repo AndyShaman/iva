@@ -359,6 +359,28 @@ test("v7 K1: valid JSON with malformed turn.completed keeps run", async (t) => {
   assert.deepEqual(f.state.calls, ["stream"]);
 });
 
+for (const event of [
+  { type: "session.completed", data: 7 },
+  { type: "session.completed", data: "x" },
+  { type: "message.completed", data: 7 },
+  { type: "message.completed", data: { message: 7 } },
+])
+  test(`snapshot shape: ${JSON.stringify(event)} keeps run and occupied slot`, async (t) => {
+    const f = await setup(t),
+      a = await f.running(),
+      b = await f.add(),
+      before = await s.getHelper(a.id);
+    f.state.events = [
+      event,
+      { type: "turn.completed", data: { sequence: 1, turnId: "turn" } },
+    ];
+    await f.tick();
+    await f.flush();
+    assert.deepEqual(await s.getHelper(a.id), before);
+    assert.equal((await s.getHelper(b.id))?.run, null);
+    assert.deepEqual(f.state.calls, ["stream"]);
+  });
+
 for (const status of [401, 403, 429, 503])
   test(`v7 K2: empty HTTP ${status} is definitive only for 4xx`, async (t) => {
     const f = await setup(t),
