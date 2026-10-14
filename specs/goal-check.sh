@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exhaustive BFS, foreground, <=600 seconds for the entire suite. At most four workers.
+# Goal v3.5.1: exhaustive BFS, foreground, <=600 seconds. At most four workers.
 set -u
 cd "$(dirname "$0")" || exit 2
 . ./tlc-result.sh || exit 2
@@ -23,6 +23,8 @@ check() {
  duration=${TLC_TIMEOUT:-150}
  [ "$duration" -le "$remaining" ] || duration=$remaining
  echo "RUN $cfg expected=$expect workers=$WORKERS timeout=${duration}s"
+ mkdir -p "$META/$cfg.java" || return 2
+ JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Xmx2g} -Djava.io.tmpdir=$META/$cfg.java" \
  "$TIMEOUT" --foreground --kill-after=5s "${duration}s" "$TLC" -workers "$WORKERS" -deadlock \
    -lncheck final -metadir "$META/$cfg.states" -config "$cfg.cfg" GoalCheck.tla >"$log" 2>&1
  code=$?
@@ -47,38 +49,48 @@ check() {
    return 2
  fi
 }
-# Corrected design must be green before any negative configuration.
-check GoalCheck none || exit 2
-check GoalCheck-crashes none || exit 2
-check GoalCheck-owner none || exit 2
-check GoalCheck-failures none || exit 2
-check GoalCheck-failures-live none || exit 2
-check GoalCheck-limits none || exit 2
-check GoalCheck-live none || exit 2
-check GoalCheck-capacity none || exit 2
-check GoalCheck-day-cap none || exit 2
-check GoalCheck-history none || exit 2
-check GoalCheck-day none || exit 2
-check GoalCheck-capacity-reach NoFullTable || exit 2
-check GoalCheck-claim-rev OnlyOwnerActs || exit 2
-# Rejected designs are retained as counterexamples.
-check GoalCheck-fail-default OwnerNextKept || exit 2
-check GoalCheck-spec-file-race LastSavedMonotone || exit 2
-check GoalCheck-spec-weak-fair DueServed || exit 2
-check GoalCheck-norev CancelChangesNothing || exit 2
-check GoalCheck-noclosed ClosedMeansClosed || exit 2
-check GoalCheck-owner-time OwnerNextKept || exit 2
-check GoalCheck-doublecheck OneLiveCheck || exit 2
-check GoalCheck-split CheckReleased || exit 2
-check GoalCheck-pending-close CheckReleased || exit 2
-check GoalCheck-require-done ContentReportTold || exit 2
-check GoalCheck-quiet-empty FailureCount || exit 2
-check GoalCheck-content-failure FailureCount || exit 2
-check GoalCheck-sweep-unsaved NoSweepBeforeSaved || exit 2
-check GoalCheck-no-compare LastSavedMonotone || exit 2
-check GoalCheck-notice-untold OneUntoldPerGoal || exit 2
-check GoalCheck-edit-owes NoStaleNotice || exit 2
-check GoalCheck-close-untold ClosedMeansClosed || exit 2
-check GoalCheck-nonormalize DueServed || exit 2
+# A selected development run still goes through the same verdict/deadline checks.
+# With GOAL_CONFIGS unset, every green design precedes every negative witness.
+selected=${GOAL_CONFIGS:-all}
+while read -r cfg expect; do
+ [ -n "$cfg" ] || continue
+ case " $selected " in
+   ' all '|*" $cfg "*) check "$cfg" "$expect" || exit 2;;
+ esac
+done <<'CONFIGS'
+GoalCheck none
+GoalCheck-owner none
+GoalCheck-failures none
+GoalCheck-failures-live none
+GoalCheck-limits none
+GoalCheck-live none
+GoalCheck-capacity none
+GoalCheck-day none
+GoalCheck-zombie none
+GoalCheck-nodetach DetachedChangesNothing
+GoalCheck-noclosed RemovedMeansSilent
+GoalCheck-owner-time OwnerNextKept
+GoalCheck-fail-default OwnerNextKept
+GoalCheck-doublecheck OneLiveCheck
+GoalCheck-pending-close CheckReleased
+GoalCheck-require-done ContentTold
+GoalCheck-quiet-empty FailureCount
+GoalCheck-content-failure FailureCount
+GoalCheck-due-untold OneUntoldPerGoal
+GoalCheck-verdict-cas-goal VerdictOwnCheck
+GoalCheck-no-reserve OwnerPlace
+GoalCheck-link-stop StoreLinks
+GoalCheck-sweep-untold UntoldKept
+GoalCheck-claim-detached OneLiveCheck
+GoalCheck-nonormalize DueServed
+GoalCheck-spec-weak-fair DueServed
+GoalCheck-capacity-reach RowsBoundedReach
+CONFIGS
+[ "$ok" -gt 0 ] || { echo 'goal-check: no configuration selected'; exit 2; }
+if [ "$selected" != all ]; then
+ wanted=0
+ for cfg in $selected; do wanted=$((wanted+1)); done
+ [ "$ok" -eq "$wanted" ] || { echo 'goal-check: unknown or duplicate configuration'; exit 2; }
+fi
 printf 'goal-check: %s ok, %s failed; elapsed=%ss\n' "$ok" "$failed" "$(($(date +%s)-started))"
 [ "$failed" -eq 0 ]
