@@ -127,10 +127,16 @@ export function stopConfirmSeconds(
   return Math.max(1, Math.round(timeoutMs / 1000));
 }
 
-// Ход жив, пока запись держит ЕГО sessionId в статусе running. Любое другое
-// состояние — idle, чужая сессия, пропавшая запись — значит, отменять больше нечего.
-function turnStillRunning(status: StopStatus, sessionId: string): boolean {
-  return status?.status === "running" && status.sessionId === sessionId;
+function turnStillRunning(
+  status: StopStatus,
+  sessionId: string,
+  turnId: unknown,
+): boolean {
+  return (
+    status?.status === "running" &&
+    status.sessionId === sessionId &&
+    (typeof turnId !== "string" || !turnId || status.turnId === turnId)
+  );
 }
 
 // Отменять можно ровно тогда, когда запись помнит непустой sessionId: свежесть
@@ -171,6 +177,7 @@ export async function waitForTurnStop(
   chatKey: string,
   sessionId: string,
   {
+    turnId,
     getStatusImpl = getChatStatus,
     timeoutMs = STOP_CONFIRM_TIMEOUT_MS,
     pollMs = STOP_CONFIRM_POLL_MS,
@@ -178,6 +185,7 @@ export async function waitForTurnStop(
     sleepImpl = (ms: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, ms)),
   }: {
+    turnId?: unknown;
     getStatusImpl?: (chatKey: string) => StopStatus;
     timeoutMs?: number;
     pollMs?: number;
@@ -187,7 +195,8 @@ export async function waitForTurnStop(
 ): Promise<boolean> {
   const deadline = now() + Math.max(0, timeoutMs);
   for (;;) {
-    if (!turnStillRunning(getStatusImpl(chatKey), sessionId)) return true;
+    if (!turnStillRunning(getStatusImpl(chatKey), sessionId, turnId))
+      return true;
     const remaining = deadline - now();
     if (remaining <= 0) return false;
     // Спим не дольше дедлайна: иначе на коротком окне (тесты, конфиг) ждём лишний шаг.
@@ -387,14 +396,16 @@ export async function handleTelegramStopCallback(
 ): Promise<StopOutcome | "ignored"> {
   const chatKey = await stopTapChatKey(query, ackImpl, allowedImpl);
   if (chatKey === null) return "ignored";
+  const status = (cancelDeps.getStatusImpl ?? getChatStatus)(chatKey);
   const outcome = await requestTurnCancel(chatKey, {
     url: urlImpl(),
     secret,
     ...cancelDeps,
+    getStatusImpl: () => status,
   });
   await ackImpl(stopOutcomeText(replyOutcomeOf(outcome)));
   if (isPendingStopOutcome(outcome)) {
-    await notifyIfTurnNotStopped(chatKey, {
+    await notifyIfTurnNotStopped(chatKey, status, {
       getStatusImpl: cancelDeps.getStatusImpl,
       logImpl: cancelDeps.logImpl,
       notifyImpl,
@@ -409,6 +420,7 @@ export async function handleTelegramStopCallback(
 // мост, а в этом режиме его нет вовсе.
 async function notifyIfTurnNotStopped(
   chatKey: string,
+  status: StopStatus,
   {
     getStatusImpl = getChatStatus,
     logImpl = console.error,
@@ -419,9 +431,15 @@ async function notifyIfTurnNotStopped(
     readonly notifyImpl: (text: string) => Promise<unknown>;
   },
 ): Promise<void> {
-  const sessionId = cancellableSessionId(getStatusImpl(chatKey));
+  const sessionId = cancellableSessionId(status);
   if (sessionId === null) return;
-  if (await waitForTurnStop(chatKey, sessionId, { getStatusImpl, timeoutMs }))
+  if (
+    await waitForTurnStop(chatKey, sessionId, {
+      turnId: status?.turnId,
+      getStatusImpl,
+      timeoutMs,
+    })
+  )
     return;
   try {
     await notifyImpl(stopNotStoppedText(stopConfirmSeconds(timeoutMs)));

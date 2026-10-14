@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fc from "fast-check";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,65 @@ const query = {
   from: { id: 42 },
   message: { chat: { id: 7, type: "private" } },
 };
+
+test("cancelled-turn-replaced-by-next-turn-in-same-session confirms the captured turn", async () => {
+  const store = statusStore({
+    status: "running",
+    sessionId: "same-session",
+    turnId: "old-turn",
+  });
+  const cancelled: StopCancelRequest[] = [];
+  const { notices, deps } = tapDeps({
+    confirmTimeoutMs: 1,
+    getStatusImpl: store.read,
+    cancelImpl: async (request: StopCancelRequest) => {
+      cancelled.push(request);
+      store.set({
+        status: "running",
+        sessionId: "same-session",
+        turnId: "next-turn",
+      });
+      return { status: "accepted" };
+    },
+  });
+  assert.equal(await handleTelegramStopCallback(query, deps), "requested");
+  assert.equal(cancelled[0]?.turnId, "old-turn");
+  assert.deepEqual(notices, []);
+});
+
+test("stop confirmation keeps session and turn identity; legacy snapshots use the session (seed 101414)", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.string({ minLength: 1 }),
+      fc.string({ minLength: 1 }),
+      fc.boolean(),
+      fc.boolean(),
+      async (sessionId, turnId, sameSession, sameTurn) => {
+        const current = {
+          status: "running",
+          sessionId: sameSession ? sessionId : sessionId + "next",
+          turnId: sameTurn ? turnId : turnId + "next",
+        };
+        assert.equal(
+          await waitForTurnStop("fixture", sessionId, {
+            turnId,
+            getStatusImpl: () => current,
+            timeoutMs: 0,
+          }),
+          !(sameSession && sameTurn),
+        );
+        assert.equal(
+          await waitForTurnStop("fixture", sessionId, {
+            getStatusImpl: () => current,
+            timeoutMs: 0,
+          }),
+          !sameSession,
+        );
+      },
+    ),
+    { seed: 101414, numRuns: 100 },
+  );
+});
 
 // Запись хода под двойником: подтверждение — это изменение записи, а не ответ роута.
 function statusStore(initial: StopStatus = null) {

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- ⏹ **Стоп подтверждает остановку выбранного хода**: следующий ход в том же разговоре получает своё состояние; кнопка перезапуска от предыдущего хода сохраняет его идентификатор и оставляет следующий ход работать. Stop confirmation and restart buttons now track the selected turn within its session.
+
 - 🔧 **Сбой хода по расписанию сохраняет причину**: после отказа модели напоминание и Signal используют исходный текст, а Alert, Watch, Brief и Insight сохраняют провал вместо отправки промежуточной фразы. Scheduled turns preserve model failures instead of publishing intermediate replies.
 
 - 🔘 **Повтор старой кнопки остаётся повтором**: даже после сотен других нажатий та же кнопка в работающем Bridge получает «Уже выбрано» и сохраняет один ход. A previously chosen button stays deduplicated after hundreds of other taps in the same Bridge process.

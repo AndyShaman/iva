@@ -715,9 +715,12 @@ function silentRouteCancel(
 
 // Отпечаток тот же, что мост кладёт в data кнопки: так выглядит нажатие, пришедшее из
 // прошлой жизни моста — от кнопки остались только её байты да запись хода на диске.
-function previousLifeRestartData(sessionId: string): string {
+function previousLifeRestartData(
+  sessionId: string,
+  turnId?: string | null,
+): string {
   return `iva_stoprestart:${createHash("sha256")
-    .update(sessionId)
+    .update(turnId ? JSON.stringify([sessionId, turnId]) : sessionId)
     .digest("hex")
     .slice(0, 12)}`;
 }
@@ -1077,6 +1080,51 @@ test("a restart button tap after the turn is over never restarts", async () => {
   });
 });
 
+for (const entry of ["button", "command"] as const) {
+  test(`stop ${entry} observes the captured turn replaced during cancel`, async () => {
+    runningTurn({ sessionId: "same-session", turnId: "old-turn" });
+    const scheduler = recordingScheduler();
+    await withBotApi(botOk, async (calls) => {
+      const { deps } = restartDeps(scheduler);
+      assert.equal(
+        await handleControl(
+          entry === "button" ? stopButton() : textUpdate(91, "/stop"),
+          {
+            ...deps,
+            cancelImpl: async (request: CancelCall) => {
+              assert.equal(request.turnId, "old-turn");
+              runningTurn({ sessionId: "same-session", turnId: "next-turn" });
+              return { status: "accepted" };
+            },
+          },
+        ),
+        true,
+      );
+      await scheduler.run(scheduler.keys()[0]);
+      assert.equal(restartButtonMessage(calls), undefined);
+    });
+  });
+}
+
+test("a restart button for an older turn leaves the next turn in the same session running", async () => {
+  runningTurn({ sessionId: "same-session", turnId: "old-turn" });
+  const scheduler = recordingScheduler();
+  await withFakeSystemctl(0, async (argsLog) => {
+    await withBotApi(botOk, async (calls) => {
+      const { acks, resets, deps } = restartDeps(scheduler);
+      const data = await restartButtonOf(scheduler, calls, deps);
+      acks.length = 0;
+      runningTurn({ sessionId: "same-session", turnId: "next-turn" });
+      assert.equal(await handleControl(restartTap(92, data), deps), true);
+      assert.deepEqual(acks, [["cq-92", "Этот ход уже завершился."]]);
+      assert.equal(scheduler.keys().length, 0);
+      assert.deepEqual(resets, []);
+      assert.equal(systemctlCalls(argsLog), "");
+      assert.equal(status.getChatStatus("7:")?.turnId, "next-turn");
+    });
+  });
+});
+
 test("the restart button's reset removes the working status message", async () => {
   runningTurn({ sessionId: "session-working" });
   // «Работаю… ⏹» этого хода: после рестарта сообщение обязано исчезнуть — иначе в чате
@@ -1254,37 +1302,41 @@ test("a silent cancel route ends with one honest message and no restart", async 
   stopTurn("7:");
 });
 
-test("a restart button from a previous bridge life still restarts a live turn", async () => {
-  // Кнопку сняли до перезапуска моста: в памяти процесса о ней ничего нет — решение
-  // принимают отпечаток sessionId в callback_data и запись хода на диске.
-  runningTurn({ sessionId: "session-old-bridge" });
-  const scheduler = recordingScheduler();
-  await withFakeSystemctl(0, async (argsLog) => {
-    await withBotApi(botOk, async () => {
-      const { resets, replies, acks, deps } = restartDeps(scheduler);
+for (const turnId of ["turn-1", null])
+  test(`a restart button from a previous bridge life still restarts a live turn: ${turnId ?? "legacy"}`, async () => {
+    // Кнопку сняли до перезапуска моста: в памяти процесса о ней ничего нет — решение
+    // принимают отпечаток sessionId в callback_data и запись хода на диске.
+    runningTurn({ sessionId: "session-old-bridge", turnId });
+    const scheduler = recordingScheduler();
+    await withFakeSystemctl(0, async (argsLog) => {
+      await withBotApi(botOk, async () => {
+        const { resets, replies, acks, deps } = restartDeps(scheduler);
 
-      assert.equal(
-        await handleControl(
-          restartTap(90, previousLifeRestartData("session-old-bridge")),
-          deps,
-        ),
-        true,
-      );
-      await scheduler.run(scheduler.keys()[0]);
+        assert.equal(
+          await handleControl(
+            restartTap(
+              90,
+              previousLifeRestartData("session-old-bridge", turnId),
+            ),
+            deps,
+          ),
+          true,
+        );
+        await scheduler.run(scheduler.keys()[0]);
 
-      assert.deepEqual(acks, [["cq-90", "♻️ Перезапускаю Iva"]]);
-      assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
-      assert.deepEqual(resets, [
-        [
-          "7:",
-          { sessionId: "session-old-bridge" },
-          { clearQueue: true, discardThroughUpdateId: 90 },
-        ],
-      ]);
-      assert.deepEqual(replies, ["♻️ Iva перезапущена"]);
+        assert.deepEqual(acks, [["cq-90", "♻️ Перезапускаю Iva"]]);
+        assert.equal(systemctlCalls(argsLog), "--user restart iva.service\n");
+        assert.deepEqual(resets, [
+          [
+            "7:",
+            { sessionId: "session-old-bridge" },
+            { clearQueue: true, discardThroughUpdateId: 90 },
+          ],
+        ]);
+        assert.deepEqual(replies, ["♻️ Iva перезапущена"]);
+      });
     });
   });
-});
 
 test("a restart button on a record the reaper cleared never restarts", async () => {
   runningTurn({ sessionId: "session-reaped" });

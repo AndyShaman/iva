@@ -916,9 +916,13 @@ async function handleStopTap({ update, callback, io }: CallbackContext) {
   // Чужой тап в группе: гасим спиннер молча и ничего не отменяем.
   if (!isTrustedSender(callback.from))
     return telegramCallSucceeded(await io.ackImpl(callback.id));
-  const outcome = await requestTurnStop(update, { cancelImpl: io.cancelImpl });
+  const status = getChatStatus(chatKey(update) ?? "");
+  const outcome = await requestTurnStop(update, {
+    cancelImpl: io.cancelImpl,
+    getStatusImpl: () => status,
+  });
   // Ждать подтверждение цикл не будет: задача уходит фоном ещё до ответа на колбэк.
-  watchUnstoppedTurn(update, callbackChat(callback), outcome, io);
+  watchUnstoppedTurn(update, callbackChat(callback), outcome, io, status);
   const acknowledged = telegramCallSucceeded(
     await io.ackImpl(callback.id, stopOutcomeText(replyOutcomeOf(outcome))),
   );
@@ -931,47 +935,51 @@ async function handleStopTap({ update, callback, io }: CallbackContext) {
 // по записи run-status. Ждёт его фон, а не цикл моста: одна задача на зависший ход, поэтому
 // серия нажатий ⏹ ждёт ту же самую, а второй ход в том же чате — свою.
 //
-// Остановился ли ход, решает один и тот же вопрос: держит ли запись ЕГО sessionId в
-// статусе running. Ниже этого не знает никто — ни текст, ни кнопка.
 function watchUnstoppedTurn(
   update: TelegramUpdate,
   chat: TelegramMessage["chat"],
   outcome: StopOutcome,
   io: ControlIo,
+  status: ReturnType<typeof getChatStatus>,
 ): void {
   // idle и failed ждать нечего: там уже сказано, что отменять нечего.
   if (!isPendingStopOutcome(outcome)) return;
   const key = chatKey(update);
   const chatId = chat?.id;
   if (key === null || chatId === undefined) return;
-  const sessionId = cancellableSessionId(getChatStatus(key));
+  const sessionId = cancellableSessionId(status);
   if (sessionId === null) return;
-  io.scheduleImpl(`stop:${key}:${sessionId}`, () =>
-    watchStopOutcome({ chat, chatId, key, sessionId, io }),
+  const turnId = status?.turnId;
+  io.scheduleImpl(`stop:${key}:${stopRestartToken(sessionId, turnId)}`, () =>
+    watchStopOutcome({ chat, chatId, key, sessionId, turnId, io }),
   );
 }
 
-async function watchStopOutcome({
-  chat,
-  chatId,
-  key,
-  sessionId,
-  io,
-}: {
+async function watchStopOutcome(input: {
   chat: TelegramMessage["chat"];
   chatId: number;
   key: string;
   sessionId: string;
+  turnId: unknown;
   io: ControlIo;
 }): Promise<void> {
-  if (await waitForTurnStop(key, sessionId, { timeoutMs: io.confirmTimeoutMs }))
+  const { chatId, key, sessionId, turnId, io } = input;
+  if (
+    await waitForTurnStop(key, sessionId, {
+      turnId,
+      timeoutMs: io.confirmTimeoutMs,
+    })
+  )
     return;
-  const messageId = await sendStopNotStopped({ chat, chatId, sessionId, io });
+  const messageId = await sendStopNotStopped(input);
   if (messageId === null) return;
-  // Подтверждение может прийти и после сообщения: тогда его надо переписать, иначе в чате
-  // останется кнопка рестарта по уже законченному ходу. Смотрим не дольше, чем живёт
-  // запись: после жнеца искать уже нечего.
-  if (await waitForTurnStop(key, sessionId, { timeoutMs: io.watchTimeoutMs }))
+  // Позднее подтверждение снимает кнопку рестарта с завершившегося хода.
+  if (
+    await waitForTurnStop(key, sessionId, {
+      turnId,
+      timeoutMs: io.watchTimeoutMs,
+    })
+  )
     await editStopMessage(chatId, messageId, stoppedText());
 }
 
@@ -983,11 +991,13 @@ async function sendStopNotStopped({
   chat,
   chatId,
   sessionId,
+  turnId,
   io,
 }: {
   chat: TelegramMessage["chat"];
   chatId: number;
   sessionId: string;
+  turnId: unknown;
   io: ControlIo;
 }): Promise<number | null> {
   // Число в тексте — то же окно, которое фон только что отработал.
@@ -1008,7 +1018,7 @@ async function sendStopNotStopped({
         [
           {
             text: stopRestartButtonText(),
-            callback_data: stopRestartCallbackData(sessionId),
+            callback_data: stopRestartCallbackData(sessionId, turnId),
             style: "danger",
           },
         ],
@@ -1059,17 +1069,20 @@ const deleteStopMessage = (
   });
 
 // Кнопка «Перезапустить Iva». Префикс — свой, в пространстве iva_*: мост забирает такой
-// колбэк себе и не отдаёт его eve. В data — только отпечаток sessionId: лимит 64 байта не
-// вмещает сам идентификатор, а сравнение отпечатков отвечает на тот же вопрос — тот ли это ход.
+// колбэк себе и не отдаёт его eve. Отпечаток пары sessionId/turnId укладывается в 64 байта.
 const STOP_RESTART_CALLBACK = "iva_stoprestart:";
 const STOP_RESTART_TOKEN_PATTERN = /^[0-9a-f]{12}$/u;
 
-function stopRestartToken(sessionId: string): string {
-  return createHash("sha256").update(sessionId).digest("hex").slice(0, 12);
+function stopRestartToken(sessionId: string, turnId?: unknown): string {
+  const target =
+    typeof turnId === "string" && turnId
+      ? JSON.stringify([sessionId, turnId])
+      : sessionId;
+  return createHash("sha256").update(target).digest("hex").slice(0, 12);
 }
 
-function stopRestartCallbackData(sessionId: string): string {
-  return `${STOP_RESTART_CALLBACK}${stopRestartToken(sessionId)}`;
+function stopRestartCallbackData(sessionId: string, turnId: unknown): string {
+  return `${STOP_RESTART_CALLBACK}${stopRestartToken(sessionId, turnId)}`;
 }
 
 function parseStopRestartToken(data: string): string | null {
@@ -1115,7 +1128,7 @@ function stopTurnStillWaiting(key: string, token: string): boolean {
   return (
     status?.status === "running" &&
     sessionId !== null &&
-    stopRestartToken(sessionId) === token
+    stopRestartToken(sessionId, status?.turnId) === token
   );
 }
 
@@ -1569,9 +1582,13 @@ async function openMenu({ chatId, from }: ControlCommand) {
 // Out-of-band so it reaches a busy agent (an ordinary message would be queued by
 // the gate below and never processed).
 async function stopCommand({ update, io, chatId, msg }: ControlCommand) {
-  const outcome = await requestTurnStop(update, { cancelImpl: io.cancelImpl });
+  const status = getChatStatus(chatKey(update) ?? "");
+  const outcome = await requestTurnStop(update, {
+    cancelImpl: io.cancelImpl,
+    getStatusImpl: () => status,
+  });
   // Ждать подтверждение цикл не будет: о неостановленном ходе скажет фон.
-  watchUnstoppedTurn(update, msg.chat, outcome, io);
+  watchUnstoppedTurn(update, msg.chat, outcome, io, status);
   // Успех виден по статус-сообщению: turn.cancelled перепишет его на «Остановлено».
   if (isPendingStopOutcome(outcome)) return true;
   return replyConfirmed(io, chatId, stopOutcomeText(replyOutcomeOf(outcome)));
