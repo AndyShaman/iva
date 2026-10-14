@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { once } from "node:events";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { stat } from "node:fs/promises";
@@ -219,16 +220,18 @@ export default defineTool({
         workerData: { pattern, flags: flags ?? "", matchTimeMs: MATCH_TIME_MS },
       });
       worker.on("error", () => {});
-      return await findMatches(
-        root,
-        worker,
-        glob ? globToRegExp(glob) : null,
-        bound,
-      );
+      return await Promise.race([
+        findMatches(root, worker, glob ? globToRegExp(glob) : null, bound),
+        once(worker, "exit", { signal: abortSignal }).then(() => {
+          throw new Error("поток поиска завершился");
+        }),
+      ]);
     } catch (error) {
       return {
         ...result([], false, bound),
-        error: error instanceof Error ? error.message : String(error),
+        error: abortSignal?.aborted
+          ? "поиск отменён"
+          : String(error instanceof Error ? error.message : error),
       };
     } finally {
       await worker?.terminate();

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,89 @@ import { Worker } from "node:worker_threads";
 import test from "node:test";
 import type { ToolContext } from "eve/tools";
 const { default: grep } = await import("../agent/tools/grep.ts");
+
+await test("grep cancellation returns and terminates the worker while a writerless FIFO stays open", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-grep-fifo-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "input.txt");
+  const fifo = join(dir, "fifo");
+  writeFileSync(path, "fixture");
+  execFileSync("mkfifo", [fifo]);
+  let stream: fs.ReadStream | undefined;
+  let readStarted = () => {};
+  const reading = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  const originalRead = fs.createReadStream;
+  t.mock.method(
+    fs,
+    "createReadStream",
+    (...args: Parameters<typeof fs.createReadStream>) => {
+      if (args[0] !== path) return originalRead(...args);
+      stream = originalRead(fifo, args[1]);
+      readStarted();
+      return stream;
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const originalTerminate: unknown = Reflect.get(Worker.prototype, "terminate");
+  assert.ok(typeof originalTerminate === "function");
+  let terminated = false;
+  t.mock.method(Worker.prototype, "terminate", async function (this: Worker) {
+    const code: unknown = await Reflect.apply(originalTerminate, this, []);
+    terminated = true;
+    return code;
+  });
+  const controller = new AbortController();
+  let settled = false;
+  const work = Promise.resolve(
+    grep.execute({ path, pattern: "fixture" }, {
+      abortSignal: controller.signal,
+    } as ToolContext),
+  ).then((answer) => {
+    settled = true;
+    return answer;
+  });
+  try {
+    await reading;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(
+      settled,
+      true,
+      "reply must arrive while FIFO open still waits for a writer",
+    );
+    assert.equal(
+      terminated,
+      true,
+      "the search worker has exited before the reply",
+    );
+    assert.equal(
+      stream?.closed,
+      false,
+      "cancellation is independent of filesystem close",
+    );
+    assert.equal(((await work) as { error?: string }).error, "поиск отменён");
+  } finally {
+    // Only teardown opens a writer, after the observations, to release the OS open request.
+    const unblock = fs.openSync(
+      fifo,
+      fs.constants.O_RDWR | fs.constants.O_NONBLOCK,
+    );
+    try {
+      await work;
+      if (stream && !stream.closed)
+        await new Promise<void>((resolve) => stream!.once("close", resolve));
+    } finally {
+      fs.closeSync(unblock);
+    }
+  }
+});
 
 await test("grep abort closes an unfinished line and its worker before more input arrives", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "iva-grep-held-line-"));
