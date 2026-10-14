@@ -71,6 +71,21 @@ function stub(replies: Replies = {}) {
   return { sent, transport };
 }
 
+await test("HTML transport receives intact link addresses from Markdown", async () => {
+  const { sent, transport } = stub();
+  const result = await sendThroughOutbox(
+    "_до_ [название](https://ru.wikipedia.org/wiki/Крауч,_Блейк), [сюжет](https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)). *после*",
+    transport,
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent, [
+    {
+      kind: "html",
+      text: '<i>до</i> <a href="https://ru.wikipedia.org/wiki/Крауч,_Блейк">название</a>, <a href="https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)">сюжет</a>. <i>после</i>',
+    },
+  ]);
+});
+
 // Гейт логирует находки в console.error — ловим лог, не подменяя поведение доставки.
 function captureErrors(t: { after: (fn: () => void) => void }): string[] {
   const lines: string[] = [];

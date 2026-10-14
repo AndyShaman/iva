@@ -23,6 +23,29 @@ import {
 const SEED = 20_260_818;
 const RUNS = 500;
 
+await test("link URLs preserve Markdown punctuation and balanced parentheses (seed 2881014)", () => {
+  const piece = fc.string({
+    unit: fc.constantFrom(..."abc_*,~"),
+    maxLength: 16,
+  });
+  const segment = fc.oneof(
+    piece,
+    piece.map((text) => `(${text})`),
+    piece.map((text) => `((a)${text})`),
+  );
+  fc.assert(
+    fc.property(fc.array(segment, { minLength: 1, maxLength: 8 }), (parts) => {
+      const url = `https://x.test/a_${parts.join("")}_*~~`;
+      const markdown = `_до_ [**ссылка**](${url}) [вторая](${url}) *после*`;
+      assert.equal(
+        mdToTelegramHtml(markdown),
+        `<i>до</i> <a href="${url}"><b>ссылка</b></a> <a href="${url}">вторая</a> <i>после</i>`,
+      );
+    }),
+    { seed: 2881014, numRuns: RUNS },
+  );
+});
+
 // Алфавит прозы: буквы, цифры и пробелы пачками по 1–4 — ровно то, из чего
 // складывалась прежняя метка. Управляющих символов разметки в нём нет, поэтому строка
 // гарантированно идёт по ветке обычной строки в convert(): ни фенсом, ни таблицей, ни

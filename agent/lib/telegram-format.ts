@@ -65,10 +65,30 @@ function inlineHtml(text: unknown): string {
   // пробегает хвост на каждой позиции и вешает однопоточный мост (200k знаков - 41 с).
   // Подпись длиннее 200 знаков и URL длиннее 2048 в сообщение Telegram не поместятся,
   // так что отсечение живого текста не теряет.
-  s = s.replace(
-    /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)\n]{1,2048})\)/g,
-    (_m, t, u) => `<a href="${escAttr(u)}">${t}</a>`,
-  );
+  const link = /\[([^\]\n]{1,200})\]\((https?:\/\/)/g;
+  let linked = "",
+    cursor = 0,
+    match;
+  while ((match = link.exec(s))) {
+    let end = link.lastIndex,
+      depth = 0;
+    for (; end < s.length && end < link.lastIndex + 2048; end++) {
+      const char = s[end];
+      if (/\s/.test(char) || (char === ")" && depth === 0)) break;
+      if (char === "(") depth++;
+      if (char === ")") depth--;
+    }
+    if (end === link.lastIndex || s[end] !== ")" || depth !== 0) continue;
+    // Открывающий тег хранится в spans, подпись проходит правила разметки.
+    spans.push(
+      `<a href="${escAttr(match[2] + s.slice(link.lastIndex, end))}">`,
+    );
+    linked +=
+      s.slice(cursor, match.index) +
+      `\uE000${spans.length - 1}\uE001${match[1]}</a>`;
+    cursor = link.lastIndex = end + 1;
+  }
+  s = linked + s.slice(cursor);
   // bold
   s = s
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
@@ -84,7 +104,7 @@ function inlineHtml(text: unknown): string {
   s = s
     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<i>$1</i>")
     .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
-  // restore inline code
+  // restore protected spans
   return s.replace(/\uE000(\d+)\uE001/g, (_m, i) => spans[Number(i)] ?? "");
 }
 

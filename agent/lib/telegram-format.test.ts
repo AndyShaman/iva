@@ -40,6 +40,35 @@ await test("markdown conversion retains current Telegram HTML fixtures", () => {
   );
 });
 
+await test("Wikipedia links retain underscores and balanced parentheses", () => {
+  assert.equal(
+    mdToTelegramHtml(
+      "Источники: [название](https://ru.wikipedia.org/wiki/Крауч,_Блейк), [сюжет](https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)).",
+    ),
+    'Источники: <a href="https://ru.wikipedia.org/wiki/Крауч,_Блейк">название</a>, <a href="https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)">сюжет</a>.',
+  );
+  assert.equal(
+    mdToTelegramHtml(
+      "_до_ [**имя** `код`](https://x.test/a_(b_(c))_*_~~) *после*",
+    ),
+    '<i>до</i> <a href="https://x.test/a_(b_(c))_*_~~"><b>имя</b> <code>код</code></a> <i>после</i>',
+  );
+});
+
+await test("link parsing retains its label and URL work bounds", () => {
+  const url = `https://${"a".repeat(2048)}`;
+  assert.equal(mdToTelegramHtml(`[x](${url})`), `<a href="${url}">x</a>`);
+  for (const markdown of [
+    `[x](${url}a)`,
+    `[${"x".repeat(201)}](https://x.test)`,
+    "[x](https://x.test/(open)",
+    `[x](https://${"(".repeat(100_000)})`,
+    "[".repeat(100_000),
+  ]) {
+    assert.equal(mdToTelegramHtml(markdown), markdown);
+  }
+});
+
 await test("prose that looks like a code placeholder survives intact", () => {
   // Regression: the inline-code placeholder used to be "two spaces, index, two
   // spaces", so ordinary prose with the same shape reached the chat mangled —
