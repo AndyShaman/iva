@@ -17,6 +17,9 @@ tasks (step 1), nothing from mail, calendar, personal Telegram or Connections.
 Load `watch` and follow its shared procedure for each substantial item; apply
 it only to the sources allowed here.
 
+For changes, cover the time since the previous Brief, whose time is in the prompt
+(`прошлый Brief`). Without that line, find the previous overview in the daily file.
+
 Walk everything the owner has connected, with your own tools, read only:
 
 1. Tasks: load `task-management`, call `tasks` with `action="list"`. Overdue and due
@@ -50,6 +53,9 @@ existing overview or action message.
 - The first message is the overview: greeting in one line, the day in 5–7 points,
   one sentence with the focus of the day. Too many tasks — the important ones and
   how many more there are.
+- An item already reported in a previous Brief (read its answer in the daily file)
+  that still waits for the owner gets one line in the overview with the day of waiting. Leave
+  completed items out; keep the earlier item's full text in the daily file.
 - After it, one message per item that needs an action from the owner (an answer, a
   decision, a payment), each with its next step and buttons (see `rich-replies`).
   Such a message ends with an empty line and one question line the buttons
@@ -72,13 +78,21 @@ existing overview or action message.
   dispatcher, no counts of what fired, no ids, codes or service names, no table
   for a list of things.
 - The morning Brief (slot 0) always has an answer. A later Brief may return exactly
-  `QUIET` when nothing changed since the morning that is worth a message.
+  `QUIET` when nothing changed since the previous Brief that is worth a message.
+- If mail, Telegram, calendar, tasks or a Connection could not be read, end the
+  Brief with one plain line naming the unread sources, for example «Почту прочитать
+  не удалось». Treat that source as unknown; silence gives no evidence of an empty
+  inbox. A failed read requires this line in a later Brief too. Keep error codes
+  in your own reading.
 
 Never send anything yourself in a scheduled turn: no Telegram tools, no `iva post`,
 no mail. Code sends your final text to the owner's private chat. Never write to
 anyone on the owner's behalf.
 
 ## Bad → Good
+
+Bad: repeat yesterday's whole item about Maxim and the estimate.
+Good: «Максим ждёт ответа, 3-й день». A completed item leaves the overview.
 
 Bad (real lines of a reminders list in the chat, 06.10.2026 — a Brief must not
 read like this): «Активных пять, диспетчер работает ✅», a table «Когда · Что ·

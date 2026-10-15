@@ -153,6 +153,125 @@ function staleSeen(...items: WatchItem[]): Partial<ProactiveState> {
   };
 }
 
+test("Watch rechecks unread items after the turn, drops read parts and keeps their claim", async () => {
+  const h = harness();
+  const mail = { key: "mail:m1", unread: 1, from: {} };
+  writeState(h, staleSeen(chat(1, 1), chat(2, 1), mail));
+  h.tg = { items: [chat(1, 1), chat(2, 1)], error: null };
+  h.mail = { items: [mail], error: null };
+  Object.assign(h.deps, {
+    runTurn: (prompt: string) => {
+      assert.match(prompt, /<!-- iva:item <key> -->/u);
+      h.tg = { items: [chat(2, 1)], error: null };
+      h.mail = { items: [{ ...mail, unread: 0 }], error: null };
+      return Promise.resolve(
+        turn(
+          "<!-- iva:item tg:1 -->\nПрочитанный чат.\n<!-- iva:next -->\n" +
+            "<!-- iva:item mail:m1 -->\nПрочитанное письмо.\n<!-- iva:next -->\n" +
+            "<!-- iva:item tg:2 -->\nВторой чат ждёт.",
+        ),
+      );
+    },
+  });
+  assert.equal(await runProactiveTick(NOON, h.deps), 0);
+  assert.deepEqual(h.sent, ["Второй чат ждёт."]);
+  assert.equal(
+    h.checks,
+    4,
+    "each candidate source checked before and after the turn",
+  );
+  assert.equal(readState(h).seen["tg:1"]?.reported, true);
+  assert.equal(readState(h).seen["mail:m1"]?.reported, true);
+  assert.ok(
+    h.logs.some((line) => line.includes("tg:1") && line.includes("read")),
+  );
+  assert.ok(
+    h.logs.some((line) => line.includes("mail:m1") && line.includes("read")),
+  );
+  assert.equal(await runProactiveTick(NOON + HOUR, h.deps), 0);
+  assert.deepEqual(h.sent, ["Второй чат ждёт."], "no repeated notice");
+});
+
+test("Watch sends the part when the recheck returns an error or throws", async () => {
+  for (const throws of [false, true]) {
+    const h = harness();
+    let checks = 0;
+    Object.assign(h.deps, {
+      sources: [
+        {
+          name: "telegram",
+          prefix: "tg:",
+          check: () => {
+            checks++;
+            if (checks === 1)
+              return Promise.resolve({ items: [chat(1, 1)], error: null });
+            if (throws) throw new Error("offline");
+            return Promise.resolve({ items: [], error: "offline" });
+          },
+        },
+      ],
+    });
+    writeState(h, staleSeen(chat(1, 1)));
+    h.reply = turn("<!-- iva:item tg:1 -->\nИван ждёт ответа.");
+    assert.equal(await runProactiveTick(NOON, h.deps), 0);
+    assert.deepEqual(h.sent, ["Иван ждёт ответа."]);
+    assert.equal(checks, 2);
+    assert.ok(h.logs.some((line) => line.includes("offline")));
+  }
+});
+
+test("Watch keeps unmarked, unknown and check parts, strips markers and still tells every failure", async () => {
+  const h = harness();
+  const failure: WatchItem = {
+    key: "failure:backup.service",
+    unread: 1,
+    from: {},
+    note: "backup failed",
+    failure: { essence: "1", at: NOON },
+  };
+  let failureChecks = 0;
+  Object.assign(h.deps, {
+    sources: [
+      ...h.deps.sources,
+      {
+        name: "timers",
+        prefix: "failure:",
+        always: true,
+        check: () => {
+          failureChecks++;
+          return Promise.resolve({ items: [failure], error: null });
+        },
+      },
+    ],
+    runTurn: () => {
+      h.tg = { items: [], error: null };
+      return Promise.resolve(
+        turn(
+          "<!-- iva:item tg:1 -->\nbackup failed\n<!-- iva:next -->\n" +
+            "Без метки.\n<!-- iva:next -->\n<!-- iva:item tg:999 -->\nЧужой ключ.\n<!-- iva:next -->\n" +
+            "<!-- iva:item check:mail -->\nПочта недоступна.",
+        ),
+      );
+    },
+  });
+  h.tg = { items: [chat(1, 1)], error: null };
+  writeState(h, staleSeen(chat(1, 1)));
+  assert.equal(await runProactiveTick(NOON, h.deps), 0);
+  assert.deepEqual(h.sent, [
+    "Без метки.",
+    "Чужой ключ.",
+    "Почта недоступна.",
+    "backup failed",
+  ]);
+  assert.equal(
+    h.checks,
+    3,
+    "mail has no candidates and gets only the initial check",
+  );
+  assert.equal(failureChecks, 1, "failures are never rechecked");
+  assert.equal(readState(h).seen[failure.key]?.reported, true);
+});
+
 test("first run: everything already unread counts as reported, the model is not woken", async () => {
   const h = harness();
   h.tg = { items: [chat(1, 3), chat(2, 1)], error: null };
