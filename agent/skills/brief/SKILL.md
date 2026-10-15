@@ -18,7 +18,7 @@ Load `watch` and follow its shared procedure for each substantial item; apply
 it only to the sources allowed here.
 
 For changes, cover the time since the previous Brief, whose time is in the prompt
-(`прошлый Brief`). Without that line, find the previous overview in the daily file.
+(`Previous Brief`). Without that line, find the previous overview in the daily file.
 
 Walk everything the owner has connected, with your own tools, read only:
 
@@ -55,7 +55,7 @@ existing overview or action message.
   how many more there are.
 - An item already reported in a previous Brief (read its answer in the daily file)
   that still waits for the owner gets one line in the overview with the day of waiting. Leave
-  completed items out; keep the earlier item's full text in the daily file.
+  completed items out; do not repeat the earlier item in full.
 - After it, one message per item that needs an action from the owner (an answer, a
   decision, a payment), each with its next step and buttons (see `rich-replies`).
   Such a message ends with an empty line and one question line the buttons
@@ -82,8 +82,7 @@ existing overview or action message.
 - If mail, Telegram, calendar, tasks or a Connection could not be read, end the
   Brief with one plain line naming the unread sources, for example «Почту прочитать
   не удалось». Treat that source as unknown; silence gives no evidence of an empty
-  inbox. A failed read requires this line in a later Brief too. Keep error codes
-  in your own reading.
+  inbox. Keep error codes in your own reading.
 
 Never send anything yourself in a scheduled turn: no Telegram tools, no `iva post`,
 no mail. Code sends your final text to the owner's private chat. Never write to

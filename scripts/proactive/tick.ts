@@ -319,6 +319,7 @@ async function unreadParts(
   candidates: readonly Candidate[],
   log: (line: string) => void,
 ): Promise<string[]> {
+  if (!parts.some((part) => part.search(ITEM_MARKER) !== -1)) return [...parts];
   const read = new Set<string>();
   for (const source of deps.sources) {
     if (source.prefix !== "tg:" && source.prefix !== "mail:") continue;
@@ -605,7 +606,7 @@ async function brief(
   const previous =
     previousTime === undefined
       ? ""
-      : `\nпрошлый Brief: ${slot === 0 ? "вчера" : "сегодня"} ${previousTime}\n`;
+      : `\nPrevious Brief: ${slot === 0 ? "yesterday" : "today"} ${previousTime}.\n`;
   const claimed = {
     ...state,
     briefDone: {

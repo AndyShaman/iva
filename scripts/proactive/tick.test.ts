@@ -153,6 +153,20 @@ function staleSeen(...items: WatchItem[]): Partial<ProactiveState> {
   };
 }
 
+test("Watch skips the recheck for QUIET, empty replies and parts without item markers", async () => {
+  for (const reply of ["QUIET", "", "<!-- iva:next -->", "Иван ждёт ответа."]) {
+    const h = harness();
+    Object.assign(h.deps, { sources: h.deps.sources.slice(0, 1) });
+    h.tg = { items: [chat(1, 1)], error: null };
+    h.reply = turn(reply);
+    writeState(h, staleSeen(chat(1, 1)));
+    assert.equal(await runProactiveTick(NOON, h.deps), 0);
+    assert.equal(h.prompts.length, 1);
+    assert.equal(h.checks, 1, "only the initial source check");
+    assert.deepEqual(h.sent, reply === "Иван ждёт ответа." ? [reply] : []);
+  }
+});
+
 test("Watch rechecks unread items after the turn, drops read parts and keeps their claim", async () => {
   const h = harness();
   const mail = { key: "mail:m1", unread: 1, from: {} };

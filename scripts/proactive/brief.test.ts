@@ -128,7 +128,7 @@ test("08:30 in the owner's zone: the morning Brief, QUIET forbidden, parts go ou
   assert.match(h.prompts[0] ?? "", /^Brief: slot 0 .*Follow the brief skill/u);
   assert.match(h.prompts[0] ?? "", /QUIET is not allowed/u);
   assert.match(h.prompts[0] ?? "", /written in Russian/u);
-  assert.match(h.prompts[0] ?? "", /^прошлый Brief: вчера 14:00$/mu);
+  assert.match(h.prompts[0] ?? "", /^Previous Brief: yesterday 14:00\.$/mu);
   assert.deepEqual(h.sent, [
     { part: "Обзор дня.", source: "brief" },
     { part: "Ответь Ивану до 12:00.", source: "brief" },
@@ -186,7 +186,7 @@ test("14:00: QUIET allowed and sends nothing; a text goes out", async () => {
   assert.equal(await runProactiveTick(at(14), h.deps), 0);
   assert.match(h.prompts[0] ?? "", /^Brief: slot 1 /u);
   assert.match(h.prompts[0] ?? "", /Return QUIET if there is nothing/u);
-  assert.match(h.prompts[0] ?? "", /^прошлый Brief: сегодня 08:30$/mu);
+  assert.match(h.prompts[0] ?? "", /^Previous Brief: today 08:30\.$/mu);
   assert.deepEqual(h.sent, []);
   assert.deepEqual(readState(h).briefDone, { day: DAY, slots: [0, 1] });
 
@@ -204,7 +204,10 @@ test("Brief uses configured previous slots and falls back to daily when no earli
   morning.config = { ...PROACTIVE_DEFAULTS, briefTimes: ["09:00", "17:30"] };
   await seed(morning);
   await runProactiveTick(at(9), morning.deps);
-  assert.match(briefPrompts(morning)[0] ?? "", /прошлый Brief: вчера 17:30/u);
+  assert.match(
+    briefPrompts(morning)[0] ?? "",
+    /^Previous Brief: yesterday 17:30\.$/mu,
+  );
 
   const later = harness();
   later.config = {
@@ -213,12 +216,15 @@ test("Brief uses configured previous slots and falls back to daily when no earli
   };
   await seed(later, { briefDone: { day: DAY, slots: [0] } });
   await runProactiveTick(at(17, 30), later.deps);
-  assert.match(briefPrompts(later)[0] ?? "", /прошлый Brief: сегодня 09:00/u);
+  assert.match(
+    briefPrompts(later)[0] ?? "",
+    /^Previous Brief: today 09:00\.$/mu,
+  );
 
   const missing = harness();
   await seed(missing, { briefDone: { day: "2026-10-04", slots: [0] } });
   await runProactiveTick(at(14), missing.deps);
-  assert.doesNotMatch(briefPrompts(missing)[0] ?? "", /прошлый Brief:/u);
+  assert.doesNotMatch(briefPrompts(missing)[0] ?? "", /Previous Brief:/u);
 });
 
 test("briefDone claim: two runs of one slot give one Brief; the next day the slot is new again", async () => {
