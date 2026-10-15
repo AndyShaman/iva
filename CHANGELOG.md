@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-10-15
 
 - 🔗 **Ссылки со спецсимволами открываются целиком**: подчёркивания, звёздочки, тильды и парные скобки в адресе сохраняются при оформлении ответа в Telegram. Telegram formatting preserves link addresses containing underscores, asterisks, tildes and balanced parentheses.
 - 📋 **Номер удалённой задачи остаётся за ней**: новые дела получают свои номера; при попытке изменить или завершить удалённую задачу Ива сообщает об удалении. New tasks receive fresh identifiers, and attempts to change or complete a deleted task report its removal.
@@ -9,44 +9,31 @@
 - 🔘 **Вопрос с кнопками выдерживает долгую отправку**: вопрос сохраняет связь с ответом и при отправке дольше пяти секунд. У вопроса на пределе длины Telegram Ива сокращает показанный текст и статус, сохраняет выбор и убирает кнопки. Button questions stay linked to answers when sending takes over five seconds; oversized question and status text is shortened to clear the buttons while preserving the accepted choice.
 - 🔎 **Ива готовит следующий шаг по вашим делам**: в присмотре, обзоре и предложениях новых инструментов Ива сверяет актуальные цели и прежние отказы, называет источник и повод написать сейчас. Она готовит черновик ответа или проверенные варианты действий. Отказ относится к одному предложению; правило на всю тему требует вашего подтверждения. Watch, Brief and Insight check current goals and prior declines, cite the source and why it matters now, and prepare reply drafts or checked next steps; a topic-wide rule requires your confirmation.
 - 🔧 **DeepSeek продолжает работу после вызова инструмента**: в режиме размышления на Ollama Cloud и OpenCode Go модель получает своё рассуждение вместе с результатом инструмента и продолжает ответ. Thinking-mode DeepSeek on Ollama Cloud and OpenCode Go receives its reasoning with tool results, allowing the turn to continue.
-
 - 🔧 **Обычный текст доходит до модели один раз**: входной пайплайн добавляет копию текста только при изменении гейтом или предупреждении; голос, подписи, описания картинок и метки пересылки сохраняются. Telegram text reaches the model once when the gate leaves it unchanged; gate annotations and assembled media context are preserved.
 - 🔧 **В дневном файле остаются ответы владельцу**: служебные ответы CLI и HTTP пропускаются; ответы в Telegram, напоминания, Watch, Brief и другие видимые фоновые ответы сохраняются. Daily transcripts skip CLI and HTTP service replies while keeping Telegram and visible background replies.
 - 🔧 **Проверка ночи читает факты запуска**: скилл фоновой проверки читает раздел Schedules пакета `iva diagnose`, где видны результат ночи и её незакрытый провал. Background checks read nightly Job facts from the existing diagnose package.
-
 - 🔧 **Semantic merge использует настроенный путь данных**: скилл восстановления берёт `customRoot` из машинного статуса и пишет правку туда, откуда resolver читает сторону `edited`. Recovery writes semantic merges under the resolved custom root, including paths with spaces.
-
 - 🔧 **Восстановление подсказывает шаг для своей установки**: машинный ответ после разрешения конфликта ведёт к процедуре `update-recovery`, которая различает установленную Version и developer checkout. Successful conflict resolution points to the installation's existing activation procedure.
-
 - 🔧 **Кавычки сохраняют данные команд**: защита bash пропускает сообщения `git commit -m`, конвейеры `journalctl | sed | grep` с `at/batch` в строке и справку `"iva" restart --help`; исполняемые таймеры и перезапуск продолжают проверяться. Shell guards preserve quoted command data and recognize the quoted Iva help command.
 - 🎯 **Goal следит до результата**: помощник проверяет ответ или изменение по расписанию, ведёт план и действует в названных границах; Ива приносит результат или вопрос, а закрывает goal владелец. Scheduled helper checks follow a goal until the owner's closure.
 - 💬 **Ответ появляется в черновике**: в личном чате Ива показывает текст по мере написания и текущий инструмент; нативная кнопка ■ останавливает выбранный ход. Во время работы виден индикатор «печатает», итог приходит отдельным ответом. Private chats stream a draft with the current tool and native stop control; the final reply arrives separately.
-
 - 🔧 **Стоп относится к выбранному ходу**: Ива сверяет идентификаторы разговора, хода и черновика перед отменой; запоздалое событие предыдущего черновика оставляет следующий ход работать. Stop requests preserve the draft, session and turn identity.
-
 - 🔧 **Сбой хода по расписанию сохраняет причину**: после отказа модели напоминание и Signal используют исходный текст, а Alert, Watch, Brief и Insight сохраняют провал вместо отправки промежуточной фразы. Scheduled turns preserve model failures instead of publishing intermediate replies.
-
 - 🔘 **Повтор старой кнопки остаётся повтором**: даже после сотен других нажатий та же кнопка в работающем Bridge получает «Уже выбрано» и сохраняет один ход. A previously chosen button stays deduplicated after hundreds of other taps in the same Bridge process.
-
 - 🔧 **Google CLI обновляется проверенным архивом**: обновлятор использует ту же закреплённую версию и проверку SHA-256, что установщик; подключённый аккаунт сохраняется. Updates install Google CLI through the installer’s pinned archive and checksum verification.
-
 - 🐚 **Защита команд отвечает и на странные имена**: имена `constructor`, `toString` и `__proto__` проходят обычную проверку и больше вызывают понятный отказ вместо ошибки хода. Shell guards return a decision for prototype names instead of treating them as approved commands or throwing.
-
 - 🔎 **Сложное выражение поиска можно остановить**: поиск выполняет выражение в отдельном потоке; слишком тяжёлое просит упростить, отмена хода прекращает поиск. Hostile search expressions time out in a worker while the main event loop stays responsive.
-
 - 🛡 **Файл со значением секрета остаётся на сервере**: перед отправкой Ива проверяет байты файла по описи секретов установки, включая двоичные файлы; отказ называет ключ, а настройки протокола, адреса и обычные документы сохраняются. File checks use the shared credential inventory, preserving ordinary settings and document bytes.
-
 - 🛡 **Секреты установки скрываются и без подписи**: ключи и токены в ответе, блоке кода или таблице распознаются по значению тем же правилом, что в пакете диагностики. Outgoing replies redact known installation secrets even without a name or provider prefix; placeholder values stay intact and punctuated secrets are removed in full.
-
 - 🔧 **Обновлятор сохраняет замок другого запуска**: при разборе брошенного замка каталог переименовывается, а владелец повторно сверяется; свежий замок возвращается на место. Каталог без владельца получает пять секунд на запись; повреждённый замок считается занятым. Забытые каталоги захвата старше суток убираются вместе с остатками обновления. Update takeover renames and verifies the abandoned owner, preserves the owner-publication window, treats unreadable locks as occupied, and sweeps forgotten takeover directories after a day.
-
 - 🌙 **Ночь сохраняет прямые правки памяти**: Card повторно сверяется после сохранения кэша; изменённые черновики ждут следующей ночи с сохранёнными фактами. Выжимка с расходящимся хешем тела сохраняет правку владельца и при повторных ночах. Конфликт одного дня позволяет завершить остальные дни, CORE, периоды и Report. Night rereads Cards after saving its cache, defers conflicting Card writes and keeps daily summaries with a mismatching body hash across repeated nights while the rest of the night finishes.
-
 - 🔧 **Закрытый ход остаётся закрытым после перезапуска**: восстановление сверяет поколение статуса под общим замком с мостом; свежий замок оборванной записи освобождается за две секунды. A restart keeps a turn closed when Bridge has already finished it and reclaims a killed writer's fresh status lock within two seconds.
-
 - 🤝 **Помощник берёт долгую работу в фоне**: Ива передаёт самостоятельное задание с разрешёнными границами, отвечает в основном чате и пересказывает готовый исход. Помощника можно остановить словами; новый разговор сохраняет работу, перезапуск даёт прерванный исход. Iva can hand long work to a background helper with the owner’s action boundaries and report the outcome in the main chat.
+- 🛠 **eve теперь собирается из исходников Ивы**: поведение осталось прежним; установка и обновление скачивают eve одним готовым архивом. Iva now builds eve from its own sources; behavior stays the same and installations fetch one ready archive.
+- 🔧 **Ива повторяет запрос до трёх раз при пустом ответе**: все повторы идут в том же шаге; раньше был один повтор. Iva retries the request up to three times within the same step after an empty model response, instead of once.
+- 💬 **Кнопка ■ в webhook-режиме требует повторной регистрации**: зарегистрируйте webhook заново с `stopped_message_generation` в `allowed_updates` по команде из [Webhook mode](docs/deploy.md#webhook-mode-alternative). В обычном режиме с мостом всё работает сразу. In webhook mode, re-register the webhook with `stopped_message_generation` in `allowed_updates` using the command in [Webhook mode](docs/deploy.md#webhook-mode-alternative) to enable the native ■ control. The default bridge mode requires no action.
 
-- 🛠 **eve теперь собирается из исходников Ивы**: поведение осталось прежним; установка и обновление скачивают eve одним готовым архивом. В бете стоит проверить привычное: откат и обновление (`iva rollback`, затем `iva update`, чтобы в конце снова стояла бета), долгий ход с инструментами, напоминание, ночной отчёт, файл в чат и из чата. Любое отличие от 0.4.17 считается ошибкой. Iva now builds eve from its own sources; behavior stays the same and installations fetch one ready archive.
+[0.5.0]: https://github.com/smixs/iva-agent/releases/tag/v0.5.0
 
 ## [0.4.17] - 2026-10-11
 

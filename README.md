@@ -175,7 +175,22 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.4.17 · 11.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.0 · 15.10.2026 — expand the latest releases</b></summary>
+
+### 15.10.2026
+
+#### v0.5.0
+
+- 💬 **Replies appear as they are written, ■ stops the turn**: in private chats, Iva shows a draft and the current tool. The final answer arrives as a separate message.
+- 🎯 **Goal follows through to the result**: a helper checks for a reply or change on a schedule and keeps a plan within the boundaries you set. Iva brings the result or a question; you close the goal.
+- 🤝 **A helper takes long work into the background**: Iva hands it an assignment and keeps talking with you. She reports the outcome in the main chat; you can stop the helper in words.
+- 🛠 **eve is built from Iva's sources**: installation and updates download the ready archive `eve-0.51.1-iva.3` with Iva's changes.
+- 🔎 **Iva prepares the next step for your tasks**: Watch, Brief and Insight check current goals and prior declines. Iva cites the source and why she is writing now, then prepares a reply draft or checked next steps.
+- 🛡 **Secrets stay on the server**: before sending a file, Iva checks its contents, including binary files. Replies hide keys and tokens by value, even without a label.
+- 🔘 **Button questions handle slow sending**: choices survive delays, and tapping an old button again stays a duplicate. Links with special characters open in full, topic service events stay silent, and deleted tasks keep their identifiers.
+- 🔧 **DeepSeek continues after a tool call**: in thinking mode on Ollama Cloud and OpenCode Go, the model receives its reasoning along with the tool result.
+- 🌙 **Night preserves direct memory edits**: a conflict in one day lets the other days and the report finish. The updater preserves another process's lock and installs verified Google CLI; closed turns stay closed after a restart.
+- 🔧 **Iva retries the request up to three times after an empty response**: retries stay within the same step; previously Iva retried once.
 
 ### 11.10.2026
 
@@ -201,32 +216,13 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 🎙 **Iva spells names in voice notes the way you set them**: in `/menu`, on the «🎤 Voice» screen, tap «Names and terms» and list names and words separated by commas, for example OJ, Sonnet, Todoist. Voice transcripts will spell them the same way in every message. For now only words in Latin letters work; Iva shortens a list that is too long to what Deepgram accepts at once and tells you so. Deepgram charges a small extra per minute for this feature; without a list everything works as before.
 - ⏳ **When the model stays silent, Iva suggests /new**: if the model again and again does not start answering in the same conversation, Iva suggests sending `/new`. A long conversation may have become too heavy for the model, and `/new` starts a fresh one.
 
-### 08.10.2026
-
-#### v0.4.14
-
-- 🔁 **Long conversations on the ChatGPT subscription work again**: Iva could not shorten a long conversation on the ChatGPT subscription, so it kept growing until it hit the model's limit and the last question went unanswered. Now Iva sums up the earlier part of the conversation in time, and you can keep talking without starting over.
-- 🧠 **Haiku 5.5 on the Claude model screen**: `/model` → Claude and setup now offer a fourth button, Haiku 5.5, the fastest model of the subscription. It handles long conversations and lets you choose how hard it thinks. If Claude Code on your server does not know it yet, the same button shows Haiku 4.5 until you update Claude Code.
-
-#### v0.4.13
-
-- 💡 **Iva brings one insight a day**: at the time you set she looks at what you keep doing by hand, builds and tries a plugin draft and sends it with «Install» and «Not now» buttons. She installs it only after your tap; «Not now» drops only that draft. Off by default: turn it on in `/menu` → Notices → Insight or with `iva proactive set insightTimes 11:30`. The run stays within its time limit, and `iva usage by-source` shows what the Brief, missed-message notices and insights cost.
-- 🔁 **A broken connection to the model no longer ends the answer**: if the connection breaks mid-answer, Iva asks the model again, up to three times, and nothing arrives twice. If that fails too, you get a message quoting your question with a «Try again» button. Failure messages are now plain: what happened and what to do, without the error text or the Error id.
-- ✅ **Buttons are clearer**: a tapped button turns green with ✅ at once, and a second tap does not send a second message. A button remembers the text of its message, so «Compose a reply» knows to whom and about what. One overly long button no longer removes the others, and question buttons disappear once your answer is accepted.
-- 👀 **«Got it» instead of «Mute this one»**: a missed-message notice now has «To tasks», «Remind later», «Got it» and «Open chat». «Got it» removes the notice at once, and the same chat or letter comes back when something new arrives there; to stop notices about someone, say so in the chat. «Open chat» takes you to the chat or the letter in one tap.
-- 🗣 **Iva writes more plainly**: first what happened and what to do, without technical details, tables or code. «All fine» is one sentence, details on request.
-- ⏳ **A message waiting its turn shows the loader at once**: while Iva answers one message, the next one gets «Working…» right away, so she no longer looks stuck.
-- 🔎 **Failures are easier to look into**: `iva trace show` opens exactly one turn, the turn journal keeps tool errors for 30 days, and Insight reviews the day's failures and offers a plugin fix or a ready issue for the developer, which you send yourself. `iva diagnose` no longer restarts anything, and `diagnose-usage.sh` no longer takes the turn journal.
-- 🧩 **A broken skill no longer turns off your tools**: your own skills are not part of the version build, and if your code does not build, Iva tells you in Telegram.
-- 📡 **The userbot is no longer beta**: working from your personal Telegram account is a regular part of Iva. The account-ban warning stays.
-
 </details>
 
 Full history — [CHANGELOG.md](CHANGELOG.md).
 
 ## Built on
 
-[eve](https://eve.dev/docs/introduction) 0.51.1, Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index — no separate database. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
+[eve](https://eve.dev/docs/introduction) 0.51.1-iva.3, Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index — no separate database. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
 
 ## Thanks
 
