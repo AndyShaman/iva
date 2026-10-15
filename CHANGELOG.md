@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [0.5.2] - 2026-10-15
 
 - 🔧 **Вход юзербота по QR с облачным паролем**: если скан приходился на момент обновления QR-кода, Telegram сообщал «нужен пароль» на обновлении, Ива считала это сбоем входа и принять пароль не могла. Теперь ответ «нужен пароль» ловится на всём входе, и Ива сразу просит пароль. QR login asks for the two-factor password even when Telegram reports it during a QR refresh rather than the scan wait.
+
+[0.5.2]: https://github.com/smixs/iva-agent/releases/tag/v0.5.2
 
 ## [0.5.1] - 2026-10-15
 
