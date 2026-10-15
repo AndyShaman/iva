@@ -175,9 +175,13 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.1 · 15.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.2 · 15.10.2026 — expand the latest releases</b></summary>
 
 ### 15.10.2026
+
+#### v0.5.2
+
+- 🔧 **Userbot QR login with a cloud password**: when the scan landed on the moment the QR code was being refreshed, Telegram reported "password needed" during the refresh, Iva treated it as a login failure and could not accept the password. Now that answer is caught throughout the login, and Iva asks for the password right away.
 
 #### v0.5.1
 
