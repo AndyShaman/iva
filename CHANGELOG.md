@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🔧 **Вход юзербота по QR с облачным паролем**: если скан приходился на момент обновления QR-кода, Telegram сообщал «нужен пароль» на обновлении, Ива считала это сбоем входа и принять пароль не могла. Теперь ответ «нужен пароль» ловится на всём входе, и Ива сразу просит пароль. QR login asks for the two-factor password even when Telegram reports it during a QR refresh rather than the scan wait.
+
 ## [0.5.1] - 2026-10-15
 
 - 🔧 **Обновление и установка работают с npm 12**: npm 12 по умолчанию отказывается скачивать зависимость по адресу архива, а именно так закреплена копия eve, и на серверах, где npm обновили вручную (Node 24 несёт npm 11), шаг «Собираю Iva» падал с ошибкой EALLOWREMOTE. Теперь проект разрешает адреса архивов только для своих зависимостей. Updates and fresh installs no longer fail with EALLOWREMOTE under npm 12, which refuses tarball-URL dependencies by default: the project now allows URL dependencies declared in its own package.json only.
