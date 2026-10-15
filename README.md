@@ -175,9 +175,13 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.0 · 15.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.1 · 15.10.2026 — expand the latest releases</b></summary>
 
 ### 15.10.2026
+
+#### v0.5.1
+
+- 🔧 **Updates and installs work with npm 12**: npm 12 refuses tarball-URL dependencies by default, and that is how Iva pins its copy of eve, so on servers where npm was upgraded by hand (Node 24 ships npm 11) the "Building Iva" step failed with EALLOWREMOTE. The project now allows archive URLs for its own dependencies only.
 
 #### v0.5.0
 
