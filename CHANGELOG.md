@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-10-15
+
+- 🔧 **Обновление и установка работают с npm 12**: npm 12 по умолчанию отказывается скачивать зависимость по адресу архива, а именно так закреплена копия eve, и на серверах, где npm обновили вручную (Node 24 несёт npm 11), шаг «Собираю Iva» падал с ошибкой EALLOWREMOTE. Теперь проект разрешает адреса архивов только для своих зависимостей. Updates and fresh installs no longer fail with EALLOWREMOTE under npm 12, which refuses tarball-URL dependencies by default: the project now allows URL dependencies declared in its own package.json only.
+
+[0.5.1]: https://github.com/smixs/iva-agent/releases/tag/v0.5.1
+
 ## [0.5.0] - 2026-10-15
 
 - 🔗 **Ссылки со спецсимволами открываются целиком**: подчёркивания, звёздочки, тильды и парные скобки в адресе сохраняются при оформлении ответа в Telegram. Telegram formatting preserves link addresses containing underscores, asterisks, tildes and balanced parentheses.
