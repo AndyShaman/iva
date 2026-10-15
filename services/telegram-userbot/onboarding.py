@@ -97,18 +97,21 @@ async def _run_qr_login(client) -> None:
             _state = {"phase": "waiting", "detail": "QR отправлен в чат с ботом, жду скан"}
             try:
                 await qr.wait(timeout=_seconds_until_expiry(qr))
-                _state = {"phase": "authorized", "detail": "Аккаунт подключён"}
-                return
             except asyncio.TimeoutError:
                 await qr.recreate()
                 continue
-            except errors.SessionPasswordNeededError:
-                _state = {
-                    "phase": "password_needed",
-                    "detail": "Включена двухфакторная защита — пришли пароль",
-                }
-                return
+            _state = {"phase": "authorized", "detail": "Аккаунт подключён"}
+            return
         _state = {"phase": "expired", "detail": "QR истёк слишком много раз — начни заново"}
+    except errors.SessionPasswordNeededError:
+        # Telegram asks for the cloud password as soon as the scanned token is accepted.
+        # With the scan landing on the refresh boundary that answer comes back from
+        # `recreate()` (ExportLoginTokenRequest), not from `wait()` — so it is caught for
+        # the whole login, and the owner is asked for the password in every case.
+        _state = {
+            "phase": "password_needed",
+            "detail": "Включена двухфакторная защита — пришли пароль",
+        }
     except Exception as exc:  # noqa: BLE001
         _state = {"phase": "error", "detail": str(exc)}
         print(f"telegram-userbot: qr login failed: {exc}", file=sys.stderr)
