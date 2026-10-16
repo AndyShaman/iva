@@ -815,28 +815,23 @@ test("a completed-update ledger is isolated by Telegram bot id", async () => {
   }
 });
 
-test("an invalid completed-update container is preserved and rejected", async (t) => {
+test("an invalid completed-update schema is recovered after acceptance", async () => {
   const root = mkdtempSync(join(tmpdir(), "iva-completed-ledger-schema-test-"));
   const completedUpdatesFile = join(root, "completed-updates.json");
   writeFileSync(completedUpdatesFile, JSON.stringify({ updates: "broken" }));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const before = readFileSync(completedUpdatesFile, "utf8");
   let sends = 0;
   const delivery = productionTelegramDelivery(
-    async () => {
-      sends++;
-      return { id: "accepted" };
-    },
+    async () => ({ id: `accepted-${++sends}` }),
     { completedUpdatesFile },
   );
-  await assert.rejects(
-    delivery(privateUpdate(801, "recover")),
-    /invalid schema/,
-  );
-  assert.equal(readFileSync(completedUpdatesFile, "utf8"), before);
-  await assert.rejects(delivery(privateUpdate(801, "retry")), /invalid schema/);
-  assert.equal(sends, 0);
-  assert.deepEqual(readdirSync(root), ["completed-updates.json"]);
+
+  assert.equal(await delivery(privateUpdate(801, "recover")), true);
+  assert.equal(await delivery(privateUpdate(801, "duplicate")), "handled");
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
+    botId: "999",
+    updates: [801],
+  });
 });
 
 test("missing webhook secret disables deduplication and reports it once", async () => {

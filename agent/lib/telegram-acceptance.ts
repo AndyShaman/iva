@@ -206,9 +206,11 @@ async function metadataFromRequest(request: Request): Promise<RequestMetadata> {
 }
 
 function validCompletedLedger(value: unknown): CompletedLedger {
-  if (!isRecord(value))
-    throw new Error("completed Telegram ledger does not contain an object");
-  if (typeof value.botId !== "string" || !Array.isArray(value.updates)) {
+  if (
+    !isRecord(value) ||
+    typeof value.botId !== "string" ||
+    !Array.isArray(value.updates)
+  ) {
     throw new Error("completed Telegram update ledger has invalid schema");
   }
   return value as CompletedLedger;
@@ -240,7 +242,7 @@ async function loadCompletedLedger(
         : String(error);
     if (
       !message.includes("damaged (invalid JSON)") &&
-      !message.includes("ledger does not contain an object")
+      !message.includes("ledger has invalid schema")
     ) {
       throw error;
     }
