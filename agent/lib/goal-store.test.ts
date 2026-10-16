@@ -191,7 +191,7 @@ test("P1 delivered rows block the next due check until swept, preserving the sav
 });
 
 for (const status of ["proposed", "paused"] as const)
-  test(`QA3 ${status} with a live check quarantines the conflicting helper and keeps the goal`, async (t) => {
+  test(`QA3 ${status} with a live check detaches the check and keeps both records`, async (t) => {
     const { file } = await setup(t);
     const { row } = await check();
     await s.claimHelper(row.id, { ownerStartedAt: now }, now);
@@ -206,27 +206,19 @@ for (const status of ["proposed", "paused"] as const)
     const loaded = await s.readHelpers();
     const expected = [{ ...state.goals[0], check: null, verdict: null }];
     assert.deepEqual(loaded.goals, expected);
-    assert.deepEqual(loaded.rows, []);
+    assert.deepEqual(loaded.rows, state.rows);
     assert.equal(await readFile(file, "utf8"), raw);
     const copies = (await readdir(join(file, ".."))).filter((name) =>
       name.includes(".damaged-"),
     );
-    assert.equal(copies.length, 1);
-    assert.deepEqual(
-      (
-        JSON.parse(await readFile(join(file, "..", copies[0]), "utf8")) as {
-          record: unknown;
-        }
-      ).record,
-      state.rows[0],
-    );
+    assert.deepEqual(copies, []);
     await s.finalizeHelper(
       row.id,
       { kind: "running", firedAt: now },
       finish,
       now,
     );
-    assert.equal(await s.getHelper(row.id), null);
+    assert.equal((await s.getHelper(row.id))?.status, "closed");
     assert.deepEqual((await s.readHelpers()).goals, expected);
   });
 test("legacy defaults, corruption and cross-links preserve stored bytes", async (t) => {
@@ -255,21 +247,21 @@ test("legacy defaults, corruption and cross-links preserve stored bytes", async 
     },
     {
       value: { ...base, goals: [{ ...base.goals[0], status: "paused" }] },
-      rows: [],
+      rows: [{ ...row, goal: null }],
       goals: [],
-      damaged: [{ ...base.goals[0], status: "paused" }, row],
+      damaged: [{ ...base.goals[0], status: "paused" }],
     },
     {
       value: { ...base, rows: [{ ...row, goal: "g-ffffff" }] },
-      rows: [],
+      rows: [{ ...row, goal: null }],
       goals: [{ ...base.goals[0], check: null }],
-      damaged: [{ ...row, goal: "g-ffffff" }],
+      damaged: [],
     },
     {
       value: { ...base, goals: [{ ...base.goals[0], nextCheckAtMs: null }] },
-      rows: [],
+      rows: [{ ...row, goal: null }],
       goals: [],
-      damaged: [{ ...base.goals[0], nextCheckAtMs: null }, row],
+      damaged: [{ ...base.goals[0], nextCheckAtMs: null }],
     },
   ];
   for (const { value, rows, goals, damaged } of cases) {

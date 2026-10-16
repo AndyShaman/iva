@@ -277,7 +277,7 @@ test("C4 P2 owner arriving after the tick snapshot prevents the goal claim and s
 });
 
 for (const status of ["proposed", "paused"] as const)
-  test(`QA3 tick preserves the ${status} goal and quarantines its conflicting helper`, async (t) => {
+  test(`QA3 tick detaches the ${status} goal check and keeps both records`, async (t) => {
     const f = await setup(t);
     await f.tick();
     const state = await s.readHelpers();
@@ -306,17 +306,10 @@ for (const status of ["proposed", "paused"] as const)
     assert.deepEqual((await s.readHelpers()).goals, [
       { ...state.goals[0], check: null, verdict: null },
     ]);
-    assert.deepEqual((await s.readHelpers()).rows, []);
-    const [copy] = (await readdir(f.dir)).filter((name) =>
-      name.includes(".damaged-"),
-    );
+    assert.deepEqual((await s.readHelpers()).rows, state.rows);
     assert.deepEqual(
-      (
-        JSON.parse(await readFile(join(f.dir, copy), "utf8")) as {
-          record: unknown;
-        }
-      ).record,
-      state.rows[0],
+      (await readdir(f.dir)).filter((name) => name.includes(".damaged-")),
+      [],
     );
   });
 

@@ -438,7 +438,7 @@ test("REPAIR goal survives damaged check and quarantines only offending records"
     {
       rows: [row, { ...linked, goal: "g-cccccc" }],
       goals: [goal],
-      bad: [{ ...linked, goal: "g-cccccc" }],
+      bad: [],
     },
     {
       rows: [
@@ -458,7 +458,7 @@ test("REPAIR goal survives damaged check and quarantines only offending records"
     {
       rows: [row, { ...linked, goal: null }],
       goals: [goal],
-      bad: [{ ...linked, goal: null }],
+      bad: [],
     },
     { rows: completed, goals: [goal], bad: [completed[20]] },
   ];
@@ -517,5 +517,65 @@ test("REPAIR goal survives damaged check and quarantines only offending records"
     );
     await s.mutateHelpers(() => ({ save: true, value: null }));
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), state);
+  }
+});
+
+test("REPAIR3 orphan helper survives a damaged or missing goal without quarantine", async (t) => {
+  const dir = await data(t);
+  const row = await added();
+  const goal = {
+    id: "g-bbbbbb",
+    text: "goal",
+    may: "",
+    chat,
+    createdAt: 1,
+    status: "active",
+    pause: null,
+    plan: "plan",
+    nextCheckAtMs: 10,
+    ownerNext: false,
+    check: "h-abcdef",
+    verdict: null,
+    checks: { day: "2026-10-16", count: 1 },
+    failures: 0,
+    lastError: null,
+    expiresAtMs: 1000,
+  };
+  const linked = { ...row, id: "h-abcdef", goal: goal.id };
+  const file = join(dir, "helpers.json");
+  const bad = { ...goal, extra: 1 };
+  const logs: unknown[][] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) => logs.push(parts));
+  for (const goals of [[], [bad]]) {
+    const raw = JSON.stringify({
+      schemaVersion: 1,
+      rows: [row, linked],
+      goals,
+    });
+    await writeFile(file, raw);
+    const expected = {
+      schemaVersion: 1,
+      rows: [row, { ...linked, goal: null }],
+      goals: [],
+    };
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(await s.readHelpers(), expected);
+    assert.equal(await readFile(file, "utf8"), raw);
+    const copies = (await readdir(dir)).filter((name) =>
+      name.includes(".damaged-"),
+    );
+    assert.equal(copies.length, goals.length);
+    if (goals.length)
+      assert.deepEqual(
+        (
+          JSON.parse(await readFile(join(dir, copies[0]), "utf8")) as {
+            record: unknown;
+          }
+        ).record,
+        bad,
+      );
+    assert.equal(logs.length, goals.length);
+    await s.mutateHelpers(() => ({ save: true, value: null }));
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), expected);
   }
 });

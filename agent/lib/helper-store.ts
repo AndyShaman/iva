@@ -190,25 +190,24 @@ export async function readHelpers(): Promise<HelpersState> {
     }
     for (const { row, record } of rows) {
       const parsed = rowsSchema.safeParse([...state.rows, row]);
-      const linked =
-        // Closed or stopped checks can outlive a goal closed by its owner.
-        (row.goal === null ||
-          row.status === "closed" ||
-          row.stop === "closed" ||
-          state.goals.some((g) => g.id === row.goal)) &&
-        state.goals.every(
-          (g) =>
-            g.check !== row.id ||
-            (g.status === "active" &&
-              row.goal === g.id &&
-              row.status === "pending"),
-        );
-      if (parsed.success && linked) state.rows = parsed.data;
+      if (parsed.success) state.rows = parsed.data;
       else damaged("rows", record);
     }
+    for (const row of state.rows)
+      if (row.goal !== null && !state.goals.some((g) => g.id === row.goal))
+        row.goal = null;
     for (const g of state.goals) {
-      // Same detachment as settleGoal: a vanished check leaves the goal scheduled.
-      if (g.check !== null && !state.rows.some((r) => r.id === g.check))
+      // A lost or mismatched check detaches without discarding either record.
+      if (
+        g.check !== null &&
+        !(
+          g.status === "active" &&
+          state.rows.some(
+            (r) =>
+              r.id === g.check && r.goal === g.id && r.status === "pending",
+          )
+        )
+      )
         g.check = g.verdict = null;
     }
     stateSchema.parse(state);
