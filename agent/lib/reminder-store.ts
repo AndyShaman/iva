@@ -386,17 +386,23 @@ async function loadTable(file: string): Promise<Reminder[]> {
     schemaVersion: REMINDER_SCHEMA_VERSION,
     rows: [],
   });
-  return parseReminderTable(file, raw, Date.now());
+  const damaged: DamagedRow[] = [];
+  const rows = parseReminderTable(file, raw, Date.now(), { damaged });
+  for (const entry of damaged) quarantineDamagedRecord(file, entry);
+  return rows;
 }
 
+type DamagedRow = Parameters<typeof quarantineDamagedRecord>[1];
+
 /**
- * Разбор таблицы — тот же, что у `list()`: `iva diagnose` читает JSON сам,
- * а проверку строк, карантин и перевод v1 использует из этого модуля.
+ * Разбор таблицы для клиентов без права на побочный эффект (doctor, diagnose).
+ * Стор отдельно собирает плохие строки и копирует их перед возвратом исправных.
  */
 export function parseReminderTable(
   file: string,
   raw: unknown,
   nowMs: number,
+  { damaged }: { damaged?: DamagedRow[] } = {},
 ): Reminder[] {
   if (!isPlainObject(raw) || typeof raw.schemaVersion !== "number")
     fail(file, "no schemaVersion");
@@ -425,7 +431,8 @@ export function parseReminderTable(
       if (seen.has(reminder.id)) throw new ReminderStoreError("duplicate id");
     } catch (error) {
       if (!(error instanceof ReminderStoreError)) throw error;
-      quarantineDamagedRecord(file, {
+      if (!damaged) throw error;
+      damaged.push({
         reason: "invalid or duplicate reminder row",
         record: value,
         label: "reminder",

@@ -672,6 +672,7 @@ test("damaged record copies are private, exclusive and omit values from logs", (
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.equal(quarantineDamagedRecord(file, entry, log), null);
   assert.equal(logs.length, 1);
+  assert.match(logs[0], /copied to/);
   assert.ok(logs[0].includes("text") && logs[0].includes("string"));
   assert.equal(logs[0].includes("private text"), false);
   assert.deepEqual(files(), [path.split("/").at(-1)]);

@@ -393,3 +393,129 @@ test("POISON helpers and goals keep good rows and unknown top-level fields acros
   assert.equal(saved.rows.length, 1);
   assert.deepEqual(saved.goals, [goal]);
 });
+
+test("REPAIR goal survives damaged check and quarantines only offending records", async (t) => {
+  const dir = await data(t);
+  const row = await added();
+  const goal = {
+    id: "g-bbbbbb",
+    text: "goal",
+    may: "",
+    chat,
+    createdAt: 1,
+    status: "active",
+    pause: null,
+    plan: "keep plan",
+    nextCheckAtMs: 10,
+    ownerNext: false,
+    check: "h-abcdef",
+    verdict: { verdict: "done", plan: "stale", nextCheckAtMs: null },
+    checks: { day: "2026-10-16", count: 1 },
+    failures: 0,
+    lastError: null,
+    expiresAtMs: 1000,
+  };
+  const linked = { ...row, id: "h-abcdef", goal: goal.id };
+  const file = join(dir, "helpers.json");
+  const completed = Array.from({ length: 21 }, (_, index) => ({
+    ...row,
+    id: `h-${index.toString(16).padStart(6, "0")}`,
+    status: "finished",
+    outcome: "done",
+    finishedAt: 10,
+  }));
+  const cases = [
+    {
+      rows: [row, { ...linked, steps: 0.5 }],
+      goals: [goal],
+      bad: [{ ...linked, steps: 0.5 }],
+    },
+    {
+      rows: [row, linked],
+      goals: [goal, { ...goal, text: "duplicate" }],
+      bad: [{ ...goal, text: "duplicate" }],
+    },
+    {
+      rows: [row, { ...linked, goal: "g-cccccc" }],
+      goals: [goal],
+      bad: [{ ...linked, goal: "g-cccccc" }],
+    },
+    {
+      rows: [
+        row,
+        linked,
+        { ...row, id: "h-111111" },
+        { ...row, id: "h-222222" },
+      ],
+      goals: [goal],
+      bad: [{ ...row, id: "h-222222" }],
+    },
+    {
+      rows: [row, linked, { ...row, task: "duplicate helper" }],
+      goals: [goal],
+      bad: [{ ...row, task: "duplicate helper" }],
+    },
+    {
+      rows: [row, { ...linked, goal: null }],
+      goals: [goal],
+      bad: [{ ...linked, goal: null }],
+    },
+    { rows: completed, goals: [goal], bad: [completed[20]] },
+  ];
+  for (const value of cases) {
+    await writeFile(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        rows: value.rows,
+        goals: value.goals,
+      }),
+    );
+    const state = await s.readHelpers();
+    assert.equal(state.goals.length, 1);
+    assert.deepEqual(state.goals[0], {
+      ...goal,
+      ...(value.rows.some((r) => r === linked)
+        ? {}
+        : { check: null, verdict: null }),
+    });
+    assert.ok(
+      state.rows.every(
+        (r) => r.goal === null || state.goals.some((g) => g.id === r.goal),
+      ),
+    );
+    assert.equal(
+      state.rows.length,
+      value.rows.length - value.bad.filter((r) => "steps" in r).length,
+    );
+    const copies = (await readdir(dir)).filter((name) =>
+      name.includes(".damaged-"),
+    );
+    const records = await Promise.all(
+      copies.map(
+        async (name) =>
+          (
+            JSON.parse(await readFile(join(dir, name), "utf8")) as {
+              record: unknown;
+            }
+          ).record,
+      ),
+    );
+    for (const bad of value.bad)
+      assert.ok(records.some((r) => JSON.stringify(r) === JSON.stringify(bad)));
+    assert.ok(
+      records.every(
+        (r) =>
+          (r as { id: string }).id !== goal.id ||
+          (r as { text: string }).text === "duplicate",
+      ),
+    );
+    await s.readHelpers();
+    assert.deepEqual(
+      (await readdir(dir)).filter((name) => name.includes(".damaged-")),
+      copies,
+    );
+    await s.mutateHelpers(() => ({ save: true, value: null }));
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), state);
+  }
+});

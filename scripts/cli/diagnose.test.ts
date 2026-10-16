@@ -13,6 +13,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -418,9 +419,11 @@ await test("пакет не несёт id и текст провала напо�
         ],
       })}\n`,
     );
+    const before = readFileSync(join(data, "reminders.json"), "utf8");
     await createDiagnoseCommand(doctorRuntime, lifecycle(), {
       now: () => new Date(NOW.getTime() + 1_000),
     })();
+    assert.equal(readFileSync(join(data, "reminders.json"), "utf8"), before);
   } finally {
     if (previousDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
     else process.env.ASSISTANT_DATA_DIR = previousDataDir;
@@ -441,6 +444,10 @@ await test("пакет не несёт id и текст провала напо�
       `в пакете остался текст владельца: ${leak}`,
     );
 
+  assert.deepEqual(
+    readdirSync(data).filter((name) => name.includes(".damaged-")),
+    [],
+  );
   const brokenTable = readFileSync(
     join(data, "diagnose", "2026-09-12T15-04-08-000Z.md"),
     "utf8",

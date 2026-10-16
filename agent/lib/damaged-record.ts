@@ -9,8 +9,8 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
-// Синхронная копия подходит и читателю напоминаний в diagnose. До возврата файл и
-// каталог синхронизированы: следующая запись хранилища уже может убрать запись.
+// До возврата файл копии и каталог синхронизированы: следующая запись
+// хранилища уже может убрать испорченную запись.
 export function quarantineDamagedRecord(
   file: string,
   entry: { reason: string; record: unknown; label: string },
@@ -50,7 +50,7 @@ export function quarantineDamagedRecord(
       ? Object.entries(entry.record).map(([key, value]) => [key, type(value)])
       : type(entry.record);
   log(
-    `damaged ${entry.label} moved to ${path}: ${entry.reason}`,
+    `damaged ${entry.label} copied to ${path}: ${entry.reason}`,
     JSON.stringify(fields),
   );
   return path;

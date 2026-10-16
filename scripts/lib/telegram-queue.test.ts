@@ -1852,17 +1852,33 @@ void test("POISON an unreplayable queue head is quarantined before ack and next 
     pins: new Map(),
     resetPendingImpl: () => false,
   };
-  await assert.rejects(
-    drainReadyQueueHeads({
-      ...options,
-      quarantineImpl: async () => {
-        throw new Error("copy failed");
-      },
-    }),
-    /copy failed/,
-  );
-  assert.equal(events.length, 0);
-  assert.equal(queueCount(document), 2);
+  // A failed copy keeps this head while another chat is delivered in the same pass.
+  const failures: unknown[][] = [];
+  t.mock.method(console, "log", (...parts: unknown[]) => failures.push(parts));
+  for (const code of ["EACCES", "ENOSPC"]) {
+    document = enqueueItem(
+      document,
+      "1:",
+      createQueueItem(privateUpdate(13, "other chat"), 3),
+    ).document;
+    assert.equal(
+      await drainReadyQueueHeads({
+        ...options,
+        quarantineImpl: async () => {
+          throw Object.assign(new Error("private copy failure"), { code });
+        },
+      }),
+      2,
+    );
+    assert.deepEqual(events, ["deliver", "ack"]);
+    assert.equal(queueCount(document), 2);
+    assert.deepEqual(queueHead(document, "-100:"), bad);
+    const line = JSON.stringify(failures.at(-1));
+    assert.match(line, new RegExp(code));
+    assert.ok(!line.includes("private"));
+    events.length = 0;
+  }
+  assert.equal(failures.length, 2);
   await assert.rejects(
     drainReadyQueueHeads({
       ...options,

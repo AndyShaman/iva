@@ -72,31 +72,40 @@ const documentSchema = z
     goals: z.array(z.unknown()).default([]),
   })
   .passthrough();
-const stateSchema = documentSchema
-  .extend({
-    rows: z.array(rowSchema).max(HELPER_MAX_ROWS),
-    goals: z.array(goalSchema).default([]),
-  })
+const rowsSchema = z
+  .array(rowSchema)
+  .max(HELPER_MAX_ROWS)
   .refine(
-    (s) =>
-      new Set(s.rows.map((r) => r.id)).size === s.rows.length &&
-      s.rows.filter((r) => r.status === "pending").length <= HELPER_MAX_OPEN,
+    (rows) =>
+      new Set(rows.map((r) => r.id)).size === rows.length &&
+      rows.filter((r) => r.status === "pending").length <= HELPER_MAX_OPEN,
     "duplicate id or pending capacity",
-  )
+  );
+const storedGoalSchema = goalSchema.refine(
+  (g) =>
+    (g.nextCheckAtMs !== null) === (g.status === "active") &&
+    (g.pause !== null) === (g.status === "paused") &&
+    (g.verdict === null || g.check !== null),
+  "inconsistent goal",
+);
+const goalsSchema = z
+  .array(storedGoalSchema)
+  .refine(
+    (goals) => new Set(goals.map((g) => g.id)).size === goals.length,
+    "duplicate goal id",
+  );
+const stateSchema = documentSchema
+  .extend({ rows: rowsSchema, goals: goalsSchema.default([]) })
   .refine(
     (s) =>
-      new Set(s.goals.map((g) => g.id)).size === s.goals.length &&
       s.goals.every(
         (g) =>
-          (g.nextCheckAtMs !== null) === (g.status === "active") &&
-          (g.pause !== null) === (g.status === "paused") &&
-          (g.verdict === null || g.check !== null) &&
-          (g.check === null ||
-            (g.status === "active" &&
-              s.rows.some(
-                (r) =>
-                  r.id === g.check && r.goal === g.id && r.status === "pending",
-              ))),
+          g.check === null ||
+          (g.status === "active" &&
+            s.rows.some(
+              (r) =>
+                r.id === g.check && r.goal === g.id && r.status === "pending",
+            )),
       ),
     "inconsistent goal links",
   );
@@ -160,22 +169,49 @@ export async function readHelpers(): Promise<HelpersState> {
   }
   try {
     const document = documentSchema.parse(JSON.parse(raw));
-    let state: HelpersState = { ...document, rows: [], goals: [] };
-    for (const label of ["rows", "goals"] as const) {
-      for (const record of document[label]) {
-        const parsed = stateSchema.safeParse({
-          ...state,
-          [label]: [...state[label], record],
-        });
-        if (parsed.success) state = parsed.data;
-        else
-          quarantineDamagedRecord(file(), {
-            reason: "invalid or inconsistent row",
-            record,
-            label: `helpers ${label}`,
-          });
-      }
+    const state: HelpersState = { ...document, rows: [], goals: [] };
+    const damaged = (label: string, record: unknown) =>
+      quarantineDamagedRecord(file(), {
+        reason: "invalid or inconsistent row",
+        record,
+        label: `helpers ${label}`,
+      });
+    // Validate each record before checking links across the surviving records.
+    const rows = document.rows.flatMap((record) => {
+      const parsed = rowSchema.safeParse(record);
+      if (parsed.success) return [{ row: parsed.data, record }];
+      damaged("rows", record);
+      return [];
+    });
+    for (const record of document.goals) {
+      const parsed = goalsSchema.safeParse([...state.goals, record]);
+      if (parsed.success) state.goals = parsed.data;
+      else damaged("goals", record);
     }
+    for (const { row, record } of rows) {
+      const parsed = rowsSchema.safeParse([...state.rows, row]);
+      const linked =
+        // Closed or stopped checks can outlive a goal closed by its owner.
+        (row.goal === null ||
+          row.status === "closed" ||
+          row.stop === "closed" ||
+          state.goals.some((g) => g.id === row.goal)) &&
+        state.goals.every(
+          (g) =>
+            g.check !== row.id ||
+            (g.status === "active" &&
+              row.goal === g.id &&
+              row.status === "pending"),
+        );
+      if (parsed.success && linked) state.rows = parsed.data;
+      else damaged("rows", record);
+    }
+    for (const g of state.goals) {
+      // Same detachment as settleGoal: a vanished check leaves the goal scheduled.
+      if (g.check !== null && !state.rows.some((r) => r.id === g.check))
+        g.check = g.verdict = null;
+    }
+    stateSchema.parse(state);
     return state;
   } catch (error) {
     throw new HelperStoreError(`${file()}: ${String(error)}`);

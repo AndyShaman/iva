@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -477,6 +478,28 @@ test("doctor читает битую таблицу, не унося файл в
     readdirSync(data).filter((name) => name.includes(".corrupt-")),
     [],
     "карантин создан",
+  );
+});
+
+test("doctor reports a damaged reminder row and preserves data files", async (t) => {
+  const root = await sandbox(t);
+  const raw = JSON.stringify({ schemaVersion: 2, rows: [null] });
+  const events = await remindersEvents(root, {
+    now: 1000000,
+    pulseAgoMs: 30000,
+    brokenTable: raw,
+  });
+  const data = join(root, "data");
+  assert.deepEqual(readdirSync(data).sort(), [
+    "reminders.json",
+    "reminders.tick",
+  ]);
+  assert.equal(readFileSync(join(data, "reminders.json"), "utf8"), raw);
+  assert.ok(
+    events.some(
+      ([kind, message]) =>
+        kind === "warn" && message.startsWith("reminders: table unreadable"),
+    ),
   );
 });
 

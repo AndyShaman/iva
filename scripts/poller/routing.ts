@@ -482,14 +482,19 @@ export async function drainReadyQueueHeads({
     if (running || (settleUntil.get(key) ?? 0) > now()) continue;
     const head = materializeQueueItem(key, item, { legacyAllowedUserIds });
     if (!head) {
-      await quarantineImpl([
-        {
-          chatKey: key,
-          index: 0,
-          reason: "unreplayable queue head",
-          record: item,
-        },
-      ]);
+      try {
+        await quarantineImpl([
+          {
+            chatKey: key,
+            index: 0,
+            reason: "unreplayable queue head",
+            record: item,
+          },
+        ]);
+      } catch (error) {
+        log("queue head quarantine failed:", key, errorCode(error));
+        continue;
+      }
       await acknowledgeImpl(key, [item.updateId]);
       pins.delete(key);
       continue;
