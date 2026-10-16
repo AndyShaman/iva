@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
 import {
+  acknowledgeQueueItems,
   createQueueItem,
   enqueueItem,
+  loadQueueFile,
+  quarantineQueueRecords,
   removeQueueItems,
   type TelegramQueueDocument,
   type TelegramQueueUpdate,
@@ -727,3 +737,79 @@ void test("the drop line prints at most twelve field names", () => {
   assert.equal(keys.length, 12);
   assert.deepEqual(keys, [...keys].sort());
 });
+
+// 16.10.2026: одна плохая запись входящих роняла мост, а на старте падала снова — приём
+// вставал по кругу падений. Теперь она уходит в карантин, остальные доставляются.
+for (const [name, damaged] of [
+  ["a record the loader rejects", { version: 1, updateId: "202" }],
+  [
+    "a record the inbox cannot deliver",
+    {
+      version: 1,
+      updateId: 202,
+      enqueuedAt: 0,
+      update: {
+        ...update(202, "x"),
+        message: { ...update(202, "x").message, text: 42 },
+      },
+    },
+  ],
+] as const)
+  void test(`inbox promotion quarantines ${name} and delivers the rest`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "iva-inbox-damaged-"));
+    try {
+      const file = join(dir, "telegram-inbox.json");
+      const good = update(203, "hello");
+      const key = inboxKeyFor(good);
+      assert.ok(key);
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 1,
+          queues: { [key]: [damaged, createQueueItem(good, 0)] },
+        }),
+      );
+      const logs: unknown[][] = [];
+      const logImpl = (...parts: unknown[]) => logs.push(parts);
+      const routed: number[] = [];
+      const remaining = await promoteReadyInbox({
+        backoff: promotionBackoff(),
+        now: () => 1_000,
+        collectorOptions: { quietMs: 800 },
+        loadImpl: async () =>
+          (await loadQueueFile(file, { strict: true, logImpl })).document,
+        routeImpl: (candidate) => {
+          routed.push(candidate.update_id);
+          return Promise.resolve("queued");
+        },
+        acknowledgeImpl: (ackKey, ids) =>
+          acknowledgeQueueItems(file, ackKey, ids, { strict: true }),
+        quarantineImpl: (records) =>
+          quarantineQueueRecords(file, records, { logImpl }),
+      });
+
+      assert.equal(remaining, 0);
+      assert.deepEqual(routed, [203]);
+      assert.deepEqual(
+        (JSON.parse(readFileSync(file, "utf8")) as TelegramQueueDocument)
+          .queues,
+        {},
+      );
+      const copies = readdirSync(dir).filter((entry) =>
+        entry.startsWith("telegram-inbox.json.damaged-"),
+      );
+      assert.equal(copies.length, 1);
+      assert.deepEqual(
+        (
+          JSON.parse(readFileSync(join(dir, copies[0]), "utf8")) as {
+            record: unknown;
+          }
+        ).record,
+        damaged,
+      );
+      assert.equal(logs.length, 1);
+      assert.equal(JSON.stringify(logs).includes("hello"), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });

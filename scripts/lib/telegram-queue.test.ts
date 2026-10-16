@@ -32,6 +32,7 @@ import {
   migrateQueueFile,
   normalizeQueueDocument,
   parseTelegramUpdates,
+  quarantineQueueRecords,
   queueCount,
   queueHead,
   queueKeys,
@@ -1668,4 +1669,83 @@ void test("__proto__ is persisted as a queue data key without prototype mutation
   const after = await loadQueueFile(file, { strict: true });
   assert.equal(Object.hasOwn(after.document.queues, "__proto__"), false);
   assert.equal(queueCount(after.document), 0);
+});
+
+// 16.10.2026: одна плохая запись очереди уносила весь файл в карантин (обычная загрузка)
+// или роняла мост (строгая). Теперь в карантин уходит только она, остальные остаются.
+void test("a damaged queue record is quarantined alone and the rest of the queue survives", async (t) => {
+  const file = await queueFile(t);
+  const good = createQueueItem(privateUpdate(11, "keep me"), 1);
+  const damagedItem = {
+    version: 1,
+    updateId: "11b",
+    update: { text: "secret text" },
+  };
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      queues: { "1:": [damagedItem, good], "2:": "not a list" },
+    }),
+  );
+  const logs: unknown[][] = [];
+  for (const strict of [true, false, true]) {
+    const loaded = await loadQueueFile(file, {
+      strict,
+      logImpl: (...parts) => logs.push(parts),
+    });
+    assert.deepEqual(loaded.document.queues, { "1:": [good] });
+    assert.equal(loaded.quarantined, null);
+  }
+
+  const copies = (await readdir(dirname(file))).filter((name) =>
+    name.startsWith("telegram-queue.json.damaged-"),
+  );
+  assert.equal(copies.length, 2);
+  // Повторная загрузка той же записи не пишет журнал и копию заново.
+  assert.equal(logs.length, 2);
+  assert.equal(JSON.stringify(logs).includes("secret text"), false);
+  const records = await Promise.all(
+    copies.map(
+      async (name) =>
+        JSON.parse(await readFile(join(dirname(file), name), "utf8")) as {
+          record: unknown;
+        },
+    ),
+  );
+  assert.deepEqual(
+    records
+      .map(({ record }) => record)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [damagedItem, "not a list"].sort((a, b) =>
+      JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    ),
+  );
+
+  // Следующая запись файла убирает плохую запись из самого файла.
+  await enqueueQueueFile(file, "1:", privateUpdate(12, "next"), {
+    strict: true,
+  });
+  const after = JSON.parse(
+    await readFile(file, "utf8"),
+  ) as TelegramQueueDocument;
+  assert.deepEqual(Object.keys(after.queues), ["1:"]);
+  assert.deepEqual(
+    after.queues["1:"].map((item) => item.updateId),
+    [11, 12],
+  );
+});
+
+void test("quarantine copies of the same record are written once", async (t) => {
+  const file = await queueFile(t);
+  const record = { chatKey: "1:", index: 0, reason: "bad", record: { a: 1 } };
+  const logs: unknown[][] = [];
+  const first = await quarantineQueueRecords(file, [record], {
+    logImpl: (...parts) => logs.push(parts),
+  });
+  const second = await quarantineQueueRecords(file, [record], {
+    logImpl: (...parts) => logs.push(parts),
+  });
+  assert.deepEqual(first, second);
+  assert.equal(logs.length, 1);
 });

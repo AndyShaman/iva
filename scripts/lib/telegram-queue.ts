@@ -278,6 +278,7 @@ type QueueFileOptions = {
   quarantineNonce?: () => string;
   onLegacyQuarantine?: (path: string) => void;
   now?: () => number;
+  logImpl?: (...parts: unknown[]) => void;
 };
 
 type TelegramEntity = {
@@ -353,20 +354,53 @@ function normalizeItem(
   return cloneJson(candidate) as TelegramQueueItem;
 }
 
+// Запись, которую загрузка не приняла: целиком уходит в файл карантина, остальные идут дальше.
+export type DamagedQueueRecord = {
+  chatKey: string;
+  index: number | null;
+  reason: string;
+  record: unknown;
+};
+
 function normalizeQueues(
   queues: unknown,
-  { legacy = false }: { legacy?: boolean } = {},
+  {
+    legacy = false,
+    damaged,
+  }: { legacy?: boolean; damaged?: DamagedQueueRecord[] } = {},
 ): { document: TelegramQueueDocument; migrated: boolean } {
   if (typeof queues !== "object" || queues === null || Array.isArray(queues)) {
     throw new Error("Telegram queue does not contain a queues object");
   }
+  // Без damaged любая плохая запись — ошибка (запись файла); с ним — пропуск записи.
+  const reject = (record: DamagedQueueRecord) => {
+    if (!damaged) throw new Error(record.reason);
+    damaged.push(record);
+  };
   const entries: [string, TelegramQueueItem[]][] = [];
   for (const [chatKey, items] of Object.entries(queues)) {
-    if (!Array.isArray(items))
-      throw new Error(`Telegram queue ${chatKey} is not an array`);
-    const next = items.map((item, index) =>
-      normalizeItem(item, chatKey, index),
-    );
+    if (!Array.isArray(items)) {
+      reject({
+        chatKey,
+        index: null,
+        reason: `Telegram queue ${chatKey} is not an array`,
+        record: items,
+      });
+      continue;
+    }
+    const next: TelegramQueueItem[] = [];
+    items.forEach((item: unknown, index) => {
+      try {
+        next.push(normalizeItem(item, chatKey, index));
+      } catch (error) {
+        reject({
+          chatKey,
+          index,
+          reason: (error as Error).message,
+          record: item,
+        });
+      }
+    });
     if (next.length) entries.push([chatKey, next]);
   }
   return {
@@ -379,7 +413,10 @@ function normalizeQueues(
   };
 }
 
-export function normalizeQueueDocument(value: unknown): {
+export function normalizeQueueDocument(
+  value: unknown,
+  { damaged }: { damaged?: DamagedQueueRecord[] } = {},
+): {
   document: TelegramQueueDocument;
   migrated: boolean;
 } {
@@ -390,12 +427,14 @@ export function normalizeQueueDocument(value: unknown): {
     (value as Record<string, unknown>).version === TELEGRAM_QUEUE_VERSION &&
     Object.hasOwn(value, "queues")
   ) {
-    return normalizeQueues((value as Record<string, unknown>).queues);
+    return normalizeQueues((value as Record<string, unknown>).queues, {
+      damaged,
+    });
   }
   // Pre-IVA-008 format: { "<chat>:<topic>": ["text", ...] }.
   // Convert every string to a versioned item with a stable synthetic update id.
   // The text stays byte-for-byte present until Eve accepts the migrated head.
-  return normalizeQueues(value, { legacy: true });
+  return normalizeQueues(value, { legacy: true, damaged });
 }
 
 export function createQueueItem(
@@ -810,7 +849,11 @@ export async function loadQueueFile(
   if (pendingRaw !== undefined) {
     // A pending document is the last fully durable pre-ack state. Restore it
     // before any caller can observe the possibly published removal.
-    const recovered = normalizeQueueDocument(JSON.parse(pendingRaw)).document;
+    const damaged: DamagedQueueRecord[] = [];
+    const recovered = normalizeQueueDocument(JSON.parse(pendingRaw), {
+      damaged,
+    }).document;
+    await quarantineQueueRecords(file, damaged, options);
     const recoveryOptions = { ...options };
     if (typeof recoveryOptions.nonce === "function")
       delete recoveryOptions.nonce;
@@ -839,9 +882,13 @@ export async function loadQueueFile(
     }
     throw error;
   }
+  // Плохая запись не роняет файл: она копируется в карантин, остальные возвращаются.
+  // Из самого файла её убирает следующая запись этого файла (16.10.2026: одна такая
+  // запись входящих гоняла приём по кругу падений, а в очереди уносила весь файл).
+  const damaged: DamagedQueueRecord[] = [];
+  let normalized: ReturnType<typeof normalizeQueueDocument>;
   try {
-    const normalized = normalizeQueueDocument(JSON.parse(raw));
-    return { ...normalized, quarantined: null };
+    normalized = normalizeQueueDocument(JSON.parse(raw), { damaged });
   } catch (error) {
     if (strict) throw error;
     const backup = `${file}.corrupt-${Date.now()}-${quarantineNonce()}`;
@@ -853,6 +900,39 @@ export async function loadQueueFile(
       error,
     };
   }
+  await quarantineQueueRecords(file, damaged, options);
+  return { ...normalized, quarantined: null };
+}
+
+// Копия записи рядом с файлом: имя от содержимого, поэтому повторная загрузка той же
+// записи не плодит копий и не пишет журнал заново. Копия надёжна до того, как запись
+// исчезнет из файла (ADR-0002). В журнале — ключи и типы полей, без значений.
+export async function quarantineQueueRecords(
+  file: string,
+  damaged: readonly DamagedQueueRecord[],
+  options: QueueFileOptions = {},
+): Promise<string[]> {
+  const logImpl = options.logImpl ?? console.error;
+  const paths: string[] = [];
+  for (const entry of damaged) {
+    const text = JSON.stringify(entry);
+    const digest = createHash("sha256").update(text).digest("hex").slice(0, 16);
+    const path = `${file}.damaged-${digest}.json`;
+    paths.push(path);
+    try {
+      await writeFileDurable(path, text, { ...options, replace: false });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "EEXIST") continue;
+      throw error;
+    }
+    logImpl(
+      `damaged Telegram queue record ${entry.chatKey}[${entry.index ?? "*"}] moved to ${path}: ${entry.reason}`,
+      JSON.stringify(
+        invalidItemDiagnostic(entry.record, entry.index ?? -1).item,
+      ),
+    );
+  }
+  return paths;
 }
 
 async function removeFileDurable(
@@ -871,6 +951,15 @@ async function removeFileDurable(
 export async function writeQueueFileAtomic(
   file: string,
   document: unknown,
+  options: QueueFileOptions = {},
+): Promise<void> {
+  const normalized = normalizeQueueDocument(document).document;
+  await writeFileDurable(file, JSON.stringify(normalized), options);
+}
+
+async function writeFileDurable(
+  file: string,
+  text: string,
   {
     mkdirImpl = mkdir,
     writeFileImpl = writeFile,
@@ -882,14 +971,13 @@ export async function writeQueueFileAtomic(
     replace = true,
   }: QueueFileOptions = {},
 ): Promise<void> {
-  const normalized = normalizeQueueDocument(document).document;
   const parent = dirname(file);
   await mkdirImpl(parent, { recursive: true });
   const nonceValue = typeof nonce === "function" ? nonce() : nonce;
   const tmp = `${file}.tmp-${process.pid}-${nonceValue}`;
   let replaced = false;
   try {
-    await writeFileImpl(tmp, JSON.stringify(normalized), {
+    await writeFileImpl(tmp, text, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
