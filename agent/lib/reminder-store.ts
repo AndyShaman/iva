@@ -13,6 +13,7 @@
 // политики повторов отброшены владельцем 12.09.
 import { join } from "node:path";
 import { dataDir } from "./data-dir.ts";
+import { quarantineDamagedRecord } from "./damaged-record.ts";
 import {
   acquireLock,
   loadJsonStrict,
@@ -389,9 +390,8 @@ async function loadTable(file: string): Promise<Reminder[]> {
 }
 
 /**
- * Разбор таблицы без файла — тот же, что у `list()`: `iva diagnose` читает файл сам (клиент
- * грузится без authored tree и не имеет права на побочный эффект читателя: порченый JSON
- * стор откладывает в сторону), но полей строки и перевода v1 второй копией не держит.
+ * Разбор таблицы — тот же, что у `list()`: `iva diagnose` читает JSON сам,
+ * а проверку строк, карантин и перевод v1 использует из этого модуля.
  */
 export function parseReminderTable(
   file: string,
@@ -415,16 +415,26 @@ export function parseReminderTable(
 
   const seen = new Set<string>();
   const rows: Reminder[] = [];
-  for (const value of raw.rows) {
-    const reminder =
-      version === 1
-        ? assertReminder(file, migrateV1Row(file, value, nowMs))
-        : assertReminder(file, value);
-    if (seen.has(reminder.id))
-      fail(file, `duplicate reminder id ${JSON.stringify(reminder.id)}`);
+  raw.rows.forEach((value) => {
+    let reminder: Reminder;
+    try {
+      reminder =
+        version === 1
+          ? assertReminder(file, migrateV1Row(file, value, nowMs))
+          : assertReminder(file, value);
+      if (seen.has(reminder.id)) throw new ReminderStoreError("duplicate id");
+    } catch (error) {
+      if (!(error instanceof ReminderStoreError)) throw error;
+      quarantineDamagedRecord(file, {
+        reason: "invalid or duplicate reminder row",
+        record: value,
+        label: "reminder",
+      });
+      return;
+    }
     seen.add(reminder.id);
     rows.push(reminder);
-  }
+  });
   return rows;
 }
 

@@ -277,7 +277,7 @@ test("C4 P2 owner arriving after the tick snapshot prevents the goal claim and s
 });
 
 for (const status of ["proposed", "paused"] as const)
-  test(`QA3 tick traces store_broken for ${status} with a live check and preserves the file`, async (t) => {
+  test(`QA3 tick quarantines the ${status} goal with a live check and keeps the helper running`, async (t) => {
     const f = await setup(t);
     await f.tick();
     const state = await s.readHelpers();
@@ -296,12 +296,25 @@ for (const status of ["proposed", "paused"] as const)
         errors.push(...args);
       },
     });
-    assert.ok(errors.some((error) => error instanceof s.HelperStoreError));
+    assert.deepEqual(errors, []);
     assert.equal(await readFile(file, "utf8"), raw);
     assert.equal(f.state.creates.length, 1);
     assert.equal(
       (await f.trace()).filter((e) => e.name === "store_broken").length,
-      1,
+      0,
+    );
+    assert.deepEqual((await s.readHelpers()).goals, []);
+    assert.deepEqual((await s.readHelpers()).rows, state.rows);
+    const [copy] = (await readdir(f.dir)).filter((name) =>
+      name.includes(".damaged-"),
+    );
+    assert.deepEqual(
+      (
+        JSON.parse(await readFile(join(f.dir, copy), "utf8")) as {
+          record: unknown;
+        }
+      ).record,
+      state.goals[0],
     );
   });
 

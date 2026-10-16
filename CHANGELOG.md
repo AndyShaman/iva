@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 🔧 **Одна повреждённая запись сохраняется отдельно**: напоминания, помощники, goal и очереди продолжают обрабатывать исправные записи; реестры повторов и расхода пропускают повреждённые элементы. Damaged records are preserved separately while reminders, helpers, goals and queues process healthy records; deduplication and usage ledgers skip damaged entries.
 - 🔧 **Одна испорченная запись больше не останавливает приём**: если во входящих или в очереди чата попадалась запись, которую Ива не могла прочитать, мост падал и падал снова на каждом старте, а обычная загрузка очереди уносила в карантин весь файл. Теперь испорченная запись копируется рядом в отдельный файл и снимается, остальные сообщения доставляются. A damaged record in the Telegram inbox or chat queue is copied to a sidecar file and skipped instead of crash-looping the bridge or quarantining the whole queue.
 - 🔧 **Нажатый стоп больше не останавливает приём сообщений**: если Telegram присылал апдейт, который Ива не могла разобрать (так случилось с кнопкой ■ на черновике ответа), приём вставал целиком, и сообщения после него не доходили. Теперь такой апдейт пропускается с записью в журнал, остальные идут дальше; стоп с неожиданными полями сверяет обработчик стопа. One Telegram update that fails validation no longer stalls the whole getUpdates batch: it is acknowledged and logged with its field shape, and the updates after it are processed.
 

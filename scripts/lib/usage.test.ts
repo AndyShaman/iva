@@ -497,3 +497,40 @@ void test("by source: each kind of Iva's turn is its own row, other background t
   assert.match(report, /^• chat: 40 tokens/mu);
   assert.doesNotMatch(report, /cron|digest/u);
 });
+
+void test("POISON usage skips arbitrary JSON scalars and arrays, seed 20261016", () => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-poison-usage-"));
+  try {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.oneof(
+            fc.constant(null),
+            fc.boolean(),
+            fc.integer(),
+            fc.string(),
+            fc.array(fc.jsonValue()),
+          ),
+          { minLength: 1, maxLength: 15 },
+        ),
+        (bad) => {
+          const good = step({ total: 9 });
+          writeFileSync(
+            join(dir, "usage.jsonl"),
+            [
+              JSON.stringify(good),
+              ...bad.map((value) => JSON.stringify(value)),
+              "{broken",
+              JSON.stringify(good),
+            ].join("\n"),
+          );
+          assert.deepEqual(readEntries(dir), [good, good]);
+          assert.deepEqual(readEntries(dir), [good, good]);
+        },
+      ),
+      { seed: 20261016, numRuns: 100 },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

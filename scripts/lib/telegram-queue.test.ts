@@ -71,6 +71,9 @@ type DrainOptions = {
   passBudgetMs?: number;
   deliveryTimeoutMs?: number;
   legacyAllowedUserIds?: ReadonlySet<string>;
+  quarantineImpl?: (
+    records: Parameters<typeof quarantineQueueRecords>[1],
+  ) => Promise<unknown>;
 };
 
 type RouteMessageOptions = {
@@ -1103,7 +1106,8 @@ void test("separate legacy migrations never overwrite an earlier group quarantin
   );
 });
 
-void test("drain leaves legacy group text with unknown author undelivered", async () => {
+void test("drain preserves legacy group text with unknown author in quarantine before ack", async (t) => {
+  const file = await queueFile(t);
   let document = normalizeQueueDocument({
     "-100:": ["unaddressed group text"],
   }).document;
@@ -1122,16 +1126,26 @@ void test("drain leaves legacy group text with unknown author undelivered", asyn
       acknowledged.push([chatKey, updateIds]);
       document = removeQueueItems(document, chatKey, updateIds).document;
     },
+    quarantineImpl: (records) =>
+      quarantineQueueRecords(file, records, { logImpl: () => {} }),
     settleUntil: new Map(),
     inFlight: new Map(),
     pins: new Map(),
   });
 
   assert.deepEqual(delivered, []);
-  assert.deepEqual(acknowledged, []);
-  assert.equal(remaining, 1);
+  assert.equal(acknowledged.length, 1);
+  assert.equal(remaining, 0);
+  assert.equal(queueHead(document, "-100:"), null);
+  const [copy] = (await readdir(dirname(file))).filter((name) =>
+    name.includes(".damaged-"),
+  );
   assert.equal(
-    queueHead(document, "-100:")!.legacyText,
+    (
+      JSON.parse(await readFile(join(dirname(file), copy), "utf8")) as {
+        record: { legacyText: string };
+      }
+    ).record.legacyText,
     "unaddressed group text",
   );
 });
@@ -1748,4 +1762,140 @@ void test("quarantine copies of the same record are written once", async (t) => 
   });
   assert.deepEqual(first, second);
   assert.equal(logs.length, 1);
+});
+
+void test("POISON malformed pending acknowledgement is preserved and main queue is loaded", async (t) => {
+  const file = await queueFile(t);
+  const good = createQueueItem(privateUpdate(11, "keep"), 1);
+  const document = { version: 1, queues: { "1:": [good] } };
+  const logs: string[] = [];
+  for (const raw of [
+    "{bad",
+    "null",
+    JSON.stringify({ version: 1, queues: null }),
+  ]) {
+    await writeFile(file, JSON.stringify(document));
+    await writeFile(`${file}.ack-pending`, raw);
+    await assert.rejects(loadQueueFile(file, { strict: true }));
+    assert.equal(await readFile(`${file}.ack-pending`, "utf8"), raw);
+    const before = (await readdir(dirname(file))).filter((name) =>
+      name.includes(".ack-pending.corrupt-"),
+    ).length;
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(
+        (
+          await loadQueueFile(file, {
+            logImpl: (...parts) => logs.push(parts.map(String).join(" ")),
+          })
+        ).document,
+        document,
+      );
+    const copies = (await readdir(dirname(file))).filter((name) =>
+      name.includes(".ack-pending.corrupt-"),
+    );
+    assert.equal(copies.length, before + 1);
+    assert.ok(
+      (
+        await Promise.all(
+          copies.map((name) => readFile(join(dirname(file), name), "utf8")),
+        )
+      ).includes(raw),
+    );
+  }
+  assert.equal(logs.length, 3);
+});
+
+void test("POISON an unreplayable queue head is quarantined before ack and next head runs", async (t) => {
+  const file = await queueFile(t);
+  let document = normalizeQueueDocument({
+    "-100:": ["private legacy"],
+  }).document;
+  const bad = document.queues["-100:"][0];
+  document = enqueueItem(
+    document,
+    "-100:",
+    createQueueItem(
+      {
+        ...privateUpdate(12, "next"),
+        message: {
+          ...privateUpdate(12, "next").message,
+          chat: { id: -100, type: "group" },
+        },
+      },
+      2,
+    ),
+  ).document;
+  const events: string[] = [];
+  const logs: unknown[][] = [];
+  const options = {
+    loadImpl: async () => document,
+    runningImpl: () => false,
+    statusImpl: () => null,
+    deliverImpl: async () => {
+      events.push("deliver");
+      return "handled" as const;
+    },
+    acknowledgeImpl: async (key: string, ids: readonly number[]) => {
+      events.push("ack");
+      document = removeQueueItems(document, key, ids).document;
+    },
+    quarantineImpl: async (
+      records: Parameters<typeof quarantineQueueRecords>[1],
+    ) => {
+      events.push("copy");
+      return quarantineQueueRecords(file, records, {
+        logImpl: (...parts) => logs.push(parts),
+      });
+    },
+    settleUntil: new Map<string, number>(),
+    inFlight: new Map<string, InFlightGate>(),
+    pins: new Map(),
+    resetPendingImpl: () => false,
+  };
+  await assert.rejects(
+    drainReadyQueueHeads({
+      ...options,
+      quarantineImpl: async () => {
+        throw new Error("copy failed");
+      },
+    }),
+    /copy failed/,
+  );
+  assert.equal(events.length, 0);
+  assert.equal(queueCount(document), 2);
+  await assert.rejects(
+    drainReadyQueueHeads({
+      ...options,
+      acknowledgeImpl: async () => {
+        events.push("ack-failed");
+        throw new Error("ack failed");
+      },
+    }),
+    /ack failed/,
+  );
+  assert.equal(queueCount(document), 2);
+  assert.equal(await drainReadyQueueHeads(options), 1);
+  assert.deepEqual(events, ["copy", "ack-failed", "copy", "ack"]);
+  assert.equal(await drainReadyQueueHeads(options), 0);
+  assert.deepEqual(events, [
+    "copy",
+    "ack-failed",
+    "copy",
+    "ack",
+    "deliver",
+    "ack",
+  ]);
+  assert.equal(logs.length, 1);
+  const copies = (await readdir(dirname(file))).filter((name) =>
+    name.includes(".damaged-"),
+  );
+  assert.equal(copies.length, 1);
+  assert.deepEqual(
+    (
+      JSON.parse(await readFile(join(dirname(file), copies[0]), "utf8")) as {
+        record: unknown;
+      }
+    ).record,
+    bad,
+  );
 });

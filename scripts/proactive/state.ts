@@ -108,7 +108,6 @@ function isBriefDone(value: unknown): boolean {
 function isState(value: Record<string, unknown>): boolean {
   return (
     isObject(value.seen) &&
-    Object.values(value.seen).every(isSeenEntry) &&
     isDayCount(value.wakes) &&
     isDayCount(value.modelWakes) &&
     isBriefDone(value.briefDone) &&
@@ -139,7 +138,15 @@ export function readProactiveState(path: string): ProactiveState | null {
     !isState(parsed as Record<string, unknown>)
   )
     throw new ProactiveStateError(`${path} is not in the proactive state form`);
-  return parsed as ProactiveState;
+  const state = parsed as ProactiveState;
+  const seen = Object.fromEntries(
+    Object.entries(state.seen).filter(([, entry]) => {
+      if (isSeenEntry(entry)) return true;
+      console.error(`${path}: damaged seen entry removed`);
+      return false;
+    }),
+  );
+  return { ...state, seen };
 }
 
 export async function writeProactiveState(

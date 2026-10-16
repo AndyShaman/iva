@@ -293,3 +293,49 @@ test(`Watch and Brief writes carry insight.tree byte for byte on any sequence of
     { seed: SEED, numRuns: 60 },
   );
 });
+
+test("POISON seen drops only damaged entries, seed 20261016", (t) => {
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" ")),
+  );
+  fc.assert(
+    fc.property(
+      fc.oneof(
+        fc.constant(null),
+        fc.integer(),
+        fc.string(),
+        fc.array(fc.jsonValue()),
+        fc.record({
+          firstSeenMs: fc.string(),
+          unread: fc.integer(),
+          reported: fc.boolean(),
+        }),
+        fc.record({
+          firstSeenMs: fc.integer(),
+          unread: fc.constantFrom(-1, 0.5),
+          reported: fc.boolean(),
+        }),
+        fc.record({
+          firstSeenMs: fc.integer(),
+          unread: fc.nat(),
+          reported: fc.string(),
+        }),
+      ),
+      (bad) => {
+        const state = initialState(Date.UTC(2026, 9, 16));
+        const good = { firstSeenMs: 1, unread: 2, reported: true };
+        writeFileSync(FILE, JSON.stringify({ ...state, seen: { good, bad } }));
+        const before = logs.length;
+        for (let i = 0; i < 2; i++)
+          assert.deepEqual(readProactiveState(FILE), {
+            ...state,
+            seen: { good },
+          });
+        assert.equal(logs.length - before, 2);
+        assert.ok(logs.slice(before).every((line) => line.includes("seen")));
+      },
+    ),
+    { seed: 20261016, numRuns: 100 },
+  );
+});

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -814,23 +815,28 @@ test("a completed-update ledger is isolated by Telegram bot id", async () => {
   }
 });
 
-test("an invalid completed-update schema is recovered after acceptance", async () => {
+test("an invalid completed-update container is preserved and rejected", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "iva-completed-ledger-schema-test-"));
   const completedUpdatesFile = join(root, "completed-updates.json");
   writeFileSync(completedUpdatesFile, JSON.stringify({ updates: "broken" }));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const before = readFileSync(completedUpdatesFile, "utf8");
   let sends = 0;
   const delivery = productionTelegramDelivery(
-    async () => ({ id: `accepted-${++sends}` }),
+    async () => {
+      sends++;
+      return { id: "accepted" };
+    },
     { completedUpdatesFile },
   );
-
-  assert.equal(await delivery(privateUpdate(801, "recover")), true);
-  assert.equal(await delivery(privateUpdate(801, "duplicate")), "handled");
-  assert.equal(sends, 1);
-  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
-    botId: "999",
-    updates: [801],
-  });
+  await assert.rejects(
+    delivery(privateUpdate(801, "recover")),
+    /invalid schema/,
+  );
+  assert.equal(readFileSync(completedUpdatesFile, "utf8"), before);
+  await assert.rejects(delivery(privateUpdate(801, "retry")), /invalid schema/);
+  assert.equal(sends, 0);
+  assert.deepEqual(readdirSync(root), ["completed-updates.json"]);
 });
 
 test("missing webhook secret disables deduplication and reports it once", async () => {
@@ -1256,4 +1262,58 @@ test("an ordinary send failure stays transient and never claims the closed-sessi
     console.error = priorError;
   }
   assert.equal(attempts, 1, "транзиентный сбой не перемаршрутизируется");
+});
+
+test("POISON completed ledger retains good ids while removing only bad entries", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "iva-poison-ledger-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const completedUpdatesFile = join(root, "completed.json");
+  writeFileSync(
+    completedUpdatesFile,
+    JSON.stringify({
+      botId: "999",
+      updates: [701, null, -1, "private id", {}, 702],
+    }),
+  );
+  let sends = 0;
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" ")),
+  );
+  const delivery = productionTelegramDelivery(
+    async () => ({ id: `accepted-${++sends}` }),
+    { completedUpdatesFile },
+  );
+  for (const id of [701, 702, 701])
+    assert.equal(await delivery(privateUpdate(id, "duplicate")), "handled");
+  assert.equal(sends, 0);
+  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
+    botId: "999",
+    updates: [701, 702],
+  });
+  assert.ok(logs.length > 0);
+  assert.ok(logs.every((line) => !line.includes("private id")));
+  const copies = readdirSync(root).filter((name) => name.includes(".damaged-"));
+  assert.equal(copies.length, 4);
+  assert.deepEqual(
+    copies
+      .map(
+        (name) =>
+          (
+            JSON.parse(readFileSync(join(root, name), "utf8")) as {
+              record: unknown;
+            }
+          ).record,
+      )
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [null, -1, "private id", {}].sort((a, b) =>
+      JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    ),
+  );
+  assert.equal(await delivery(privateUpdate(703, "new")), true);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
+    botId: "999",
+    updates: [701, 702, 703],
+  });
 });

@@ -71,19 +71,44 @@ test("missing reader and schema corruption preserve bytes and reject foreign fie
     ),
     { seed: 20261013, numRuns: 40 },
   );
-  for (const value of [
-    { ...base, x: 1 },
-    { ...base, schemaVersion: 2 },
-    { ...base, rows: [row, row] },
-    { ...base, rows: [{ ...row, x: 1 }] },
-    { ...base, rows: [{ ...row, steps: 0.5 }] },
-    { ...base, rows: [{ ...row, status: "finished" }] },
-  ]) {
+  for (const value of [{ ...base, schemaVersion: 2 }]) {
     const raw = JSON.stringify(value);
     await writeFile(join(dir, "helpers.json"), raw);
     await assert.rejects(s.readHelpers(), s.HelperStoreError);
     assert.equal(await readFile(join(dir, "helpers.json"), "utf8"), raw);
   }
+  for (const bad of [
+    { ...row, x: 1 },
+    { ...row, steps: 0.5 },
+    { ...row, status: "finished" },
+  ]) {
+    await writeFile(
+      join(dir, "helpers.json"),
+      JSON.stringify({ ...base, rows: [row, bad] }),
+    );
+    assert.deepEqual((await s.readHelpers()).rows, [row]);
+    const copies = (await readdir(dir)).filter((name) =>
+      name.includes(".damaged-"),
+    );
+    const records = await Promise.all(
+      copies.map(
+        async (name) =>
+          (
+            JSON.parse(await readFile(join(dir, name), "utf8")) as {
+              record: unknown;
+            }
+          ).record,
+      ),
+    );
+    assert.ok(
+      records.some((record) => JSON.stringify(record) === JSON.stringify(bad)),
+    );
+  }
+  await writeFile(
+    join(dir, "helpers.json"),
+    JSON.stringify({ ...base, rows: [row, row] }),
+  );
+  assert.deepEqual((await s.readHelpers()).rows, [row]);
   assert.deepEqual(
     (await readdir(dir)).filter((x) => x.includes("corrupt")),
     [],
@@ -284,4 +309,87 @@ test("command sequences preserve capacity, stop, receipts and undelivered lifeti
     ),
     { seed: 20261013, numRuns: 30 },
   );
+});
+
+test("POISON helpers and goals keep good rows and unknown top-level fields across mutation", async (t) => {
+  const dir = await data(t);
+  const good = await added();
+  const file = join(dir, "helpers.json");
+  const goal = {
+    id: "g-abcdef",
+    text: "goal",
+    may: "",
+    chat,
+    createdAt: 1,
+    status: "active",
+    pause: null,
+    plan: "",
+    nextCheckAtMs: 10,
+    ownerNext: false,
+    check: null,
+    verdict: null,
+    checks: { day: "2026-10-16", count: 0 },
+    failures: 0,
+    lastError: null,
+    expiresAtMs: 1000,
+  };
+  const bad = [
+    { ...good, task: "private helper", extra: true },
+    { ...goal, text: "private goal", extra: true },
+  ];
+  await writeFile(
+    file,
+    JSON.stringify({
+      schemaVersion: 1,
+      rows: [bad[0], good],
+      goals: [bad[1], goal],
+      future: { secret: "preserve" },
+    }),
+  );
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" ")),
+  );
+  for (let i = 0; i < 2; i++) {
+    const state = await s.readHelpers();
+    assert.deepEqual(state.rows, [good]);
+    assert.deepEqual(state.goals, [goal]);
+  }
+  const copies = (await readdir(dir)).filter((name) =>
+    /\.damaged-[a-f0-9]{16}\.json$/.test(name),
+  );
+  assert.equal(copies.length, 2);
+  assert.equal(logs.length, 2);
+  assert.ok(
+    logs.every(
+      (line) =>
+        !line.includes("private helper") && !line.includes("private goal"),
+    ),
+  );
+  const records = await Promise.all(
+    copies.map(
+      async (name) =>
+        (
+          JSON.parse(await readFile(join(dir, name), "utf8")) as {
+            record: unknown;
+          }
+        ).record,
+    ),
+  );
+  assert.deepEqual(
+    records.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [...bad].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+  await s.mutateHelpers((state) => {
+    state.rows[0].may = "updated";
+    return { save: true, value: null };
+  });
+  const saved = JSON.parse(await readFile(file, "utf8")) as {
+    future: unknown;
+    rows: unknown[];
+    goals: unknown[];
+  };
+  assert.deepEqual(saved.future, { secret: "preserve" });
+  assert.equal(saved.rows.length, 1);
+  assert.deepEqual(saved.goals, [goal]);
 });

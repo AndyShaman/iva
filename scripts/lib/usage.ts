@@ -144,15 +144,17 @@ export function readEntries(dataDir = defaultDir()): UsageRecord[] {
     return [];
   }
   const out: UsageRecord[] = [];
-  for (const line of raw.split("\n")) {
+  raw.split("\n").forEach((line) => {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) return;
     try {
-      out.push(JSON.parse(trimmed) as UsageRecord);
+      const value: unknown = JSON.parse(trimmed);
+      if (typeof value === "object" && value !== null && !Array.isArray(value))
+        out.push(value as UsageRecord);
     } catch {
       /* битая/частичная строка — пропускаем */
     }
-  }
+  });
   return out;
 }
 

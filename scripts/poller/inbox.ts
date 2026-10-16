@@ -277,11 +277,7 @@ export async function promoteReadyInbox({
     const routed = await routeImpl(batch.update);
     // terminal-drop — исход, после которого повторять доставку нечем и незачем:
     // владение снимается ровно так же, как после принятого хода (issue #203).
-    if (
-      routed !== "queued" &&
-      routed !== "delivered" &&
-      routed !== "terminal-drop"
-    ) {
+    if (!["queued", "delivered", "terminal-drop", "dropped"].includes(routed)) {
       const failures = (backoff.get(key)?.failures ?? 0) + 1;
       backoff.set(key, {
         failures,

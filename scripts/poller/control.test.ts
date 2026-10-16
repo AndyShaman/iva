@@ -1755,11 +1755,29 @@ test("/usage answers from the usage log without the model", async () => {
 
 test("/usage names the reason when the log cannot be summarized", async () => {
   const usageLog = join(dataDir, "usage.jsonl");
-  writeFileSync(usageLog, "null\n");
+  writeFileSync(
+    usageLog,
+    JSON.stringify({ turnId: { toString: null } }) + "\n",
+  );
   try {
     await withBotApi(botOk, async (calls) => {
       assert.equal(await handleControl(textUpdate(1012, "/usage")), true);
       assert.match(sentTexts(calls), /Couldn't read the usage log: /u);
+    });
+  } finally {
+    rmSync(usageLog, { force: true });
+  }
+});
+
+test("/usage skips non-object rows and replies with an empty report", async () => {
+  const usageLog = join(dataDir, "usage.jsonl");
+  const raw = "null\n42\n[]\n";
+  writeFileSync(usageLog, raw);
+  try {
+    await withBotApi(botOk, async (calls) => {
+      assert.equal(await handleControl(textUpdate(1012, "/usage")), true);
+      assert.match(sentTexts(calls), /No usage logged yet\./u);
+      assert.equal(readFileSync(usageLog, "utf8"), raw);
     });
   } finally {
     rmSync(usageLog, { force: true });

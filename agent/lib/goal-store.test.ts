@@ -3,7 +3,14 @@ import "../../scripts/fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
-import { mkdtemp, rm, readFile, writeFile, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  readFile,
+  writeFile,
+  stat,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as s from "./helper-store.ts";
@@ -184,7 +191,7 @@ test("P1 delivered rows block the next due check until swept, preserving the sav
 });
 
 for (const status of ["proposed", "paused"] as const)
-  test(`QA3 ${status} with a live check is store corruption before settlement`, async (t) => {
+  test(`QA3 ${status} with a live check quarantines the inconsistent goal before settlement`, async (t) => {
     const { file } = await setup(t);
     const { row } = await check();
     await s.claimHelper(row.id, { ownerStartedAt: now }, now);
@@ -196,12 +203,30 @@ for (const status of ["proposed", "paused"] as const)
     });
     const raw = JSON.stringify(state);
     await writeFile(file, raw);
-    await assert.rejects(s.readHelpers(), s.HelperStoreError);
-    await assert.rejects(
-      s.finalizeHelper(row.id, { kind: "running", firedAt: now }, finish, now),
-      s.HelperStoreError,
-    );
+    const loaded = await s.readHelpers();
+    assert.deepEqual(loaded.goals, []);
+    assert.deepEqual(loaded.rows, state.rows);
     assert.equal(await readFile(file, "utf8"), raw);
+    const copies = (await readdir(join(file, ".."))).filter((name) =>
+      name.includes(".damaged-"),
+    );
+    assert.equal(copies.length, 1);
+    assert.deepEqual(
+      (
+        JSON.parse(await readFile(join(file, "..", copies[0]), "utf8")) as {
+          record: unknown;
+        }
+      ).record,
+      state.goals[0],
+    );
+    await s.finalizeHelper(
+      row.id,
+      { kind: "running", firedAt: now },
+      finish,
+      now,
+    );
+    assert.equal((await s.getHelper(row.id))?.status, "closed");
+    assert.deepEqual((await s.readHelpers()).goals, []);
   });
 test("legacy defaults, corruption and cross-links preserve stored bytes", async (t) => {
   const { file } = await setup(t);
@@ -223,16 +248,59 @@ test("legacy defaults, corruption and cross-links preserve stored bytes", async 
   ]) {
     const raw = JSON.stringify(value);
     await writeFile(file, raw);
-    await assert.rejects(s.readHelpers(), s.HelperStoreError);
+    if (value.schemaVersion === 2)
+      await assert.rejects(s.readHelpers(), s.HelperStoreError);
+    else {
+      const loaded = await s.readHelpers();
+      assert.deepEqual(loaded.rows, value.rows);
+      assert.deepEqual(loaded.goals, value.goals.length === 2 ? [goal] : []);
+      const copies = (await readdir(join(file, ".."))).filter((name) =>
+        name.includes(".damaged-"),
+      );
+      const records = await Promise.all(
+        copies.map(
+          async (name) =>
+            (
+              JSON.parse(await readFile(join(file, "..", name), "utf8")) as {
+                record: unknown;
+              }
+            ).record,
+        ),
+      );
+      assert.ok(
+        records.some(
+          (record) => JSON.stringify(record) === JSON.stringify(value.goals[0]),
+        ),
+      );
+    }
     assert.equal(await readFile(file, "utf8"), raw);
   }
   await fc.assert(
     fc.asyncProperty(fc.jsonValue(), async (value) => {
       const raw = JSON.stringify({ ...base, goals: value });
       await writeFile(file, raw);
-      if (Array.isArray(value) && value.length === 0)
+      if (Array.isArray(value)) {
         assert.deepEqual((await s.readHelpers()).goals, []);
-      else await assert.rejects(s.readHelpers(), s.HelperStoreError);
+        const copies = (await readdir(join(file, ".."))).filter((name) =>
+          name.includes(".damaged-"),
+        );
+        const records = await Promise.all(
+          copies.map(
+            async (name) =>
+              (
+                JSON.parse(await readFile(join(file, "..", name), "utf8")) as {
+                  record: unknown;
+                }
+              ).record,
+          ),
+        );
+        for (const record of value)
+          assert.ok(
+            records.some(
+              (copy) => JSON.stringify(copy) === JSON.stringify(record),
+            ),
+          );
+      } else await assert.rejects(s.readHelpers(), s.HelperStoreError);
       assert.equal(await readFile(file, "utf8"), raw);
     }),
     { seed: 20261014, numRuns: 50 },

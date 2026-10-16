@@ -331,8 +331,8 @@ void test("successful inbox promotion clears prior backoff state", async () => {
   assert.equal(backoff.has("1::42"), false);
 });
 
-void test("callback rejection, downstream drop, and enqueue failure all retain inbox ownership", async () => {
-  for (const result of ["rejected", "dropped", "enqueue-failed"] as const) {
+void test("callback rejection and enqueue failure retain inbox ownership", async () => {
+  for (const result of ["rejected", "enqueue-failed"] as const) {
     const document = inboxDocument(callback(101));
     let acknowledgements = 0;
     assert.equal(
@@ -813,3 +813,29 @@ for (const [name, damaged] of [
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+void test("POISON dropped routing result is acknowledged once and the next inbox item proceeds", async () => {
+  let document = inboxDocument(update(101, "dropped"));
+  const routed: number[] = [];
+  const options = {
+    backoff: promotionBackoff(),
+    now: () => 1000,
+    collectorOptions: { quietMs: 800 },
+    loadImpl: () => Promise.resolve(document),
+    routeImpl: (candidate: TelegramQueueUpdate) => {
+      routed.push(candidate.update_id);
+      return Promise.resolve("dropped" as const);
+    },
+    acknowledgeImpl: (key: string, ids: readonly number[]) => {
+      document = removeQueueItems(document, key, ids).document;
+      return Promise.resolve();
+    },
+  };
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(document.queues, {});
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(routed, [101]);
+  document = inboxDocument(update(102, "next"));
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(routed, [101, 102]);
+});

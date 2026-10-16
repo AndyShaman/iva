@@ -850,21 +850,33 @@ export async function loadQueueFile(
     // A pending document is the last fully durable pre-ack state. Restore it
     // before any caller can observe the possibly published removal.
     const damaged: DamagedQueueRecord[] = [];
-    const recovered = normalizeQueueDocument(JSON.parse(pendingRaw), {
-      damaged,
-    }).document;
-    await quarantineQueueRecords(file, damaged, options);
-    const recoveryOptions = { ...options };
-    if (typeof recoveryOptions.nonce === "function")
-      delete recoveryOptions.nonce;
-    await writeQueueFileAtomic(file, recovered, recoveryOptions);
-    await removeFileDurable(pendingFile, options);
-    return {
-      document: recovered,
-      migrated: false,
-      quarantined: null,
-      recoveredPendingAcknowledgement: true,
-    };
+    let recovered: TelegramQueueDocument | undefined;
+    try {
+      recovered = normalizeQueueDocument(JSON.parse(pendingRaw), {
+        damaged,
+      }).document;
+    } catch (error) {
+      if (strict) throw error;
+      const backup = `${pendingFile}.corrupt-${Date.now()}-${quarantineNonce()}`;
+      await renameImpl(pendingFile, backup);
+      (options.logImpl ?? console.error)(
+        `corrupt Telegram queue pending file moved to ${backup}`,
+      );
+    }
+    if (recovered) {
+      await quarantineQueueRecords(file, damaged, options);
+      const recoveryOptions = { ...options };
+      if (typeof recoveryOptions.nonce === "function")
+        delete recoveryOptions.nonce;
+      await writeQueueFileAtomic(file, recovered, recoveryOptions);
+      await removeFileDurable(pendingFile, options);
+      return {
+        document: recovered,
+        migrated: false,
+        quarantined: null,
+        recoveredPendingAcknowledgement: true,
+      };
+    }
   }
 
   let raw: string;

@@ -3,6 +3,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./data-dir.ts";
+import { quarantineDamagedRecord } from "./damaged-record.ts";
 import { acquireLock, releaseLock, saveJsonAtomic } from "./json-store.ts";
 import { goalSchema, helperIdSchema, settleGoal } from "./goal-rules.ts";
 
@@ -64,9 +65,15 @@ const rowSchema = z
       (r.deliveredAt === null || r.status === "finished"),
     "inconsistent helper row",
   );
-const stateSchema = z
-  .strictObject({
+const documentSchema = z
+  .object({
     schemaVersion: z.literal(1),
+    rows: z.array(z.unknown()),
+    goals: z.array(z.unknown()).default([]),
+  })
+  .passthrough();
+const stateSchema = documentSchema
+  .extend({
     rows: z.array(rowSchema).max(HELPER_MAX_ROWS),
     goals: z.array(goalSchema).default([]),
   })
@@ -152,7 +159,24 @@ export async function readHelpers(): Promise<HelpersState> {
     throw new HelperStoreError(`${file()}: ${String(error)}`);
   }
   try {
-    return stateSchema.parse(JSON.parse(raw));
+    const document = documentSchema.parse(JSON.parse(raw));
+    let state: HelpersState = { ...document, rows: [], goals: [] };
+    for (const label of ["rows", "goals"] as const) {
+      for (const record of document[label]) {
+        const parsed = stateSchema.safeParse({
+          ...state,
+          [label]: [...state[label], record],
+        });
+        if (parsed.success) state = parsed.data;
+        else
+          quarantineDamagedRecord(file(), {
+            reason: "invalid or inconsistent row",
+            record,
+            label: `helpers ${label}`,
+          });
+      }
+    }
+    return state;
   } catch (error) {
     throw new HelperStoreError(`${file()}: ${String(error)}`);
   }

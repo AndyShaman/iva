@@ -104,7 +104,6 @@ const queueInFlight = new Map<string, QueuePhase>();
 // Ids of a delivered batch until its removal is durable: every redelivery carries exactly them.
 const queueBatchPins = new Map<string, readonly number[]>();
 const queueDrainRotation: { afterKey: string | null } = { afterKey: null };
-const undrainableLegacyLogged = new Set<string>();
 // Remove this backoff when vercel/eve#2876 is fixed in the installed eve.
 const resetIntentRetryAt = new Map<string, number>();
 const resetIntentFailureCount = new Map<string, number>();
@@ -1094,7 +1093,6 @@ export {
   queueInFlight,
   queueBatchPins,
   queueDrainRotation,
-  undrainableLegacyLogged,
   statusGeneration,
   sendStaleRunNotice,
   clearFailedDirectIngress,

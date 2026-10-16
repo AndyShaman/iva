@@ -4,6 +4,9 @@
 // поэтому ASSISTANT_DATA_DIR меняется до импорта модуля и ещё раз перед каждым тестом
 // (образец trace.property.test.ts:23-26).
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { quarantineDamagedRecord } from "./damaged-record.ts";
 import {
   existsSync,
   mkdirSync,
@@ -307,12 +310,21 @@ test("строка без поля sessionId (таблица старой вер
   const [read] = await list();
   assert.equal(read?.sessionId, null);
 
-  // Кривая сессия — ошибка строки, не тихий null.
+  // Кривая сессия сохраняется в карантине вместе со строкой.
   await saveJsonAtomic(reminderFile(), {
     schemaVersion: REMINDER_SCHEMA_VERSION,
     rows: [{ ...row({ id: "old", nextRunAtMs: 8 }), sessionId: "" }],
   });
-  await assert.rejects(list(), /sessionId must be null or a non-empty string/u);
+  assert.deepEqual(await list(), []);
+  const [copy] = files().filter((name) => name.includes(".damaged-"));
+  assert.equal(
+    (
+      JSON.parse(readFileSync(join(caseDir, copy), "utf8")) as {
+        record: { sessionId: unknown };
+      }
+    ).record.sessionId,
+    "",
+  );
 });
 
 test("результат старого срока не переписывает факт нового и уходит в журнал", async () => {
@@ -596,4 +608,89 @@ test("миграция v1: не срабатывавшее мигрирует б
     "несрабатывавшее — нет факта доставки, а не провал",
   );
   assert.equal(found.error, null);
+});
+
+test("POISON reminders quarantine invalid and duplicate rows once before the next write", async (t) => {
+  const good = row({ id: "keep" });
+  const bad = [
+    null,
+    { ...good, id: "bad", text: "private reminder", foreign: true },
+    { ...good, text: "duplicate secret" },
+  ];
+  await seed([good, ...bad, row({ id: "next" })]);
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" ")),
+  );
+  for (let i = 0; i < 2; i++)
+    assert.deepEqual(
+      (await list()).map((r) => r.id),
+      ["keep", "next"],
+    );
+  const copies = files().filter((name) =>
+    /\.damaged-[a-f0-9]{16}\.json$/.test(name),
+  );
+  assert.equal(copies.length, 3);
+  assert.equal(logs.length, 3);
+  assert.ok(
+    logs.every(
+      (line) =>
+        !line.includes("private reminder") &&
+        !line.includes("duplicate secret"),
+    ),
+  );
+  assert.deepEqual(
+    copies
+      .map(
+        (name) =>
+          (
+            JSON.parse(readFileSync(join(caseDir, name), "utf8")) as {
+              record: unknown;
+            }
+          ).record,
+      )
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [...bad].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+  await remove("next");
+  assert.deepEqual(table().rows, [{ ...good, sessionId: null }]);
+});
+
+test("damaged record copies are private, exclusive and omit values from logs", () => {
+  const file = join(caseDir, "state.json");
+  const entry = {
+    reason: "bad row",
+    label: "fixture",
+    record: { text: "private text", n: 1, missing: null, rows: [] },
+  };
+  const logs: string[] = [];
+  const log = (...parts: unknown[]) => logs.push(parts.map(String).join(" "));
+  const path = quarantineDamagedRecord(file, entry, log);
+  assert.ok(path);
+  assert.match(path, /\.damaged-[a-f0-9]{16}\.json$/);
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), entry);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.equal(quarantineDamagedRecord(file, entry, log), null);
+  assert.equal(logs.length, 1);
+  assert.ok(logs[0].includes("text") && logs[0].includes("string"));
+  assert.equal(logs[0].includes("private text"), false);
+  assert.deepEqual(files(), [path.split("/").at(-1)]);
+});
+
+test("failed damaged-record publication preserves source and blocks reminder mutation", async (t) => {
+  const original = fs.linkSync;
+  t.mock.method(fs, "linkSync", (...args: Parameters<typeof fs.linkSync>) => {
+    if (String(args[1]).includes(".damaged-")) throw new Error("copy failed");
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await seed([row({ id: "keep" }), null]);
+  const before = readFileSync(reminderFile(), "utf8");
+  await assert.rejects(remove("keep"), /copy failed/);
+  assert.equal(readFileSync(reminderFile(), "utf8"), before);
+  assert.deepEqual(files(), ["reminders.json"]);
 });
