@@ -175,7 +175,17 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.2 · 15.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.3 · 16.10.2026 — expand the latest releases</b></summary>
+
+### 16.10.2026
+
+#### v0.5.3
+
+- 🔧 **A tapped stop no longer halts incoming messages**: when Telegram sent an update Iva could not parse (it happened with the ■ button on a reply draft), the whole intake stalled and later messages never arrived. Now such an update is skipped with a log entry and the rest go through; a stop with unexpected fields is checked by the stop handler.
+- 🔧 **One broken record no longer stops intake**: if the inbox or a chat queue held a record Iva could not read, the bridge crashed and crashed again on every start, and a regular queue load quarantined the whole file. Now the broken record is copied to a separate file next to it and skipped, and the other messages are delivered.
+- 🔧 **One damaged record is kept aside**: reminders, helpers, goals and queues keep processing the healthy records; the deduplication and usage ledgers skip damaged entries.
+- 🔎 **Watch skips what you already read, Brief counts from the previous Brief**: right before sending, Iva rechecks chats and mail, and an item you read during the turn is dropped. Brief covers the window since the previous Brief, names an unreadable source in one line and carries over an item still waiting for your reply with the days waited.
+- 🔧 **Installs on Node newer than 24**: Iva accepts Node 24 and newer, and installs on Node 26 no longer warn with EBADENGINE.
 
 ### 15.10.2026
 
@@ -214,15 +224,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 💬 **During long work you can see what Iva is busy with**: a private chat shows a streaming draft with the current tool. The native ■ control stops the turn. Groups and topics show typing and use `/stop`. The final answer arrives as a separate reply.
 - 🔎 **Iva searches on her own first, then asks**: before asking you a question, she checks her memory, chats and mail, the web and the server, and in the question she says what she has already checked. What to choose and whether something may be done she still asks you.
 - 📄 **Replacements in Word files no longer double up**: in a merged table cell, replacing «100» with «1000» gave «10000». Now each replacement is made once, and page breaks, tabs and pictures next to the text stay in place.
-
-### 10.10.2026
-
-#### v0.4.15
-
-- 🔧 **The userbot comes back after an update**: after `iva update` the userbot could keep restarting in a loop and never work. Now Iva prepares it before it starts and waits until it answers. If it cannot be prepared, the userbot is switched off, and Iva tells you in Telegram what stops working and where to turn it back on (`/menu`, 📡 Userbot screen, «Turn on»). `iva restart` leaves a working userbot as it is.
-- 🛠 **Telegram search through the userbot no longer trips up**: sometimes Iva named an account that does not exist or wrote «null» where nothing had to be given, and the request to the userbot failed. Now such a request goes to your connected account, and a chat can be given as a `t.me/name` link. Thanks to @Entset for the fix.
-- 🎙 **Iva spells names in voice notes the way you set them**: in `/menu`, on the «🎤 Voice» screen, tap «Names and terms» and list names and words separated by commas, for example OJ, Sonnet, Todoist. Voice transcripts will spell them the same way in every message. For now only words in Latin letters work; Iva shortens a list that is too long to what Deepgram accepts at once and tells you so. Deepgram charges a small extra per minute for this feature; without a list everything works as before.
-- ⏳ **When the model stays silent, Iva suggests /new**: if the model again and again does not start answering in the same conversation, Iva suggests sending `/new`. A long conversation may have become too heavy for the model, and `/new` starts a fresh one.
 
 </details>
 

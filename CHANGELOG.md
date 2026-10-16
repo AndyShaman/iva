@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## [0.5.3] - 2026-10-16
 
-- 🔧 **Одна повреждённая запись сохраняется отдельно**: напоминания, помощники, goal и очереди продолжают обрабатывать исправные записи; реестры повторов и расхода пропускают повреждённые элементы. Damaged records are preserved separately while reminders, helpers, goals and queues process healthy records; deduplication and usage ledgers skip damaged entries.
-- 🔧 **Одна испорченная запись больше не останавливает приём**: если во входящих или в очереди чата попадалась запись, которую Ива не могла прочитать, мост падал и падал снова на каждом старте, а обычная загрузка очереди уносила в карантин весь файл. Теперь испорченная запись копируется рядом в отдельный файл и снимается, остальные сообщения доставляются. A damaged record in the Telegram inbox or chat queue is copied to a sidecar file and skipped instead of crash-looping the bridge or quarantining the whole queue.
 - 🔧 **Нажатый стоп больше не останавливает приём сообщений**: если Telegram присылал апдейт, который Ива не могла разобрать (так случилось с кнопкой ■ на черновике ответа), приём вставал целиком, и сообщения после него не доходили. Теперь такой апдейт пропускается с записью в журнал, остальные идут дальше; стоп с неожиданными полями сверяет обработчик стопа. One Telegram update that fails validation no longer stalls the whole getUpdates batch: it is acknowledged and logged with its field shape, and the updates after it are processed.
+- 🔧 **Одна испорченная запись больше не останавливает приём**: если во входящих или в очереди чата попадалась запись, которую Ива не могла прочитать, мост падал и падал снова на каждом старте, а обычная загрузка очереди уносила в карантин весь файл. Теперь испорченная запись копируется рядом в отдельный файл и снимается, остальные сообщения доставляются. A damaged record in the Telegram inbox or chat queue is copied to a sidecar file and skipped instead of crash-looping the bridge or quarantining the whole queue.
+- 🔧 **Одна повреждённая запись сохраняется отдельно**: напоминания, помощники, goal и очереди продолжают обрабатывать исправные записи; реестры повторов и расхода пропускают повреждённые элементы. Damaged records are preserved separately while reminders, helpers, goals and queues process healthy records; deduplication and usage ledgers skip damaged entries.
+- 🔎 **Watch не присылает уже прочитанное, Brief считает от прошлого обзора**: перед отправкой Ива ещё раз сверяет чаты и письма, и пункт, который вы успели прочитать за время хода, выпадает. Brief берёт окно «с прошлого Brief», одной строкой называет источник, который не прочитался, и переносит дело, которое всё ещё ждёт вашего ответа, с числом дней ожидания. Watch rechecks unread chats and mail right before sending and drops items read meanwhile; Brief covers the window since the previous Brief, names an unreadable source in one line and carries over items still waiting with the days waited.
+- 🔧 **Установка на Node новее 24**: Ива принимает Node 24 и новее, и на Node 26 установка больше не предупреждает EBADENGINE. Iva accepts Node 24 and newer, so installs on Node 26 no longer warn with EBADENGINE.
+
+[0.5.3]: https://github.com/smixs/iva-agent/releases/tag/v0.5.3
 
 ## [0.5.2] - 2026-10-15
 
