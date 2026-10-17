@@ -250,7 +250,7 @@ class UnitTranslation {
       env.PATH = env.PATH.replace(
         /\/usr\/local\/bin(?=:|$)/u,
         "/usr/local/bin:/opt/homebrew/bin",
-      );
+      ).replace(/(^|:)\/bin(?=:|$)/u, "$1/bin:/usr/sbin:/sbin");
     main[0] = stableNode(main[0]);
     return main;
   }

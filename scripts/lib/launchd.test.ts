@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import net from "node:net";
 import {
   mkdtempSync,
   mkdirSync,
@@ -33,7 +35,7 @@ import {
 } from "./systemd-values.ts";
 import { mcpProxyUnitBody, pluginServiceUnitBody } from "./plugin-units.ts";
 import { classifyLsofListeners } from "./listener-security.ts";
-import { lsofProbe } from "./ports.ts";
+import { bindProbe, lsofProbe, PortChecker, PortSelector } from "./ports.ts";
 
 const codes = JSON.parse(
   readFileSync(
@@ -486,18 +488,124 @@ void test(
   },
 );
 
-void test("an unavailable lsof leaves port ownership unknown", async () => {
-  const prior = process.env.PATH;
-  process.env.PATH = "/nonexistent";
-  try {
-    assert.deepEqual(await lsofProbe.check(8723), {
-      occupied: true,
-      holder: "неизвестно (lsof недоступен)",
-    });
-  } finally {
-    process.env.PATH = prior;
-  }
+void test("an unavailable lsof leaves port ownership unknown and bind decides occupancy", async (t) => {
+  const spawn = t.mock.method(childProcess, "spawnSync", () => ({
+    status: null,
+    stdout: null,
+    stderr: null,
+    error: Object.assign(new Error("lsof missing"), { code: "ENOENT" }),
+  }));
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.deepEqual(await lsofProbe.check(8723), {
+    occupied: false,
+    holder: "неизвестно (lsof недоступен)",
+  });
+  assert.equal(
+    spawn.mock.calls[0].arguments[0],
+    process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof",
+  );
+
+  const server = net.createServer();
+  t.after(() => server.close());
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, "0.0.0.0", () =>
+      resolve((server.address() as net.AddressInfo).port),
+    );
+  });
+  const checker = new PortChecker([bindProbe, lsofProbe]);
+  assert.deepEqual(await checker.check(port), {
+    port,
+    occupied: true,
+    holders: ["bind: порт занят"],
+  });
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  assert.deepEqual(await checker.check(port), {
+    port,
+    occupied: false,
+    holders: [],
+  });
 });
+
+void test(
+  "a free probe port stays free with the original launchd PATH without sbin",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const plist = plistJson(
+      unitToPlist(
+        {
+          unit: "iva-test.service",
+          body: `ExecStart=/usr/bin/env PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin ${process.execPath} /fixture/main.ts`,
+        },
+        undefined,
+        { root: "/fixture", home: "/fixture/home" },
+      ),
+    );
+    const env = plist.EnvironmentVariables as Record<string, string>;
+    const server = net.createServer();
+    t.after(() => server.close());
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "0.0.0.0", () =>
+        resolve((server.address() as net.AddressInfo).port),
+      );
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const prior = process.env.PATH;
+    process.env.PATH = env.PATH.split(":")
+      .filter((path) => path !== "/usr/sbin" && path !== "/sbin")
+      .join(":");
+    try {
+      assert.equal(
+        process.env.PATH,
+        "/fixture/home/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+      );
+      assert.equal(
+        await new PortSelector(
+          new PortChecker([bindProbe, lsofProbe]),
+        ).firstFree(port, 1),
+        port,
+      );
+    } finally {
+      process.env.PATH = prior;
+    }
+    assert.equal(
+      env.PATH,
+      "/fixture/home/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    );
+  },
+);
+
+void test(
+  "lsof reports a real listening process under the restricted launchd PATH",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const server = net.createServer();
+    t.after(() => server.close());
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "0.0.0.0", () =>
+        resolve((server.address() as net.AddressInfo).port),
+      );
+    });
+    const prior = process.env.PATH;
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      const result = await lsofProbe.check(port);
+      assert.equal(result.occupied, true);
+      assert.match(result.holder ?? "", /\(LISTEN\)/u);
+      assert.match(
+        result.holder ?? "",
+        new RegExp(`\\b${process.pid}\\b`, "u"),
+      );
+    } finally {
+      process.env.PATH = prior;
+    }
+  },
+);
 
 void test(
   "every shipped deploy unit and generated plugin unit translates and passes plutil",

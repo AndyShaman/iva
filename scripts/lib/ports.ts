@@ -80,10 +80,11 @@ export const procProbe = {
 } satisfies PortProbe;
 
 function lsofListeners(port: number) {
-  return spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
+  return spawnSync(
+    process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof",
+    ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"],
+    { encoding: "utf8", timeout: 5000 },
+  );
 }
 
 export const lsofProbe: PortProbe = {
@@ -94,7 +95,7 @@ export const lsofProbe: PortProbe = {
     const occupied = /\(LISTEN\)/u.test(out);
     return Promise.resolve(
       result.error || (result.status !== 0 && result.status !== 1)
-        ? { occupied: true, holder: "неизвестно (lsof недоступен)" }
+        ? { occupied: false, holder: "неизвестно (lsof недоступен)" }
         : { occupied, holder: occupied ? out.trim() : undefined },
     );
   },
