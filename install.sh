@@ -757,7 +757,7 @@ install_optional_gh() {
   case "$PM" in
     apt) install_optional_gh_apt ;;
     dnf) run_root dnf install -y -q gh ;;
-    brew) brew install gh ;;
+    brew) brew install gh </dev/null ;;
     *) return 1 ;;
   esac
 }
@@ -810,7 +810,7 @@ if [ "${#need_pkgs[@]}" -gt 0 ]; then
         run_root dnf install -y -q "${need_pkgs[@]}" || warn "$(t "some packages didn't install (${need_pkgs[*]})" "часть пакетов не установилась (${need_pkgs[*]})")"
         ;;
       brew)
-        for p in "${need_pkgs[@]}"; do brew install "$p" || warn "$(t "couldn't install $p" "не удалось поставить $p")"; done
+        for p in "${need_pkgs[@]}"; do brew install "$p" </dev/null || warn "$(t "couldn't install $p" "не удалось поставить $p")"; done
         ;;
     esac
   fi

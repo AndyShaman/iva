@@ -8,6 +8,7 @@ import {
   readFileSync,
   existsSync,
   statSync,
+  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -683,4 +684,46 @@ test("gws.gwsjson: bad JSON и неверная форма отвергаютс�
   );
 
   process.env.HOME = prevHome;
+});
+
+test("repair 17: search selection, key fallback, restart outcomes and deferred apply", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-search-actions-"));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const envPath = join(dir, ".env");
+  writeFileSync(
+    envPath,
+    "SEARCH_PROVIDER=tavily\nTAVILY_API_KEY=fixture-search-key\n",
+  );
+  let success = true;
+  const calls: string[] = [];
+  const h = makeCtx({
+    deps: {
+      envPath,
+      sc: (action: string, unit: string) => {
+        calls.push(`${action} ${unit}`);
+        return Promise.resolve(success);
+      },
+    },
+    screens: { srch: searchScreen },
+  });
+  const st = newState();
+  await searchScreen.on("set", ["tavily"], st, h.ctx);
+  assert.match(readFileSync(envPath, "utf8"), /SEARCH_PROVIDER=tavily/);
+  assert.match(st._last!.text, /Перезапустить сейчас/);
+  await searchScreen.on("key", [], st, h.ctx);
+  assert.equal(st.awaitText?.data.provider, "tavily");
+  await searchScreen.on("key", ["brave"], st, h.ctx);
+  assert.equal(st.awaitText?.data.provider, "brave");
+  await searchScreen.on("rs", ["now"], st, h.ctx);
+  assert.match(st._last!.text, /Перезапускаю агента/);
+  success = false;
+  await searchScreen.on("rs", ["now"], st, h.ctx);
+  assert.match(st._last!.text, /Не удалось перезапустить/);
+  assert.deepEqual(calls, ["restart iva.service", "restart iva.service"]);
+  await searchScreen.on("rs", ["later"], st, h.ctx);
+  assert.match(st._last!.text, /Сохранил/);
+  await searchScreen.on("other", [], st, h.ctx);
+  assert.equal(st.screen, "srch");
 });

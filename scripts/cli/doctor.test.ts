@@ -2153,3 +2153,46 @@ test("doctor names a foreign auth variable instead of reporting claude as health
     "значение утекло в отчёт",
   );
 });
+
+test("repair 13/15: missing lsof is unknown and macOS doctor names Iva jobs", async (t) => {
+  const root = await sandbox(t);
+  writeFileSync(join(root, ".env"), "IVA_PORT=8723\n");
+  const unitDir = join(root, "LaunchAgents");
+  mkdirSync(unitDir);
+  writeFileSync(join(unitDir, "app.iva.iva.plist"), "fixture");
+  const events: string[] = [];
+  const base = createCliRuntime(root);
+  const runtime: CliRuntime = {
+    ...base,
+    UNIT_DIR: unitDir,
+    SERVICES: [],
+    TIMERS: [],
+    C: NO_COLOR,
+    hasSystemd: () => true,
+    readEnv: completeEnv,
+    systemd: createSystemdControl({
+      manager: "launchd",
+      run: () => ({ code: 0, out: "active" }),
+    }),
+    cap: (command) =>
+      command === "lsof"
+        ? base.cap("/iva-test-missing-lsof", [])
+        : { code: 0, out: "", err: "" },
+    ok: (m) => events.push(m),
+    warn: (m) => events.push(m),
+    bad: (m) => events.push(m),
+  };
+  await createDoctorCommand(runtime, lifecycle(), {
+    nodeVersion: "24.21.0",
+    log: () => {},
+    exit: () => {},
+  })();
+  assert.ok(
+    events.some((m) => m.includes("lsof unavailable")),
+    events.join("\n"),
+  );
+  assert.ok(
+    events.some((m) => m.includes("задания Ивы installed")),
+    events.join("\n"),
+  );
+});

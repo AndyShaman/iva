@@ -1,4 +1,3 @@
-import { serviceManager } from "../lib/service-manager.ts";
 import { readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -75,10 +74,13 @@ export function createAccountCommands(
   const loadCodexOauth =
     dependencies.loadCodexOauth ?? (() => import("../lib/codex-oauth.ts"));
 
+  const unitKind =
+    runtime.systemd.manager === "launchd" ? "задания Ивы" : "systemd units";
+
   async function cmdUninstall(args: readonly string[]): Promise<void> {
     const purge = args.includes("--purge");
     warn(
-      "Uninstalling Iva: systemd units and the `iva` command will be removed.",
+      `Uninstalling Iva: ${unitKind} and the \`iva\` command will be removed.`,
     );
     if (purge)
       bad(
@@ -89,10 +91,7 @@ export function createAccountCommands(
       return;
     }
 
-    if (hasSystemd())
-      ok(
-        `Removed ${serviceManager() === "launchd" ? "службы Ивы" : "systemd units"}: ${removeUnits().length}`,
-      );
+    if (hasSystemd()) ok(`Removed ${unitKind}: ${removeUnits().length}`);
     try {
       remove(join(homeDir(), ".local/bin/iva"));
       ok("iva command removed from ~/.local/bin");

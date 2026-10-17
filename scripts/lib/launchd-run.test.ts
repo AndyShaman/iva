@@ -17,6 +17,13 @@ import type { LaunchConfig } from "./launchd-run.ts";
 import { underMemoryLock } from "./memory-lock.ts";
 
 const launcher = join(import.meta.dirname, "launchd-run.ts");
+function killIfAlive(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+  }
+}
 
 void test(
   "native memory lock reports open failures separately from contention",
@@ -31,14 +38,14 @@ void test(
     const env = { ...process.env };
     delete env.IVA_MEMORY_LOCK_HELD;
     assert.equal(underMemoryLock(join(dir, "missing/lock"), env, "darwin"), 73);
-    assert.match(messages.join("\n"), /cannot take .*cannot open/u);
+    assert.match(messages.join("\n"), /cannot take .*could not open/u);
     assert.doesNotMatch(messages.join("\n"), /held by a running memory job/u);
     const denied = join(dir, "denied");
     mkdirSync(denied);
     chmodSync(denied, 0);
     try {
       assert.equal(underMemoryLock(join(denied, "lock"), env, "darwin"), 73);
-      assert.match(messages.at(-1) ?? "", /cannot take .*Permission denied/u);
+      assert.match(messages.at(-1) ?? "", /cannot take .*could not open/u);
     } finally {
       chmodSync(denied, 0o700);
     }
@@ -184,16 +191,22 @@ void test("launcher forwards SIGTERM and returns the signal exit code", async (t
 
 void test(
   "oneshot deadline kills an uncooperative grandchild and releases the native memory lock",
-  { skip: process.platform !== "darwin", timeout: 20_000 },
+  { skip: process.platform !== "darwin", timeout: 32_000 },
   (t) => {
     const dir = mkdtempSync(join(tmpdir(), "iva-launcher-deadline-"));
-    t.after(() => rmSync(dir, { recursive: true, force: true }));
     const lock = join(dir, "memory.lock");
     const script = join(dir, "stubborn.ts");
+    const pidFile = join(dir, "stubborn.pid");
+    t.after(() => {
+      if (existsSync(pidFile))
+        killIfAlive(Number(readFileSync(pidFile, "utf8")));
+      rmSync(dir, { recursive: true, force: true });
+    });
     writeFileSync(
       script,
-      "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);\n",
+      `require('fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);\n`,
     );
+    const started = Date.now();
     const result = spawnSync(
       process.execPath,
       [
@@ -206,9 +219,13 @@ void test(
         process.execPath,
         script,
       ],
-      { encoding: "utf8", timeout: 17_000 },
+      { stdio: "ignore", timeout: 28_000, killSignal: "SIGKILL" },
     );
     assert.ifError(result.error);
+    assert.ok(
+      Date.now() - started >= 20_000,
+      "launcher must allow eve at least 20 seconds to stop",
+    );
     assert.notEqual(result.status, 0);
     const probe = spawnSync(
       "/usr/bin/lockf",
@@ -216,5 +233,78 @@ void test(
       { encoding: "utf8", timeout: 2000 },
     );
     assert.equal(probe.status, 0, probe.stderr);
+  },
+);
+
+void test(
+  "repair 4: launcher terminates orphaned group when its main process crashes",
+  { timeout: 8000 },
+  async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "iva-launcher-orphan-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const ready = join(dir, "pids");
+    const script = join(dir, "main.ts");
+    writeFileSync(
+      script,
+      `import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});writeFileSync(${JSON.stringify(ready)},JSON.stringify([process.pid,c.pid]));setInterval(()=>{},1000);`,
+    );
+    const child = spawn(
+      process.execPath,
+      [launcher, "{}", process.execPath, script],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    let pids: number[] = [];
+    t.after(() => {
+      for (const pid of pids) killIfAlive(pid);
+      if (child.exitCode === null) child.kill("SIGKILL");
+    });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const end = Date.now() + 3000;
+    while (!existsSync(ready) && Date.now() < end)
+      await new Promise((r) => setTimeout(r, 10));
+    assert.ok(existsSync(ready));
+    pids = JSON.parse(readFileSync(ready, "utf8")) as number[];
+    process.kill(pids[0], "SIGKILL");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      assert.equal(
+        await Promise.race([
+          exited,
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve("still running"), 2500);
+          }),
+        ]),
+        137,
+        stderr,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    assert.throws(() => process.kill(pids[1], 0), /ESRCH/);
+  },
+);
+
+void test(
+  "repair 11: memory lock streams stderr beyond the spawnSync buffer limit",
+  { skip: process.platform !== "darwin", timeout: 10000 },
+  (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "iva-lockf-stderr-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const script = join(dir, "large.ts");
+    writeFileSync(
+      script,
+      `import {underMemoryLock} from ${JSON.stringify(new URL("./memory-lock.ts", import.meta.url).href)};const code=underMemoryLock(${JSON.stringify(join(dir, "lock"))});if(code!==null)process.exit(code);process.stderr.write('x'.repeat(2*1024*1024));`,
+    );
+    const r = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 8000,
+    });
+    assert.equal(r.status, 0, r.stderr.slice(-1000));
+    assert.equal(r.stderr.length, 2 * 1024 * 1024);
   },
 );

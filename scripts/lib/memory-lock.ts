@@ -27,7 +27,7 @@ export function underMemoryLock(
       ...process.argv.slice(1),
     ],
     {
-      stdio: platform === "darwin" ? ["inherit", "inherit", "pipe"] : "inherit",
+      stdio: "inherit",
       env: { ...env, [MEMORY_LOCK_HELD_ENV]: "1" },
     },
   );
@@ -43,18 +43,7 @@ export function underMemoryLock(
     );
     return 1;
   }
-  reportDarwinLock(lockPath, run.status, run.stderr, platform);
+  if (platform === "darwin" && run.status === 73)
+    console.error(`cannot take ${lockPath}: lockf could not open the lock`);
   return run.status ?? 1;
-}
-
-function reportDarwinLock(
-  file: string,
-  status: number | null,
-  stderr: Buffer | null,
-  platform: NodeJS.Platform,
-): void {
-  if (platform !== "darwin") return;
-  if (status === 73)
-    console.error(`cannot take ${file}: ${String(stderr).trim()}`);
-  else if (stderr) process.stderr.write(stderr);
 }

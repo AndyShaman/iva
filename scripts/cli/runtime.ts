@@ -131,7 +131,9 @@ export function createCliRuntime(root: string) {
       ...options,
     });
     return {
-      code: result.status ?? 1,
+      code:
+        result.status ??
+        (process.platform === "darwin" && result.error ? 127 : 1),
       out: (result.stdout || "").trim(),
       err: (result.stderr || "").trim(),
     };

@@ -27,8 +27,7 @@ const BAN_COMMANDS: Record<string, string> = {
   at: WHAT.AT_BATCH,
   batch: WHAT.AT_BATCH,
 };
-const UNIT_DIR =
-  /systemd\/user(?![\w-])|Library\/LaunchAgents\/app\.iva\.[\w.-]+/;
+const UNIT_DIR = /systemd\/user(?![\w-])|Library\/LaunchAgents(?![\w-])/;
 const SCRIPTS_DIR = /\.iva-scripts(?![\w-])/;
 const TELEGRAM_HOST = /api\.telegram\.org/;
 // Чтение — единственный способ упомянуть запретное в командной позиции. `sed -i` пишет,
@@ -171,8 +170,7 @@ function positionViolation(
  */
 function launchctlViolation(segment: string): string | null {
   return anchored("launchctl").test(segment) &&
-    /\b(?:bootstrap|load|enable|kickstart)\b/u.test(segment) &&
-    !/\bapp\.iva\.[\w.-]+/u.test(segment)
+    /\b(?:bootstrap|load|enable|kickstart)\b/u.test(segment)
     ? WHAT.LAUNCHCTL
     : null;
 }

@@ -379,3 +379,16 @@ test("login catches flow failures but leaves lazy import failures outside its tr
   await assert.rejects(failedImport.cmdLogin([]), /import boom/);
   assert.deepEqual(importEvents, ["load-oauth"]);
 });
+
+test("repair 15: macOS uninstall confirmation names Iva jobs", async () => {
+  const warnings: string[] = [];
+  const rt = runtime({
+    warn: (m) => warnings.push(m),
+    confirm: () => Promise.resolve(false),
+  });
+  rt.systemd.manager = "launchd";
+  await createAccountCommands(rt, lifecycle(), { log: () => {} }).cmdUninstall(
+    [],
+  );
+  assert.match(warnings[0], /задания Ивы/);
+});

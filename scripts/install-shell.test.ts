@@ -209,6 +209,7 @@ printf '%s  %s\n' "$expected" "$last"
 
 /** Package-manager stand-in that can reject only an install containing gh. */
 const PACKAGE_MANAGER = `#!/bin/sh
+[ "$IVA_TEST_OS" != Darwin ] || [ "$IVA_TEST_BREW_READ_STDIN" != 1 ] || cat >/dev/null
 echo "$(basename "$0") $*" >> "$IVA_TEST_CALLS"
 if [ "$IVA_TEST_FAIL_GH_PACKAGE" = 1 ]; then
   for arg in "$@"; do
@@ -387,6 +388,7 @@ type RunOptions = {
   readonly script?: string;
   /** Run it with no stderr at all, the way a terminal that went away leaves it. */
   readonly closedStderr?: boolean;
+  readonly pipedStdin?: boolean;
 };
 
 type World = {
@@ -630,18 +632,23 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
       existsSync(path) ? readFileSync(path, "utf8") : "",
     run: (runOptions = {}) => {
       const installer = runOptions.script ?? join(install, "install.sh");
-      const argv = runOptions.closedStderr
-        ? [
-            "-c",
-            'exec 2>&-; exec bash "$0" "$@"',
-            installer,
-            "--non-interactive",
-          ]
-        : [installer, ...(runOptions.args ?? ["--non-interactive"])];
+      const argv = runOptions.pipedStdin
+        ? ["-s", "--", ...(runOptions.args ?? ["--non-interactive"])]
+        : runOptions.closedStderr
+          ? [
+              "-c",
+              'exec 2>&-; exec bash "$0" "$@"',
+              installer,
+              "--non-interactive",
+            ]
+          : [installer, ...(runOptions.args ?? ["--non-interactive"])];
       return spawnSync("bash", argv, {
         cwd: dir,
         encoding: "utf8",
         env: environment(runOptions),
+        input: runOptions.pipedStdin
+          ? readFileSync(installer, "utf8")
+          : undefined,
       });
     },
     runAsync: (runOptions = {}) => {
@@ -2087,4 +2094,21 @@ void test("Darwin installer stops without a GUI login or Homebrew", (t) => {
     );
     assert.doesNotMatch(world.calls(), /_activate-units|loginctl|swapon/u);
   }
+});
+
+void test("repair 8: Darwin package installs preserve piped installer stdin", (t) => {
+  const world = createWorld(t);
+  rmSync(world.install, { recursive: true, force: true });
+  const result = world.run({
+    pipedStdin: true,
+    script: world.piped,
+    env: {
+      IVA_TEST_OS: "Darwin",
+      IVA_TEST_BREW_READ_STDIN: "1",
+      IVA_TEST_MISSING_COMMANDS: "ffmpeg pandoc pdftotext gh",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(world.calls(), /brew install/);
+  assert.match(result.stdout, /Mac is on, awake/);
 });

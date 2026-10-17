@@ -220,3 +220,22 @@ test(`обёртки не меняют вердикт: запрещённое б
     { seed: T2_SEED, numRuns: 300 },
   );
 });
+
+test("repair 14: every LaunchAgents filename and launchctl loader is guarded (seed 20261017)", () => {
+  fc.assert(
+    fc.property(
+      fc.stringMatching(/^[a-z][a-z0-9-]{0,20}$/),
+      fc.constantFrom(
+        "cp /tmp/x ~/Library/LaunchAgents/",
+        "tee $HOME/Library/LaunchAgents/",
+        "launchctl bootstrap gui/501 /tmp/",
+        "launchctl load /tmp/",
+        "launchctl enable gui/501/",
+      ),
+      (name, prefix) => {
+        assert.ok(schedulerBypassViolation(`${prefix}${name}.plist`));
+      },
+    ),
+    { seed: 20261017, numRuns: 100 },
+  );
+});

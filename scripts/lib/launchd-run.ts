@@ -17,6 +17,9 @@ function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    // macOS can return EPERM while an orphaned group is being reaped. Keep waiting.
+    if (signal === 0 && (error as NodeJS.ErrnoException).code === "EPERM")
+      return true;
     throw error;
   }
 }
@@ -68,7 +71,7 @@ async function runLaunchdProcess(
     signalGroup(child.pid, signal);
     escalation = setTimeout(() => {
       if (child.pid) signalGroup(child.pid, "SIGKILL");
-    }, 10_000);
+    }, 20_000);
   };
   const term = () => terminate("SIGTERM");
   const interrupt = () => terminate("SIGINT");
@@ -93,6 +96,7 @@ async function runLaunchdProcess(
     });
     await auxiliary(config.post ?? []);
     const code = await exited;
+    term();
     // The direct child may exit before its grandchildren release inherited lock descriptors.
     await waitGroup(child.pid);
     return code;

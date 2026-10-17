@@ -18,6 +18,7 @@ type PlistOptions = {
   node?: string;
   home?: string;
   now?: Date;
+  control?: (args: string[]) => { code: number; out: string };
 };
 type Value = string | number | boolean | Value[] | { [key: string]: Value };
 const ignored = new Set([
@@ -43,6 +44,25 @@ const supported = new Set([
   "OnCalendar",
   "Persistent",
 ]);
+
+function stableNode(path: string): string {
+  return path.replace(
+    /^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/u,
+    "$1/opt/$2/bin/node",
+  );
+}
+
+function plistControl(args: string[]): { code: number; out: string } {
+  const result = spawnSync("launchctl", args, {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  if (result.status !== 0)
+    throw new Error(
+      `launchctl ${args.join(" ")} failed: ${result.stderr || result.error?.message}`,
+    );
+  return { code: 0, out: result.stdout };
+}
 
 export function launchdLabel(unit: string): string {
   if (!/^[A-Za-z0-9_.@:-]+(?:\.service|\.timer)?$/u.test(unit))
@@ -182,7 +202,7 @@ function command(value: string, home: string): string[] {
   }
   if (args.some((arg) => /(?:^|\/)systemctl$/u.test(arg)))
     throw new Error(`unsupported systemctl command: ${value}`);
-  return args;
+  return args.map(stableNode);
 }
 
 class UnitTranslation {
@@ -231,6 +251,7 @@ class UnitTranslation {
         /\/usr\/local\/bin(?=:|$)/u,
         "/usr/local/bin:/opt/homebrew/bin",
       );
+    main[0] = stableNode(main[0]);
     return main;
   }
   auxiliaries(key: string) {
@@ -295,13 +316,14 @@ class UnitTranslation {
     return {
       Label: label,
       ProgramArguments: [
-        this.options.node ?? process.execPath,
+        stableNode(this.options.node ?? process.execPath),
         ...(envFile ? [`--env-file-if-exists=${envFile}`] : []),
         join(this.options.root, "scripts/lib/launchd-run.ts"),
         JSON.stringify(config),
         ...main,
       ],
-      EnvironmentVariables: env,
+      EnvironmentVariables: { ...env, HOME: this.home },
+      ExitTimeOut: 30,
       WorkingDirectory:
         this.one("WorkingDirectory")?.replaceAll("%h", this.home) ??
         this.options.root,
@@ -367,22 +389,53 @@ export function writeLaunchdUnits(
   mkdirSync(unitDir, { recursive: true });
   mkdirSync(logDir, { recursive: true, mode: 0o700 });
   chmodSync(logDir, 0o700);
+  const control = options.control ?? plistControl;
+  const domain = `gui/${process.getuid!()}`;
+  const explicitlyEnabled = enabledLabels(control, domain);
   for (const [label, body] of plan) {
     const destination = join(unitDir, `${label}.plist`);
-    const temp = `${destination}.${randomUUID()}.tmp`;
-    try {
-      writeFileSync(temp, body, { flag: "wx", mode: 0o644 });
-      if (process.platform === "darwin") {
-        const lint = spawnSync("plutil", ["-lint", temp], { encoding: "utf8" });
-        if (lint.status !== 0)
-          throw new Error(
-            `${destination}: plutil -lint failed: ${lint.stderr || lint.stdout || lint.error?.message}`,
-          );
-      }
-      renameSync(temp, destination);
-    } finally {
-      rmSync(temp, { force: true });
+    writePlist(destination, body);
+    if (!explicitlyEnabled.has(label)) {
+      const result = control(["disable", `${domain}/${label}`]);
+      if (result.code !== 0)
+        throw new Error(`launchctl disable ${label} failed: ${result.out}`);
     }
   }
   return units.map((unit) => unit.unit);
+}
+
+function enabledLabels(
+  control: NonNullable<PlistOptions["control"]>,
+  domain: string,
+): Set<string | undefined> {
+  const overrides = control(["print-disabled", domain]);
+  if (
+    overrides.code !== 0 ||
+    !/^disabled services = \{[^]*\}\s*$/u.test(overrides.out.trim())
+  )
+    throw new Error(
+      `launchctl print-disabled ${domain} failed: ${overrides.out}`,
+    );
+  return new Set(
+    overrides.out
+      .split("\n")
+      .map((line) => /^\s*"([^"]+)" => enabled\s*$/u.exec(line)?.[1]),
+  );
+}
+
+function writePlist(destination: string, body: string): void {
+  const temp = `${destination}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temp, body, { flag: "wx", mode: 0o644 });
+    if (process.platform === "darwin") {
+      const lint = spawnSync("plutil", ["-lint", temp], { encoding: "utf8" });
+      if (lint.status !== 0)
+        throw new Error(
+          `${destination}: plutil -lint failed: ${lint.stderr || lint.stdout || lint.error?.message}`,
+        );
+    }
+    renameSync(temp, destination);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }

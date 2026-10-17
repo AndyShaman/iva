@@ -39,13 +39,15 @@ void test(
 import {basename} from 'node:path';
 const args=process.argv.slice(2),action=args[0],target=args[1];
 appendFileSync(process.env.IVA_CALLS,JSON.stringify(args)+'\\n');
+const calendar=readFileSync(${JSON.stringify(join(import.meta.dirname, "../fixtures/launchctl-print-calendar.txt"))},'utf8');
 const path=process.env.IVA_STATE;const states=existsSync(path)?JSON.parse(readFileSync(path,'utf8')):{};
 const label=target?.split('/').at(-1);const item=states[label];
+if(item?.until && Date.now()>=item.until){item.loaded=false;item.running=false;delete item.until;writeFileSync(path,JSON.stringify(states));}
 if(action==='print'&&new RegExp('^gui/[0-9]+$').test(target))process.exit(0);
-if(action==='print-disabled'){console.log('disabled services = {\\n'+Object.entries(states).filter(([,s])=>s.disabled).map(([l])=>'"'+l+'" => true').join('\\n')+'\\n}');process.exit(0);}
-if(action==='print'){if(!item?.loaded)process.exit(113);console.log(target+' = {\\n\\tstate = '+(item.running?'running':'waiting')+'\\n'+(item.running?'\\tpid = 123\\n':'')+'\\tlast exit code = 0\\n}');process.exit(0);}
-if(action==='bootstrap'){const name=basename(args[2],'.plist');if(states[name]?.loaded)process.exit(5);const xml=readFileSync(args[2],'utf8');states[name]={loaded:true,running:xml.includes('<key>KeepAlive</key>'),disabled:false};}
-if(action==='bootout'){if(!item?.loaded)process.exit(3);delete states[label];}
+if(action==='print-disabled'){console.log('disabled services = {\\n'+Object.entries(states).map(([l,s])=>'"'+l+'" => '+(s.disabled?'disabled':'enabled')).join('\\n')+'\\n}');process.exit(0);}
+if(action==='print'){if(!item?.loaded)process.exit(113);const state=item.until?'SIGTERMed':item.running?'running':'waiting';console.log(item.calendar?calendar.replaceAll('app.iva-probe.repair-calendar',label).replace(/\\tstate = running/, '\\tstate = '+state).replace(/\\tpid = [0-9]+/,item.running?'\\tpid = 123':''):target+' = {\\n\\tstate = '+state+'\\n'+(item.running?'\\tpid = 123\\n':'')+'\\tlast exit code = 0\\n}');process.exit(0);}
+if(action==='bootstrap'){const name=basename(args[2],'.plist');if(states[name]?.loaded)process.exit(5);const xml=readFileSync(args[2],'utf8');states[name]={...states[name],loaded:true,running:xml.includes('<key>KeepAlive</key>'),calendar:xml.includes('<key>StartCalendarInterval</key>')};}
+if(action==='bootout'){if(!item?.loaded)process.exit(3);item.until=Date.now()+150;}
 if(action==='enable'||action==='disable'){states[label]={...item,disabled:action==='disable'};}
 if(action==='kickstart'){const name=args.at(-1).split('/').at(-1);states[name].running=true;}
 if(action==='kill'){if(!item?.loaded)process.exit(113);item.running=false;}

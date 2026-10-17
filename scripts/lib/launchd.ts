@@ -34,7 +34,7 @@ function printFields(lines: string[]): Record<string, string> | null {
   for (const line of lines) {
     const match = /^\t(state|pid|last exit code) = (.+)$/u.exec(line);
     if (depth === 1 && match) fields[match[1]] = match[2];
-    if (/= \{$/u.test(line)) depth++;
+    if (/\{\s*$/u.test(line)) depth++;
     if (/^\s*\}$/u.test(line)) depth--;
     if (depth < 0) return null;
   }
@@ -115,6 +115,7 @@ class LaunchdUnit {
   readonly path: string;
   readonly keepAlive: boolean;
   readonly timer: boolean;
+  readonly stopWaitMs: number;
   constructor(unit: string, options: Options) {
     this.unit = unit;
     this.options = options;
@@ -127,6 +128,12 @@ class LaunchdUnit {
       existsSync(this.path) &&
       readFileSync(this.path, "utf8").includes("<key>KeepAlive</key>");
     this.timer = unit.endsWith(".timer");
+    const exitTimeout = existsSync(this.path)
+      ? /<key>ExitTimeOut<\/key>\s*<integer>(\d+)<\/integer>/u.exec(
+          readFileSync(this.path, "utf8"),
+        )?.[1]
+      : undefined;
+    this.stopWaitMs = options.waitMs ?? (Number(exitTimeout ?? 30) + 5) * 1000;
   }
   requireDomain(): void {
     const failure = domainFailure(this.run, this.domain);
@@ -159,7 +166,7 @@ class LaunchdUnit {
       );
     const disabled = out
       .split("\n")
-      .some((line) => line.trim() === `"${this.label}" => true`);
+      .some((line) => line.trim() === `"${this.label}" => disabled`);
     return { code: disabled ? 1 : 0, out: disabled ? "disabled" : "enabled" };
   }
   active(): Result {
@@ -185,7 +192,10 @@ class LaunchdUnit {
   }
   alreadyApplied(args: string[], code: number): boolean {
     // The mini probe gave 5 for duplicate bootstrap, but 5 is also a generic I/O error.
-    if (args[0] === "bootstrap") return this.inspect().loaded;
+    if (args[0] === "bootstrap" && code === 5) {
+      const current = this.inspect();
+      return current.loaded && !this.stopping(current.state);
+    }
     if (args[0] === "bootout" && code === 3)
       return this.run(["print", this.target]).code === 113;
     if (args[0] === "kill" && code === 113)
@@ -204,27 +214,75 @@ class LaunchdUnit {
   }
   unload(): void {
     this.checked(["bootout", this.target]);
+    this.waitFor("bootout", () => !this.inspect().loaded, this.stopWaitMs);
   }
-  waitRunning(action: string): void {
-    if (!this.keepAlive) return;
-    const end = Date.now() + (this.options.waitMs ?? 10_000);
+  stopping(state: LaunchdState): boolean {
+    return /^(?:SIG|stopping)/iu.test(state.state);
+  }
+  waitFor(action: string, ready: () => boolean, timeout: number): void {
+    const end = Date.now() + timeout;
     do {
-      if (this.inspect().state.state === "running") return;
+      if (ready()) return;
       if (Date.now() >= end) break;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
     } while (Date.now() <= end);
     throw new Error(
-      `launchctl ${action} ${this.label} failed: did not become running`,
+      `launchctl ${action} ${this.label} failed: ${this.keepAlive && ["restart", "start", "enable"].includes(action) ? "did not become running" : "postcondition timed out"}`,
+    );
+  }
+  load(): void {
+    let current = this.inspect();
+    if (this.stopping(current.state)) {
+      this.waitFor("bootout", () => !this.inspect().loaded, this.stopWaitMs);
+      current = this.inspect();
+    }
+    if (!current.loaded) this.bootstrap();
+    this.waitFor(
+      "bootstrap",
+      () => {
+        const next = this.inspect();
+        return next.loaded && !this.stopping(next.state);
+      },
+      this.options.waitMs ?? 10_000,
+    );
+  }
+  waitRunning(action: string): void {
+    if (!this.keepAlive) return;
+    let pid: number | null = null;
+    let since = 0;
+    this.waitFor(
+      action,
+      () => {
+        const state = this.inspect().state;
+        if (state.state !== "running" || state.pid === null) {
+          pid = null;
+          return false;
+        }
+        if (state.pid !== pid) {
+          pid = state.pid;
+          since = Date.now();
+        }
+        return Date.now() - since >= 1000;
+      },
+      this.options.waitMs ?? 10_000,
     );
   }
   enable(now: boolean): void {
     this.checked(["enable", this.target]);
+    if (this.enabled().code !== 0)
+      throw new Error(
+        `launchctl enable ${this.label} failed: remained disabled`,
+      );
     if (!now) return;
-    if (!this.inspect().loaded) this.bootstrap();
+    this.load();
     this.waitRunning("enable");
   }
   disable(now: boolean): void {
     this.checked(["disable", this.target]);
+    if (this.enabled().out !== "disabled")
+      throw new Error(
+        `launchctl disable ${this.label} failed: remained enabled`,
+      );
     if (now) this.unload();
   }
   stop(): void {
@@ -233,11 +291,17 @@ class LaunchdUnit {
       return;
     }
     const current = this.inspect();
-    if (current.state.pid !== null)
+    if (current.state.pid !== null) {
       this.checked(["kill", "SIGTERM", this.target]);
+      this.waitFor(
+        "stop",
+        () => this.inspect().state.pid === null,
+        this.stopWaitMs,
+      );
+    }
   }
   start(): void {
-    if (!this.inspect().loaded) this.bootstrap();
+    this.load();
     if (!this.timer && !this.keepAlive)
       this.checked(["kickstart", this.target]);
     this.waitRunning("start");
@@ -245,9 +309,9 @@ class LaunchdUnit {
   restart(): void {
     if (this.timer || this.keepAlive) {
       this.unload();
-      this.bootstrap();
+      this.load();
     } else {
-      if (!this.inspect().loaded) this.bootstrap();
+      this.load();
       this.checked(["kickstart", "-k", this.target]);
     }
     this.waitRunning("restart");

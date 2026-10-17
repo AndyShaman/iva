@@ -1,7 +1,7 @@
 import { serviceManager } from "./service-manager.ts";
 import { launchdLabel } from "./launchd.ts";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 export { systemdExecArgument } from "./systemd-values.ts";
@@ -87,9 +87,27 @@ export function logTail(unit: string, lines: number): string {
   return logPaths(unit)
     .filter(existsSync)
     .map((file) =>
-      readFileSync(file, "utf8").trimEnd().split("\n").slice(-lines).join("\n"),
+      readLogSuffix(file).trimEnd().split("\n").slice(-lines).join("\n"),
     )
     .join("\n");
+}
+
+function readLogSuffix(file: string): string {
+  const fd = openSync(file, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, 64 * 1024));
+    const count = readSync(
+      fd,
+      buffer,
+      0,
+      buffer.length,
+      Math.max(0, size - buffer.length),
+    );
+    return buffer.subarray(0, count).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function logPaths(unit: string): string[] {

@@ -127,7 +127,7 @@ void test("launchd verbs, throttled writers and pair calendars follow spec 3.2",
     if (verb === "print-disabled")
       return {
         code: 0,
-        out: `disabled services = {\n${disabled ? '\t"app.iva.iva" => true\n' : ""}}\n`,
+        out: `disabled services = {\n${disabled ? '\t"app.iva.iva" => disabled\n' : ""}}\n`,
       };
     if (verb === fault) return { code: 9, out: "failure" };
     if (verb === "bootstrap") {
@@ -155,7 +155,7 @@ void test("launchd verbs, throttled writers and pair calendars follow spec 3.2",
     return { code: 0, out: "" };
   };
   const query = (...args: string[]) =>
-    runLaunchd(args, { run, unitDir: dir, uid: 501, waitMs: 0 });
+    runLaunchd(args, { run, unitDir: dir, uid: 501, waitMs: 1500 });
   const control = createSystemdControl({
     run: (args) => query(...args),
     manager: "launchd",
@@ -235,16 +235,20 @@ void test("a KeepAlive process that exits during bootstrap fails restart with a 
   const dir = mkdtempSync(join(tmpdir(), "iva-launchd-crash-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "app.iva.iva.plist"), "<key>KeepAlive</key><true/>");
-  const run = (args: readonly string[]) => ({
-    code: 0,
-    out:
-      args[0] === "print" && args[1] !== "gui/501"
-        ? print("waiting", false, 1)
-        : "",
-  });
+  let loaded = false;
+  const run = (args: readonly string[]) => {
+    if (args[0] === "bootout") loaded = false;
+    if (args[0] === "bootstrap") loaded = true;
+    if (args[0] === "print" && args[1] !== "gui/501")
+      return loaded
+        ? { code: 0, out: print("waiting", false, 1) }
+        : { code: 113, out: "" };
+    return { code: 0, out: "" };
+  };
   const control = createSystemdControl({
     manager: "launchd",
-    run: (args) => runLaunchd(args, { run, unitDir: dir, uid: 501, waitMs: 0 }),
+    run: (args) =>
+      runLaunchd(args, { run, unitDir: dir, uid: 501, waitMs: 1500 }),
   });
   assert.throws(
     () => control.restart(["iva.service"]),
@@ -267,7 +271,7 @@ void test("generic bootstrap 5 and corrupt print never grant a successful restar
       run,
       uid: 501,
       unitDir: dir,
-      waitMs: 0,
+      waitMs: 1500,
     }).code,
     1,
   );
@@ -305,7 +309,7 @@ void test("a concurrent bootstrap and a disappearing oneshot are idempotent afte
       ? { code: 0, out: print("running", true) }
       : { code: codes.printUnloaded, out: "" };
   };
-  const options = { run, uid: 501, unitDir: dir, waitMs: 0 };
+  const options = { run, uid: 501, unitDir: dir, waitMs: 1500 };
   assert.deepEqual(runLaunchd(["start", "iva.service"], options), {
     code: 0,
     out: "",
@@ -392,7 +396,11 @@ void test("unit plans reject unknown or ambiguous directives before writing, pre
     unit: "iva-test.service",
     body: "ExecStart=/bin/true\nType=oneshot\n",
   };
-  const options = { root: "/fixture/current", home: dir };
+  const options = {
+    root: "/fixture/current",
+    home: dir,
+    control: () => ({ code: 0, out: "disabled services = {\n}\n" }),
+  };
   assert.throws(
     () =>
       launchdPlan(
@@ -437,7 +445,11 @@ void test(
       body: "ExecStart=/bin/true\nType=oneshot\n",
     };
     const units = join(dir, "units");
-    const options = { root: "/fixture/current", home: dir };
+    const options = {
+      root: "/fixture/current",
+      home: dir,
+      control: () => ({ code: 0, out: "disabled services = {\n}\n" }),
+    };
     writeLaunchdUnits([service], units, options);
     const installed = join(units, "app.iva.iva-test.plist");
     const before = readFileSync(installed, "utf8");

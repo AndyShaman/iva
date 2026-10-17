@@ -787,10 +787,18 @@ function checkUnits(ctx: DoctorContext): void {
       ).test(file),
     );
   if (!present) {
-    ctx.warn("systemd units not installed — installing…");
-    ctx.repair("install and start the systemd units", () => installUnits(ctx));
+    ctx.warn(
+      `${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"} not installed — installing…`,
+    );
+    ctx.repair(
+      `install and start the ${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"}`,
+      () => installUnits(ctx),
+    );
   } else {
-    ctx.repair("refresh the systemd units", () => refreshUnits(ctx));
+    ctx.repair(
+      `refresh the ${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"}`,
+      () => refreshUnits(ctx),
+    );
   }
 }
 
@@ -808,7 +816,9 @@ function installUnits(ctx: DoctorContext): void {
 function refreshUnits(ctx: DoctorContext): void {
   try {
     ctx.writeUnits(); // refresh: Environment=PORT syncs with the current IVA_PORT (eliminates drift)
-    ctx.ok("systemd units installed (refreshed)");
+    ctx.ok(
+      `${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"} installed (refreshed)`,
+    );
   } catch (error) {
     ctx.fail((error as { message: string }).message);
   }
