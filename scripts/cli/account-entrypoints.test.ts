@@ -48,6 +48,11 @@ async function createAccountFixture(t: TestContext): Promise<AccountFixture> {
     "dir",
   );
 
+  // Pin the Linux wording in this fixture on every host.
+  const fakeSystemctl = join(fakeBin, "systemctl");
+  await writeFile(fakeSystemctl, "#!/bin/sh\nexit 97\n");
+  await chmod(fakeSystemctl, 0o755);
+
   const fakeShell = join(fakeBin, "sh");
   await writeFile(fakeShell, "#!/bin/sh\nexit 0\n");
   await chmod(fakeShell, 0o755);
