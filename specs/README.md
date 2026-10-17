@@ -216,6 +216,20 @@ Witnesses must fail: `-staleack` (the removal writes the snapshot of the pass wi
 specs/queue-drain-check.sh
 ```
 
+## LaunchdUnit
+
+`LaunchdUnit.tla` models the units of Iva under launchd on macOS (spec `.scratch/macos-install/spec.md` v3, sections 3.1, 3.3 and 7) and was written before the code: it checks the design of the seam that maps `systemctl --user` verbs to `launchctl`. Two labels: a KeepAlive service (`Restart=always`, for example the userbot) and a oneshot with a calendar, where `iva-brain.timer` and `iva-brain.service` share one label `app.iva.iva-brain`. A label is `unloaded`, `idle`, `running` or `throttled`, has the `enabled` flag and a `stale` flag for a plist rewritten after the last `bootstrap` (launchd reads the plist only there). launchd itself crashes and respawns the KeepAlive process (`throttleExpire` is weakly fair), fires the calendar, bootstraps every plist at login and boots everything out at logout. Writers: `stop`, `start`, `restart`, `enable --now`, `disable --now`, `is-active`, cancel and start of the night from the menu, `restart` of a plugin timer, and the update path `captureOptionalWriterState` + `stopWriterUnits`, a body that may change `enabled`, and `restoreOptionalWriterState` one unit name per step. Writers and launchd events other than `throttleExpire` do not interleave with the update; plists are always present; process exit codes, `SuccessfulExit`, the launcher's process group and the 10 s wait are abstracted.
+
+Choices that spec v3 leaves open or sets otherwise are constants; `LaunchdUnit.cfg` takes the choice under which everything holds: `stop` of a `.timer` is `bootout`, `kill` of an unloaded label (113) is success, `is-active` of a throttled KeepAlive unit answers `activating`, `restart` of a loaded unit is `bootout` + `bootstrap`.
+
+Checked invariants: `NoSelfStart` (after `stop` a KeepAlive unit does not come up by itself until `start`/`restart`/`bootstrap`), `ActiveOnlyRunning` (`active` only at `running`), `RestoreExact` (restore ends with the captured `enabled`/`active` or an error), `CalendarKept` (cancelling the night keeps the calendar loaded), `QuiesceStops`, `KeepAliveSurvivesUpdate`, `RestartLoadsPlist`, `TimerVerbNoRun`, and the property `CrashRecovers` (after a crash the KeepAlive unit returns to `running` or is unloaded).
+
+Witnesses must fail: `-stop-kill` (`NoSelfStart`), `-active-loaded` (`ActiveOnlyRunning`), `-oneshot-bootout` (`CalendarKept`), `-kill-unloaded` and `-stop-timer-kill` (`QuiesceStops`), `-throttled-inactive` (`KeepAliveSurvivesUpdate`), `-restart-kickstart` (`RestartLoadsPlist`), `-timer-restart-kickstart` (`TimerVerbNoRun`), `-nokeepalive` (`CrashRecovers`).
+
+```sh
+specs/launchd-unit-check.sh
+```
+
 ## Helpers
 
 `HelperRun.tla` описывает узел конца по v7.3 §2 и §7: один писатель исхода —
