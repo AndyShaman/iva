@@ -239,3 +239,12 @@ test("repair 14: every LaunchAgents filename and launchctl loader is guarded (se
     { seed: 20261017, numRuns: 100 },
   );
 });
+
+test("repair 14: launchctl read commands allow loader words in the label", () => {
+  for (const verb of ["print", "print-disabled"])
+    for (const label of ["bootstrap", "load", "enable", "kickstart"])
+      assert.equal(
+        schedulerBypassViolation(`launchctl ${verb} gui/501/app.iva.${label}`),
+        null,
+      );
+});

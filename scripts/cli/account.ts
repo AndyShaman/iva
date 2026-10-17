@@ -34,6 +34,12 @@ export type AccountDependencies = {
   readonly loadCodexOauth?: () => Promise<CodexOauthModule>;
 };
 
+function unitsName(runtime: CliRuntime): string {
+  return runtime.systemd.manager === "launchd"
+    ? "задания Ивы"
+    : "systemd units";
+}
+
 /** Create account-oriented CLI commands without running command work at import time. */
 export function createAccountCommands(
   runtime: CliRuntime,
@@ -74,13 +80,10 @@ export function createAccountCommands(
   const loadCodexOauth =
     dependencies.loadCodexOauth ?? (() => import("../lib/codex-oauth.ts"));
 
-  const unitKind =
-    runtime.systemd.manager === "launchd" ? "задания Ивы" : "systemd units";
-
   async function cmdUninstall(args: readonly string[]): Promise<void> {
     const purge = args.includes("--purge");
     warn(
-      `Uninstalling Iva: ${unitKind} and the \`iva\` command will be removed.`,
+      `Uninstalling Iva: ${unitsName(runtime)} and the \`iva\` command will be removed.`,
     );
     if (purge)
       bad(
@@ -91,7 +94,8 @@ export function createAccountCommands(
       return;
     }
 
-    if (hasSystemd()) ok(`Removed ${unitKind}: ${removeUnits().length}`);
+    if (hasSystemd())
+      ok(`Removed ${unitsName(runtime)}: ${removeUnits().length}`);
     try {
       remove(join(homeDir(), ".local/bin/iva"));
       ok("iva command removed from ~/.local/bin");

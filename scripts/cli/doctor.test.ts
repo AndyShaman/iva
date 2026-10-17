@@ -2176,7 +2176,9 @@ test("repair 13/15: missing lsof is unknown and macOS doctor names Iva jobs", as
     }),
     cap: (command) =>
       command === "lsof"
-        ? base.cap("/iva-test-missing-lsof", [])
+        ? base.cap("lsof", [], {
+            env: { ...base.childEnv, PATH: "/iva-test-empty-path" },
+          })
         : { code: 0, out: "", err: "" },
     ok: (m) => events.push(m),
     warn: (m) => events.push(m),

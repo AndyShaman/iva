@@ -170,7 +170,9 @@ function positionViolation(
  */
 function launchctlViolation(segment: string): string | null {
   return anchored("launchctl").test(segment) &&
-    /\b(?:bootstrap|load|enable|kickstart)\b/u.test(segment)
+    ["bootstrap", "load", "enable", "kickstart"].includes(
+      tokens(segment)[1] ?? "",
+    )
     ? WHAT.LAUNCHCTL
     : null;
 }
