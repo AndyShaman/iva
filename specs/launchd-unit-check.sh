@@ -33,6 +33,8 @@ check LaunchdUnit-stop-timer-kill QuiesceStops
 check LaunchdUnit-throttled-inactive KeepAliveSurvivesUpdate
 check LaunchdUnit-restart-kickstart RestartLoadsPlist
 check LaunchdUnit-timer-restart-kickstart TimerVerbNoRun
+check LaunchdUnit-restart-nowait RestartWorks
+check LaunchdUnit-stop-nowait QuiesceStops
 check LaunchdUnit-nokeepalive CrashRecovers
 check LaunchdUnit none
 echo "launchd-unit-check: $ok ok, $failed failed"

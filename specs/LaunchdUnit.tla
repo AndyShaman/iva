@@ -9,19 +9,28 @@
 \*       «Календарь загружен» = метка загружена; «таймер активен» = то же самое; «сервис
 \*       активен» = у метки есть pid.
 \* Состояние метки: unloaded | idle (загружена, процесса нет; у KeepAlive не бывает) | running |
-\* throttled (KeepAlive: процесс вышел, launchd поднимет через ThrottleInterval). Флаг en —
+\* throttled (KeepAlive: процесс вышел, launchd поднимет через ThrottleInterval) | stopping
+\* (`state = SIGTERMed`: процесс гасится, у eve до 15–20 с; поле nx — чем станет метка, когда
+\* процесс выйдет: unloaded после bootout, idle или throttled после kill). Флаг en —
 \* метки нет в `launchctl print-disabled`. Флаг stale — загруженная копия плиста старше файла:
 \* launchd читает плист только на bootstrap.
 \*
 \* Примитивы launchctl (функции над записью метки, ответ <<метка, код 0?>>):
 \*   bootstrap: выключенная метка — отказ; загруженная — успех без изменений
 \*              (bootstrapWhileLoaded); иначе грузит плист с диска (RunAtLoad у KeepAlive)
-\*   bootout:   выгружает, процесс убит; незагруженная — успех (113 считается успехом)
+\*   bootout:   асинхронный (приёмка 499547ba, полосы Б, В, Д): код 0 сразу, метка с процессом
+\*              переходит в stopping и выгружается, когда процесс выйдет (processExit, WF);
+\*              без процесса — выгружена сразу; незагруженная — успех (код 3)
+\*   bootstrap метки в stopping: код 5; `print` в этот миг видит задание (SIGTERMed), разбор
+\*              «5 и загружено = уже загружено» берёт это за успех, а метка затем исчезает (113)
 \*   kickstart / kickstart -k: процесс запущен; плист НЕ перечитывается; незагруженная — 113
-\*   kill SIGTERM: процесс выходит; KeepAlive поднимет его снова; незагруженная — 113
+\*   kill SIGTERM: процесс гасится (stopping), затем выходит; KeepAlive поднимет его снова;
+\*              незагруженная — 113
 \*              (проба на mini 17.10.2026: `launchctl kill` и `kickstart` чужой метки -> 113)
 \*   enable / disable: только флаг en
-\* Сам launchd: crash (выход процесса), throttleExpire (честно, WF), calendarFire, вход в систему
+\* Ожидание постусловия (spec v3.3): stop и restart ждут 113 у `print`, stop oneshot ждёт
+\* исчезновения pid; в модели это processExit внутри того же шага писателя.
+\* Сам launchd: crash (выход процесса), throttleExpire и processExit (честно, WF), calendarFire, вход в систему
 \* (bootstrap всех плистов), выход (bootout всех).
 \*
 \* Действие модели -> код (имена из спеки, кода ещё нет)
@@ -55,10 +64,12 @@ CONSTANTS
   ThrottledAnswer,   \* is-active KeepAlive в throttled: "inactive" (спека) | "activating"
   RestartKMode,      \* "kickstartK" (спека) | "reload" (bootout + bootstrap) — restart загруженного
   RestartTimerMode,  \* "kickstartK" (спека) | "reload" — restart загруженного .timer
-  KeepAlive          \* TRUE — в плисте k есть KeepAlive (FALSE — свидетель живучести)
+  KeepAlive,         \* TRUE — в плисте k есть KeepAlive (FALSE — свидетель живучести)
+  WaitStop,          \* TRUE — stop/disable --now/kill ждут выхода процесса (v3.3) | FALSE (499547ba)
+  WaitRestart        \* TRUE — restart ждёт 113 после bootout до bootstrap (v3.3) | FALSE (499547ba)
 
-States == {"unloaded", "idle", "running", "throttled"}
-Unit == [st : States, en : BOOLEAN, stale : BOOLEAN]
+States == {"unloaded", "idle", "running", "throttled", "stopping"}
+Unit == [st : States, en : BOOLEAN, stale : BOOLEAN, nx : {"unloaded", "idle", "throttled"}]
 Phases == {"idle", "quiesced", "restoring", "ok", "mismatch", "error", "quiesce-failed"}
 Answers == {"none", "active", "activating", "inactive"}
 Names == 1..3   \* 1 iva-brain.timer, 2 iva-brain.service (обе — метка o), 3 юзербот (метка k)
@@ -71,6 +82,7 @@ VARIABLES
   ans,           \* последний ответ is-active про k и состояние k в момент ответа
   staleRestart,  \* последний restart оставил загруженной старую копию плиста
   timerRan,      \* restart .timer сам запустил задание
+  restartBroke,  \* restart включённой метки вернулся, а метка не работает и сама не поднимется
   upd,           \* фаза обновления
   cap,           \* снимок captureOptionalWriterState: имя -> [en, act]
   capKLoaded,    \* k была загружена (KeepAlive в ответе за неё) в момент снимка
@@ -78,7 +90,7 @@ VARIABLES
   step,          \* какое имя restore обрабатывает
   budget
 
-vars == <<k, o, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan,
+vars == <<k, o, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke,
           upd, cap, capKLoaded, kLost, step, budget>>
 
 Loaded(u) == u.st # "unloaded"
@@ -88,16 +100,27 @@ Bootstrap(u, ka) ==
   IF ~u.en THEN <<u, FALSE>>
   ELSE IF Loaded(u) THEN <<u, TRUE>>
   ELSE <<[u EXCEPT !.st = IF ka THEN "running" ELSE "idle", !.stale = FALSE], TRUE>>
-Bootout(u) == <<[u EXCEPT !.st = "unloaded", !.stale = FALSE], TRUE>>
-Kickstart(u) == IF Loaded(u) THEN <<[u EXCEPT !.st = "running"], TRUE>> ELSE <<u, FALSE>>
+\* Процесс вышел: метка становится тем, что назначил bootout или kill.
+Exit(u) ==
+  IF u.st # "stopping" THEN u
+  ELSE [u EXCEPT !.st = u.nx, !.stale = IF u.nx = "unloaded" THEN FALSE ELSE u.stale]
+BootoutRaw(u) ==
+  IF u.st \in {"running", "stopping"} THEN [u EXCEPT !.st = "stopping", !.nx = "unloaded"]
+  ELSE [u EXCEPT !.st = "unloaded", !.stale = FALSE]
+Await(u, wait) == IF wait THEN Exit(u) ELSE u
+Bootout(u) == <<Await(BootoutRaw(u), WaitStop), TRUE>>
+Kickstart(u) ==
+  IF Loaded(u) /\ u.st # "stopping" THEN <<[u EXCEPT !.st = "running"], TRUE>> ELSE <<u, FALSE>>
 Kill(u, ka) ==
   IF ~Loaded(u) THEN <<u, KillUnloadedOk>>
-  ELSE <<[u EXCEPT !.st = IF u.st = "running"
-                           THEN (IF ka /\ KeepAlive THEN "throttled" ELSE "idle")
-                           ELSE u.st], TRUE>>
+  ELSE IF u.st = "stopping" THEN <<Await(u, WaitStop), TRUE>>
+  ELSE IF u.st # "running" THEN <<u, TRUE>>
+  ELSE <<Await([u EXCEPT !.st = "stopping",
+                         !.nx = IF ka /\ KeepAlive THEN "throttled" ELSE "idle"], WaitStop), TRUE>>
 Enable(u) == <<[u EXCEPT !.en = TRUE], TRUE>>
 DisableNow(u) == Bootout([u EXCEPT !.en = FALSE])
-Reload(u, ka) == Bootstrap(Bootout(u)[1], ka)
+Reload(u, ka) == Bootstrap(Await(BootoutRaw(u), WaitRestart), ka)
+Live(u) == u.st \in {"running", "throttled"}
 
 \* ---------- глаголы runLaunchd по таблице §3.1 ----------
 \* KeepAlive: после bootstrap/kickstart ждём running до 10 с; throttled за это время истекает.
@@ -124,9 +147,9 @@ RestartTF(u) ==
 AnsK(u) ==
   IF ActiveByLoaded THEN (IF Loaded(u) THEN "active" ELSE "inactive")
   ELSE CASE u.st = "running" -> "active"
-         [] u.st = "throttled" -> ThrottledAnswer
+         [] u.st \in {"throttled", "stopping"} -> ThrottledAnswer
          [] OTHER -> "inactive"
-AnsS(u) == IF u.st = "running" THEN "active" ELSE "inactive"   \* oneshot .service: есть pid
+AnsS(u) == IF u.st \in {"running", "stopping"} THEN "active" ELSE "inactive"   \* есть pid
 AnsT(u) == IF Loaded(u) THEN "active" ELSE "inactive"          \* .timer: метка загружена
 \* unitActive в update-finish.ts: active | activating | deactivating | reloading -> true
 UA(a) == a \in {"active", "activating"}
@@ -143,7 +166,7 @@ TypeOK ==
   /\ o.st # "throttled"
   /\ kStopped \in BOOLEAN /\ kCrashed \in BOOLEAN /\ nightCancelled \in BOOLEAN
   /\ ans \in [v : Answers, st : States]
-  /\ staleRestart \in BOOLEAN /\ timerRan \in BOOLEAN
+  /\ staleRestart \in BOOLEAN /\ timerRan \in BOOLEAN /\ restartBroke \in BOOLEAN
   /\ upd \in Phases
   /\ cap \in [Names -> [en : BOOLEAN, act : BOOLEAN]]
   /\ capKLoaded \in BOOLEAN /\ kLost \in BOOLEAN
@@ -153,11 +176,13 @@ TypeOK ==
 \* Установка: метка загружена тогда и только тогда, когда включена (вход на экране был).
 Init ==
   /\ \E ke, oe \in BOOLEAN :
-       /\ k = [st |-> IF ke THEN "running" ELSE "unloaded", en |-> ke, stale |-> FALSE]
-       /\ o = [st |-> IF oe THEN "idle" ELSE "unloaded", en |-> oe, stale |-> FALSE]
+       /\ k = [st |-> IF ke THEN "running" ELSE "unloaded", en |-> ke, stale |-> FALSE,
+               nx |-> "unloaded"]
+       /\ o = [st |-> IF oe THEN "idle" ELSE "unloaded", en |-> oe, stale |-> FALSE,
+               nx |-> "unloaded"]
   /\ kStopped = FALSE /\ kCrashed = FALSE /\ nightCancelled = FALSE
   /\ ans = [v |-> "none", st |-> "unloaded"]
-  /\ staleRestart = FALSE /\ timerRan = FALSE
+  /\ staleRestart = FALSE /\ timerRan = FALSE /\ restartBroke = FALSE
   /\ upd = "idle"
   /\ cap = [n \in Names |-> [en |-> FALSE, act |-> FALSE]]
   /\ capKLoaded = FALSE /\ kLost = FALSE
@@ -175,23 +200,31 @@ CrashK ==
   /\ k.st = "running" /\ Spend
   /\ k' = [k EXCEPT !.st = IF KeepAlive THEN "throttled" ELSE "idle"]
   /\ kCrashed' = TRUE
-  /\ UNCHANGED <<o, kStopped, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<o, kStopped, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
+
+\* launchd: процесс, которому послан SIGTERM, вышел (через ExitTimeOut — SIGKILL).
+ProcessExit ==
+  /\ \E which \in {"k", "o"} :
+       IF which = "k" THEN k.st = "stopping" /\ k' = Exit(k) /\ o' = o
+       ELSE o.st = "stopping" /\ o' = Exit(o) /\ k' = k
+  /\ kCrashed' = (kCrashed /\ k'.st \notin {"running", "unloaded"})
+  /\ UNCHANGED <<kStopped, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars, budget>>
 
 ThrottleExpire ==
   /\ k.st = "throttled"
   /\ k' = [k EXCEPT !.st = "running"]
   /\ kCrashed' = FALSE
-  /\ UNCHANGED <<o, kStopped, nightCancelled, ans, staleRestart, timerRan, UpdVars, budget>>
+  /\ UNCHANGED <<o, kStopped, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars, budget>>
 
 CalendarFire ==
   /\ o.st = "idle" /\ Spend
   /\ o' = [o EXCEPT !.st = "running"]
-  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 NightEnds ==
   /\ o.st = "running" /\ Spend
   /\ o' = [o EXCEPT !.st = "idle"]
-  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 \* Вход в систему: launchd делает bootstrap каждого плиста (загруженные — «уже загружено»).
 Login ==
@@ -200,20 +233,22 @@ Login ==
   /\ o' = Bootstrap(o, FALSE)[1]
   /\ kStopped' = (kStopped /\ ~Loaded(k'))
   /\ kCrashed' = (kCrashed /\ ~(k'.st = "running"))
-  /\ UNCHANGED <<nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
+\* Выход из системы: домен gui/<uid> уходит вместе с заданиями, писателям без домена нечего
+\* делать, поэтому шаг атомарен (разгрузка доведена до конца).
 Logout ==
   /\ Spend
-  /\ k' = Bootout(k)[1] /\ o' = Bootout(o)[1]
+  /\ k' = Exit(BootoutRaw(k)) /\ o' = Exit(BootoutRaw(o))
   /\ kCrashed' = FALSE /\ nightCancelled' = FALSE
-  /\ UNCHANGED <<kStopped, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<kStopped, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 WritePlist ==
   /\ Spend
   /\ \E which \in {"k", "o"} :
        IF which = "k" THEN k' = [k EXCEPT !.stale = Loaded(k)] /\ o' = o
        ELSE o' = [o EXCEPT !.stale = Loaded(o)] /\ k' = k
-  /\ UNCHANGED <<kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 \* ---------- писатели вне обновления ----------
 KWriter(r, stopped) ==
@@ -225,7 +260,7 @@ StopK ==
   /\ Spend
   /\ LET r == StopKF(k) IN
        KWriter(r, IF r[2] THEN TRUE ELSE kStopped)
-  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 \* start/restart возвращают 0 только при running после ожидания; вызывающий видит это как
 \* is-active = active (systemd-control.ts restart -> isActive).
@@ -234,7 +269,7 @@ StartK ==
   /\ LET r == StartKF(k) IN
        /\ KWriter(r, IF r[2] THEN FALSE ELSE kStopped)
        /\ ans' = [v |-> IF r[2] THEN "active" ELSE "inactive", st |-> r[1].st]
-  /\ UNCHANGED <<o, nightCancelled, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<o, nightCancelled, staleRestart, timerRan, restartBroke, UpdVars>>
 
 RestartK ==
   /\ Spend
@@ -242,35 +277,36 @@ RestartK ==
        /\ KWriter(r, IF r[2] THEN FALSE ELSE kStopped)
        /\ ans' = [v |-> IF r[2] THEN "active" ELSE "inactive", st |-> r[1].st]
        /\ staleRestart' = (r[2] /\ r[1].stale)
+       /\ restartBroke' = (k.en /\ ~Live(r[1]))
   /\ UNCHANGED <<o, nightCancelled, timerRan, UpdVars>>
 
 EnableNowK ==
   /\ Spend
   /\ LET r == EnableNowKF(k) IN KWriter(r, IF r[2] THEN FALSE ELSE kStopped)
-  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 DisableNowK ==
   /\ Spend
   /\ KWriter(DisableNow(k), TRUE)
-  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<o, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 IsActiveK ==
   /\ Spend
   /\ ans' = [v |-> AnsK(k), st |-> k.st]
-  /\ UNCHANGED <<k, o, kStopped, kCrashed, nightCancelled, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<k, o, kStopped, kCrashed, nightCancelled, staleRestart, timerRan, restartBroke, UpdVars>>
 
 \* Отмена ночи из меню: stop iva-brain.service.
 StopNight ==
   /\ Spend
   /\ LET r == StopSF(o) IN
        /\ o' = r[1]
-       /\ nightCancelled' = (nightCancelled \/ (r[2] /\ Loaded(o)))
-  /\ UNCHANGED <<k, kStopped, kCrashed, ans, staleRestart, timerRan, UpdVars>>
+       /\ nightCancelled' = (nightCancelled \/ (r[2] /\ o.st \in {"idle", "running"}))
+  /\ UNCHANGED <<k, kStopped, kCrashed, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 StartNight ==
   /\ Spend
   /\ o' = StartSF(o)[1]
-  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, UpdVars>>
+  /\ UNCHANGED <<k, kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke, UpdVars>>
 
 \* restart .timer плагина (новый файл юнита): календарь перечитан, задание само не запускается.
 RestartTimer ==
@@ -279,6 +315,7 @@ RestartTimer ==
        /\ o' = r[1]
        /\ staleRestart' = (r[2] /\ r[1].stale)
        /\ timerRan' = (o.st # "running" /\ r[1].st = "running")
+       /\ restartBroke' = (o.en /\ r[1].st \notin {"idle", "running"})
   /\ nightCancelled' = FALSE
   /\ UNCHANGED <<k, kStopped, kCrashed, ans, UpdVars>>
 
@@ -301,7 +338,7 @@ UpdateQuiesce ==
         /\ kStopped' = (kStopped \/ (tOk /\ s[2] /\ kk[2]))
         /\ kCrashed' = (kCrashed /\ k'.st \notin {"running", "unloaded"})
   /\ nightCancelled' = FALSE
-  /\ UNCHANGED <<ans, staleRestart, timerRan, kLost, step>>
+  /\ UNCHANGED <<ans, staleRestart, timerRan, restartBroke, kLost, step>>
 
 \* Тело обновления (writeUnits, activateUnits, миграция) может поменять флаги enabled.
 UpdateBody ==
@@ -310,7 +347,7 @@ UpdateBody ==
        /\ k' = [k EXCEPT !.en = ke]
        /\ o' = [o EXCEPT !.en = oe]
   /\ upd' = "restoring" /\ step' = 1
-  /\ UNCHANGED <<kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan,
+  /\ UNCHANGED <<kStopped, kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke,
                  cap, capKLoaded, kLost, budget>>
 
 \* restoreOptionalWriterState для одного имени: enabled, затем active, затем сверка.
@@ -335,15 +372,15 @@ RestoreStep ==
         /\ step' = IF good /\ n < 3 THEN n + 1 ELSE n
         /\ kLost' = (good /\ n = 3 /\ capKLoaded /\ ~Loaded(k2))
         /\ kStopped' = IF n = 3 THEN ~Loaded(k2) ELSE kStopped
-  /\ UNCHANGED <<kCrashed, nightCancelled, ans, staleRestart, timerRan, cap, capKLoaded, budget>>
+  /\ UNCHANGED <<kCrashed, nightCancelled, ans, staleRestart, timerRan, restartBroke, cap, capKLoaded, budget>>
 
 Next ==
-  \/ CrashK \/ ThrottleExpire \/ CalendarFire \/ NightEnds \/ Login \/ Logout \/ WritePlist
+  \/ CrashK \/ ThrottleExpire \/ ProcessExit \/ CalendarFire \/ NightEnds \/ Login \/ Logout \/ WritePlist
   \/ StopK \/ StartK \/ RestartK \/ EnableNowK \/ DisableNowK \/ IsActiveK
   \/ StopNight \/ StartNight \/ RestartTimer
   \/ UpdateQuiesce \/ UpdateBody \/ RestoreStep
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(ThrottleExpire)
+Spec == Init /\ [][Next]_vars /\ WF_vars(ThrottleExpire) /\ WF_vars(ProcessExit)
 
 \* ---------- инварианты §7 ----------
 \* (1) После stop KeepAlive-юнит не поднимается сам, пока не было start/restart/bootstrap.
@@ -368,6 +405,14 @@ KeepAliveSurvivesUpdate == ~kLost
 
 \* restart, вернувший 0, работает по текущему плисту, а не по копии с прошлого bootstrap.
 RestartLoadsPlist == ~staleRestart
+
+\* После restart включённой метки она работает: KeepAlive — running или throttled, календарь —
+\* загружен. Без ожидания 113 bootstrap попадает в stopping, и метка исчезает.
+RestartWorks == ~restartBroke
+
+\* После stopWriterUnits и до restore ни один писатель не работает и не гасится.
+WritersStopped == upd = "quiesced" => /\ k.st \notin {"running", "stopping"}
+                                      /\ o.st \notin {"running", "stopping"}
 
 \* restart .timer не запускает задание (на systemd он только перевзводит таймер).
 TimerVerbNoRun == ~timerRan
