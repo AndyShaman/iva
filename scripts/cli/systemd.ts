@@ -28,6 +28,8 @@ import { resolveTimeZone, validateTimeZone } from "../lib/timezone.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import { resolveVaultDir } from "../../packages/vault-dir/index.ts";
 import { servicePath } from "../../packages/claude-command/index.ts";
+import { writeLaunchdUnits } from "../lib/launchd-plist.ts";
+import { launchdUnitPath, unloadLaunchd } from "../lib/launchd.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 
@@ -271,6 +273,25 @@ class CliSystemdLifecycle {
   // Writes iva.service + all deploy/iva-*.{service,timer} with placeholder substitution. daemon-reload.
   writeUnits(options: WriteUnitsOptions = {}): string[] {
     this.protectSecrets(options);
+    if (this.runtime.systemd.manager === "launchd") {
+      const deploy = join(this.runtime.ROOT, "deploy");
+      const fill = this.unitPlaceholders();
+      return writeLaunchdUnits(
+        [
+          { unit: "iva.service", body: this.ivaServiceBody() },
+          ...readdirSync(deploy)
+            .filter((file) =>
+              this.isDeployUnit(file, new Set(options.skipUnits)),
+            )
+            .map((unit) => ({
+              unit,
+              body: fill(readFileSync(join(deploy, unit), "utf8")),
+            })),
+        ],
+        this.runtime.UNIT_DIR,
+        { root: this.runtime.ROOT, node: this.runtime.NODE },
+      );
+    }
     mkdirSync(this.runtime.UNIT_DIR, { recursive: true });
     writeFileSync(
       join(this.runtime.UNIT_DIR, "iva.service"),
@@ -327,14 +348,28 @@ class CliSystemdLifecycle {
   // The unit names from `names` that are installed; none without this.runtime.systemd.
   installedUnits(names: readonly string[]): string[] {
     return this.runtime.hasSystemd()
-      ? names.filter((unit) => existsSync(join(this.runtime.UNIT_DIR, unit)))
+      ? names.filter((unit) =>
+          existsSync(
+            this.runtime.systemd.manager === "launchd"
+              ? launchdUnitPath(unit, this.runtime.UNIT_DIR)
+              : join(this.runtime.UNIT_DIR, unit),
+          ),
+        )
       : [];
   }
 
   unitCleanupSteps() {
     return {
       disable: (unit: string) => this.runtime.systemd.disableNow([unit]),
-      remove: (unit: string) => rmSync(join(this.runtime.UNIT_DIR, unit)),
+      remove: (unit: string) => {
+        if (this.runtime.systemd.manager === "launchd")
+          unloadLaunchd(unit, this.runtime.UNIT_DIR);
+        rmSync(
+          this.runtime.systemd.manager === "launchd"
+            ? launchdUnitPath(unit, this.runtime.UNIT_DIR)
+            : join(this.runtime.UNIT_DIR, unit),
+        );
+      },
       reload: () => this.runtime.systemd.daemonReload(),
       reset: () => this.runtime.systemd.resetFailed(),
     };
@@ -610,6 +645,12 @@ class CliSystemdLifecycle {
 
   removeUnits(): string[] {
     if (!existsSync(this.runtime.UNIT_DIR)) return [];
+    if (this.runtime.systemd.manager === "launchd") {
+      const units = readdirSync(this.runtime.UNIT_DIR)
+        .filter((file) => /^app\.iva\.[A-Za-z0-9_.@:-]+\.plist$/u.test(file))
+        .map((file) => `${file.slice(8, -6)}.service`);
+      return cleanupSystemdUnits({ units, ...this.unitCleanupSteps() });
+    }
     const units = readdirSync(this.runtime.UNIT_DIR).filter((file) =>
       /^iva.*\.(service|timer)$/.test(file),
     );

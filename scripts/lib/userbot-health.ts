@@ -1,3 +1,5 @@
+import { serviceManager } from "./service-manager.ts";
+import { runLaunchd } from "./launchd.ts";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -118,6 +120,7 @@ function defaultRunSystemctl(
   args: string[],
   { signal }: { signal?: AbortSignal } = {},
 ): Promise<SystemctlResult> {
+  if (serviceManager() === "launchd") return Promise.resolve(runLaunchd(args));
   return new Promise((resolve) => {
     execFile(
       "systemctl",

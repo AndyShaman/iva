@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+import "../fixtures/systemd-env.ts";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";

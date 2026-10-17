@@ -1,3 +1,4 @@
+import { logHint } from "../systemd-control.ts";
 // Экран «🛠 Обслуживание»: доктор / чистка vault / ночной brain / обновление.
 // Вся механика запуска и прогресса — svc-run.ts; здесь вьюхи, копирайт и гейты.
 // Спека: notes/specs/2026-07-25-menu-service-design.md (вне публичного дерева, см. историю git).
@@ -169,8 +170,8 @@ function summaryText(run: ServiceRun, ctx: MenuServiceContext): string {
   if (run.status === "timeout") {
     if (run.cmd === "mem")
       return T(
-        `⏳ Still running after ${took} — check: journalctl --user -u ${MEM_UNIT}`,
-        `⏳ Всё ещё идёт (${took}) — смотри: journalctl --user -u ${MEM_UNIT}`,
+        `⏳ Still running after ${took} — check: ${logHint(MEM_UNIT)}`,
+        `⏳ Всё ещё идёт (${took}) — смотри: ${logHint(MEM_UNIT)}`,
       );
     return T(
       `⚠️ Timed out: ${name} · ${took}`,
@@ -178,41 +179,56 @@ function summaryText(run: ServiceRun, ctx: MenuServiceContext): string {
     );
   }
   const ok = run.status === "done";
-  if (run.cmd === "cln" && ok) {
-    const m = run.tail
-      .join("\n")
-      .match(
-        /cleanup \((?:applied|dry-run)\): (\d+) file\(s\), ([\d,]+) bytes/,
-      );
-    if (m) {
-      const files = Number(m[1]);
-      const mb = (Number(m[2].replace(/,/g, "")) / 1e6).toFixed(files ? 1 : 0);
-      return files
-        ? T(
-            `✅ Cleanup: ${files} file(s), ${mb} MB of garbage removed · ${took}`,
-            `✅ Чистка: ${files} файл(ов), ${mb} МБ мусора убрано · ${took}`,
-          )
-        : T(
-            `✅ Cleanup: vault is clean · ${took}`,
-            `✅ Чистка: vault чистый · ${took}`,
-          );
-    }
-  }
+  const cleanup = cleanupSummary(run, took, T);
+  if (cleanup) return cleanup;
   if (run.cmd === "mem" && ok)
     return T(
       `✅ Memory cycle finished in ${took}`,
       `✅ Цикл памяти пройден за ${took}`,
     );
-  const head =
-    run.cmd === "doc"
-      ? ok
-        ? T("✅ Diagnostics passed", "✅ Диагностика пройдена")
-        : T("⚠️ Issues found", "⚠️ Есть проблемы")
-      : ok
-        ? T(`✅ Done: ${name}`, `✅ Готово: ${name}`)
-        : T(`⚠️ Failed: ${name}`, `⚠️ Упало: ${name}`);
+  const head = summaryHead(run, name, T);
   const tail = tailText(run);
   return tail ? `${head} · ${took}\n\n${tail}` : `${head} · ${took}`;
+}
+
+function cleanupSummary(
+  run: ServiceRun,
+  took: string,
+  T: MenuServiceContext["tr"],
+): string | null {
+  if (run.cmd !== "cln" || run.status !== "done") return null;
+  const m = run.tail
+    .join("\n")
+    .match(/cleanup \((?:applied|dry-run)\): (\d+) file\(s\), ([\d,]+) bytes/);
+  if (m) {
+    const files = Number(m[1]);
+    const mb = (Number(m[2].replace(/,/g, "")) / 1e6).toFixed(files ? 1 : 0);
+    return files
+      ? T(
+          `✅ Cleanup: ${files} file(s), ${mb} MB of garbage removed · ${took}`,
+          `✅ Чистка: ${files} файл(ов), ${mb} МБ мусора убрано · ${took}`,
+        )
+      : T(
+          `✅ Cleanup: vault is clean · ${took}`,
+          `✅ Чистка: vault чистый · ${took}`,
+        );
+  }
+  return null;
+}
+
+function summaryHead(
+  run: ServiceRun,
+  name: string,
+  T: MenuServiceContext["tr"],
+): string {
+  const ok = run.status === "done";
+  return run.cmd === "doc"
+    ? ok
+      ? T("✅ Diagnostics passed", "✅ Диагностика пройдена")
+      : T("⚠️ Issues found", "⚠️ Есть проблемы")
+    : ok
+      ? T(`✅ Done: ${name}`, `✅ Готово: ${name}`)
+      : T(`⚠️ Failed: ${name}`, `⚠️ Упало: ${name}`);
 }
 
 function lastRunLine(run: ServiceRun, ctx: MenuServiceContext): string {

@@ -23,6 +23,7 @@
 printf '\n  \033[36m⏳ Preparing environment / Идёт подготовка окружения — up to a minute, do not interrupt…\033[0m\n'
 set -Eeuo pipefail
 
+IVA_OS="$(uname -s)"
 REPO_URL="${REPO_URL:-https://github.com/smixs/iva-agent.git}"
 # IVA_BETA=1 - бета-обновления: всегда ветка beta, в main только выпуски (ADR-0018).
 if [ "${IVA_BETA:-}" = 1 ]; then
@@ -690,7 +691,7 @@ ensure_swap() {
   total=$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "?")
   ok "$(t "Swap on (${total}MB total) — build will have headroom" "Своп включён (всего ${total}МБ) — сборке хватит памяти")"
 }
-ensure_swap
+if [ "$IVA_OS" != Darwin ]; then ensure_swap; fi
 
 # ─────────────────────────────────────────────────────────────────────────
 # 1. System dependencies. Detect-then-install.
@@ -700,7 +701,11 @@ ensure_swap
 command -v curl >/dev/null || die "$(t "curl is required (install: apt/brew install curl)" "нужен curl (установи: apt/brew install curl)")"
 
 PM="none"
-if   command -v apt-get >/dev/null 2>&1; then PM="apt"
+if [ "$IVA_OS" = Darwin ]; then
+  command -v brew >/dev/null 2>&1 || die "$(t 'Install Homebrew: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" then run this installer again.' 'Установите Homebrew: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" и запустите установщик снова.')"
+  launchctl print "gui/$(id -u)" >/dev/null 2>&1 || die "macOS: войдите в систему на экране этого Mac — службы Ивы живут в вашей сессии"
+  PM="brew"
+elif command -v apt-get >/dev/null 2>&1; then PM="apt"
 elif command -v dnf     >/dev/null 2>&1; then PM="dnf"
 elif command -v brew    >/dev/null 2>&1; then PM="brew"
 fi
@@ -1152,7 +1157,20 @@ esac
 #    (agent/schedules/memory-*.ts), migrated automatically on the server's first
 #    start by scripts/lib/schedule-migration.ts.
 # ─────────────────────────────────────────────────────────────────────────
-if ! command -v systemctl >/dev/null 2>&1; then
+AUTOSTART_READY=false
+if [ "$IVA_OS" = Darwin ]; then
+  if [ ! -f .env ]; then
+    warn "$(t 'No .env — run npm run setup before enabling autostart.' 'Нет .env — запустите npm run setup перед настройкой автозапуска.')"
+  elif prompt_yes_no "$(t 'Set up autostart (launchd)?' 'Завести автозапуск (launchd)?')" yes; then
+    CURRENT_STEP="launchd"
+    node "$PROJECT_DIR/bin/iva.mjs" _install-units || die "$(t 'Could not write Iva units' 'Не удалось записать задания Ивы')"
+    node "$PROJECT_DIR/bin/iva.mjs" _activate-units || die "$(t 'Could not activate Iva units; run iva logs' 'Не удалось включить задания Ивы; выполните iva logs')"
+    ok "$(t 'Bot enabled and online' 'Бот включён и на связи')"
+    ok "iva status"
+    ok "iva logs -f"
+    AUTOSTART_READY=true
+  fi
+elif ! command -v systemctl >/dev/null 2>&1; then
   : # not Linux/systemd — skip silently
 elif [ ! -f .env ]; then
   warn "$(t "No .env — not setting up autostart. Run: cd $PROJECT_DIR && npm run setup, then: bash install.sh (seconds — it reuses everything already done)." "Нет .env — автозапуск не настраиваю. Выполните: cd $PROJECT_DIR && npm run setup, потом: bash install.sh (секунды — всё готовое переиспользуется).")"
@@ -1172,6 +1190,10 @@ elif prompt_yes_no "$(t "Set up autostart via systemd (service + watchdog timers
   ok "$(t "Background timers enabled and active: systemctl --user list-timers" "Фоновые таймеры включены и активны: systemctl --user list-timers")"
   ok "$(t "Service started: systemctl --user status iva" "Сервис запущен: systemctl --user status iva")"
 
+  AUTOSTART_READY=true
+fi
+
+if [ "$AUTOSTART_READY" = true ]; then
   # Instant confirmation in Telegram (direct Bot API — doesn't depend on the server).
   _bot="$(grep -E '^TELEGRAM_BOT_TOKEN=' .env | head -n1 | cut -d= -f2- | tr -d '"' || true)"
   _chat="$(grep -E '^TELEGRAM_DIGEST_CHAT_ID=' .env | head -n1 | cut -d= -f2- | tr -d '"' || true)"
@@ -1223,6 +1245,12 @@ echo "    gh auth login"
 echo "    gh repo create <user>/iva-vault --private --source=\"$VAULT_PATH\" --remote=origin --push"
 echo
 echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+if [ "$IVA_OS" = Darwin ]; then
+  echo "    iva status"
+  echo "    iva logs -f"
+  echo "$(t 'Iva runs while this Mac is on, awake and you are logged in. If it is off at night, that night’s memory care is skipped. For round-the-clock operation use a server or a Mac that stays awake (Settings → Battery / Energy Saver).' 'Ива работает, пока этот Mac включён, не спит и вы вошли в систему. Если Mac выключен ночью, ночной уход за памятью в эту ночь пропускается. Для работы круглосуточно — сервер или Mac, который не засыпает (Настройки → Аккумулятор / Энергосбережение)')"
+else
 echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
 echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
+fi
 echo

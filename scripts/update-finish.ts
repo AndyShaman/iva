@@ -1,3 +1,4 @@
+import { controlFailure } from "./lib/systemd-control.ts";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -245,7 +246,9 @@ function checkedUnitAction(
 ): void {
   const result = runtime.systemd.query(action, unit);
   if (result.code !== 0)
-    throw new Error(`systemctl --user ${action} ${unit} failed: ${result.out}`);
+    throw new Error(
+      `${controlFailure([action, unit], runtime.systemd.manager ?? "systemd")}: ${result.out}`,
+    );
 }
 
 /** Restore exact optional active/enabled flags without starting a disabled unit. */

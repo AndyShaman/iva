@@ -1,3 +1,4 @@
+import { serviceManager } from "../lib/service-manager.ts";
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
 import { createDiagnoseCommand } from "./diagnose.ts";
@@ -193,11 +194,13 @@ export function createCliMain(root: string) {
     "--help": cmdHelp,
     "-h": cmdHelp,
     "_install-units": () =>
-      ok(`systemd units written: ${systemdLifecycle.writeUnits().length}`),
+      ok(
+        `${serviceManager() === "launchd" ? "задания Ивы" : "systemd units"} written: ${systemdLifecycle.writeUnits().length}`,
+      ),
     "_activate-units": () => {
       systemdLifecycle.activateUnits();
       ok(
-        `systemd units enabled and active: ${SERVICES.length + TIMERS.length}`,
+        `${serviceManager() === "launchd" ? "задания Ивы" : "systemd units"} enabled and active: ${SERVICES.length + TIMERS.length}`,
       );
     },
     "_await-healthy": services.cmdAwaitHealthy,

@@ -1,3 +1,4 @@
+import { restartFailure } from "../systemd-control.ts";
 // Экран «Богатые ответы» (/menu → 💬): тумблер TELEGRAM_RICH_REPLIES.
 // auto (дефолт) шлёт ответ с таблицей, чек-листом, свёрткой или формулой богатым сообщением
 // Telegram, never держит такие ответы обычным текстом. Константу агент вычисляет при импорте
@@ -126,8 +127,12 @@ export default {
                 "♻️ Перезапускаю агента — новый режим ответов активен через ~30 сек.",
               )
             : ctx.tr(
-                "⚠️ Couldn't restart (systemctl). Check the service on the server.",
-                "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                restartFailure(
+                  "⚠️ Couldn't restart (systemctl). Check the service on the server.",
+                ),
+                restartFailure(
+                  "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                ),
               ),
         );
       }

@@ -1,3 +1,4 @@
+import { real } from "../lib/version-layout.ts";
 import { createHelperOutcomeScan } from "./helper-outcomes.ts";
 import { fileURLToPath } from "node:url";
 
@@ -484,7 +485,8 @@ export function runEntrypoint(
   moduleUrl: string,
   executedPath: string | undefined = process.argv[1],
 ): void {
-  if (fileURLToPath(moduleUrl) !== executedPath) return;
+  if (!executedPath || real(fileURLToPath(moduleUrl)) !== real(executedPath))
+    return;
   // У остановки моста нет своего пути завершения: задачи в полёте умирают вместе с процессом.
   // Скажем об этом в журнал и пропустим сигнал дальше — обработчик снят, и повторный SIGTERM
   // убивает процесс как раньше, иначе systemd ждал бы нас до SIGKILL.

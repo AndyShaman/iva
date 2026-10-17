@@ -1,3 +1,4 @@
+import { serviceManager } from "../lib/service-manager.ts";
 import { readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -88,7 +89,10 @@ export function createAccountCommands(
       return;
     }
 
-    if (hasSystemd()) ok(`Removed systemd units: ${removeUnits().length}`);
+    if (hasSystemd())
+      ok(
+        `Removed ${serviceManager() === "launchd" ? "службы Ивы" : "systemd units"}: ${removeUnits().length}`,
+      );
     try {
       remove(join(homeDir(), ".local/bin/iva"));
       ok("iva command removed from ~/.local/bin");

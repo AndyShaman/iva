@@ -1,3 +1,4 @@
+import { restartFailure } from "../lib/systemd-control.ts";
 import { resolveOpenCodeProtocol } from "@iva/opencode-protocol";
 import {
   CATALOG,
@@ -1464,8 +1465,12 @@ async function onWizardRestartNow(st: WizardState): Promise<boolean> {
     const failed = await reply(
       st.chatId,
       tr(
-        "Couldn't restart (systemctl). Check the service on the server.",
-        "Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+        restartFailure(
+          "Couldn't restart (systemctl). Check the service on the server.",
+        ),
+        restartFailure(
+          "Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+        ),
       ),
     );
     return replySucceeded(failed);

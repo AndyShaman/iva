@@ -1,3 +1,5 @@
+import { serviceManager } from "../service-manager.ts";
+import { describeLaunchd } from "../launchd.ts";
 // Экран кронов: read-only. systemctl --user list-timers (фильтр iva-* + xfeed-daily):
 // «имя → следующий запуск», плюс счётчик задач из data/tasks.json, плюс блок расписаний
 // внутри самой Ивы (agent/schedules/*.ts — Nitro scheduled tasks, не systemd) из
@@ -193,6 +195,14 @@ function parseTimers(stdout: string): Timer[] {
 
 async function loadTimers() {
   if (cache.timers && Date.now() - cache.at < CACHE_TTL_MS) return cache.timers;
+  if (serviceManager() === "launchd") {
+    const timers = describeLaunchd([
+      "iva-brain.timer",
+      "iva-update-check.timer",
+    ]).map((state) => ({ unit: state.unit, next: state.nextRun ?? "—" }));
+    cache = { at: Date.now(), timers };
+    return timers;
+  }
   const stdout = await run("systemctl", [
     "--user",
     "list-timers",

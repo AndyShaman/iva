@@ -8,6 +8,7 @@
 // parent (systemd EnvironmentFile, eve start) already carries every key of .env in its own
 // process.env, so a checkout or version tree without the file must not kill the child —
 // node prints one honest `not found. Continuing without it.` line to the tail instead.
+import { lockCommand } from "./lock-command.ts";
 import {
   spawn,
   type ChildProcess,
@@ -478,16 +479,13 @@ function spawnChild(
   startedAt: number,
 ): Promise<SpawnOutcome> {
   const { argv, root, nodeBin, lockPath, timeoutMs, killGraceMs, env } = o;
-  const cmd = lockPath ? "flock" : (nodeBin as string);
-  const args = lockPath
-    ? [
-        "-w",
-        String(LOCK_WAIT_SECONDS),
-        lockPath,
-        nodeBin as string,
-        "--env-file-if-exists=.env",
-        ...argv,
-      ]
+  const lock = lockPath
+    ? lockCommand({ file: lockPath, waitSeconds: LOCK_WAIT_SECONDS })
+    : null;
+  const node = nodeBin ?? process.execPath;
+  const cmd = lock?.command ?? node;
+  const args = lock
+    ? [...lock.args, node, "--env-file-if-exists=.env", ...argv]
     : ["--env-file-if-exists=.env", ...argv];
 
   return new Promise<SpawnOutcome>((resolve) => {

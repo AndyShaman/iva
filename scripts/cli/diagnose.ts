@@ -1,3 +1,5 @@
+import { serviceManager } from "../lib/service-manager.ts";
+import { logHint, logTail } from "../lib/systemd-control.ts";
 // `iva diagnose` — one package of evidence for a bug report: a GitHub issue or the
 // support chat (agent/skills/report-problem). A thin collector: it takes what the machine
 // already knows and cuts secrets BEFORE the file is written. What broke is the model's
@@ -542,6 +544,13 @@ function journalSection(
   dataDir: string,
   units: readonly string[],
 ): string {
+  if (serviceManager() === "launchd")
+    return (
+      units
+        .map((unit) => logTail(unit, JOURNAL_LINES))
+        .filter(Boolean)
+        .join("\n") || "логов пока нет"
+    );
   const args = [
     "--user",
     ...units.flatMap((unit) => ["-u", unit]),
@@ -560,7 +569,7 @@ function journalSection(
   }
   return (
     `journalctl unavailable (${result.err || "no journalctl on this host"}) — ` +
-    "read the service journal where the service logs: journalctl --user -u iva.service -n 200, " +
+    `read the service journal where the service logs: ${logHint("iva.service", { lines: 200 })}, ` +
     "or the terminal that started it"
   );
 }

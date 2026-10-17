@@ -1,5 +1,7 @@
 # Deploy
 
+On macOS, `install.sh` uses launchd with unit labels `app.iva.*` and plists in `~/Library/LaunchAgents`. The same `iva status/restart/start/stop/logs/update/doctor/uninstall` commands operate those units. Logs are in `~/Library/Logs/Iva/`. Units run in the logged-in GUI session, so the Mac must be on and awake. A calendar job missed during sleep runs on wake; a night while the Mac is off is skipped.
+
 Iva runs on one VPS as two systemd user services, two systemd watchdog timers, and four in-process eve schedules. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling

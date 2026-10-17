@@ -1,3 +1,6 @@
+import { serviceManager } from "../service-manager.ts";
+import { runLaunchd } from "../launchd.ts";
+import { logTail } from "../systemd-control.ts";
 // Раннер экрана «Обслуживание» (svc): один долгий процесс на мост + живой прогресс в том же
 // сообщении меню. Спека: notes/specs/2026-07-25-menu-service-design.md (вне публичного дерева, см. историю git).
 //
@@ -263,33 +266,41 @@ export function startUnit(
       execFile(file, args, options, callback);
     });
   const sysctl = (args: string[]): Promise<{ code: number; out: string }> =>
-    new Promise((resolve) =>
-      ex(
-        "systemctl",
-        ["--user", ...args],
-        { timeout: 15_000, encoding: "utf8" },
-        (error, stdout = "") =>
-          resolve({
-            code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
-            out: String(stdout).trim(),
-          }),
-      ),
-    );
-  const journal = (): Promise<string[]> =>
-    new Promise((resolve) =>
-      ex(
-        "journalctl",
-        ["--user", "-u", unit, "-n", "15", "--no-pager", "-o", "cat"],
-        { timeout: 15_000, encoding: "utf8" },
-        (_error, stdout = "") =>
-          resolve(
-            stripAnsi(String(stdout))
-              .split("\n")
-              .map((l) => l.trim())
-              .filter(Boolean),
+    !opts.execFileImpl && serviceManager() === "launchd"
+      ? Promise.resolve(runLaunchd(args))
+      : new Promise((resolve) =>
+          ex(
+            "systemctl",
+            ["--user", ...args],
+            { timeout: 15_000, encoding: "utf8" },
+            (error, stdout = "") =>
+              resolve({
+                code: error
+                  ? typeof error.code === "number"
+                    ? error.code
+                    : 1
+                  : 0,
+                out: String(stdout).trim(),
+              }),
           ),
-      ),
-    );
+        );
+  const journal = (): Promise<string[]> =>
+    !opts.execFileImpl && serviceManager() === "launchd"
+      ? Promise.resolve(logTail(unit, 15).split("\n").filter(Boolean))
+      : new Promise((resolve) =>
+          ex(
+            "journalctl",
+            ["--user", "-u", unit, "-n", "15", "--no-pager", "-o", "cat"],
+            { timeout: 15_000, encoding: "utf8" },
+            (_error, stdout = "") =>
+              resolve(
+                stripAnsi(String(stdout))
+                  .split("\n")
+                  .map((l) => l.trim())
+                  .filter(Boolean),
+              ),
+          ),
+        );
   run._kill = () => {
     void sysctl(["stop", unit]);
   };

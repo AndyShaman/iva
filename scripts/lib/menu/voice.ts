@@ -1,3 +1,4 @@
+import { restartFailure } from "../systemd-control.ts";
 // Экран «Голос» (/menu → 🎤): ключ Deepgram, язык распознавания голосовых и имена с терминами,
 // которые Deepgram должен писать одинаково (DEEPGRAM_KEYTERMS).
 //
@@ -255,8 +256,12 @@ export default {
                 "♻️ Перезапускаю агента — голосовые распознаются через ~30 сек.",
               )
             : ctx.tr(
-                "⚠️ Couldn't restart (systemctl). Check the service on the server.",
-                "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                restartFailure(
+                  "⚠️ Couldn't restart (systemctl). Check the service on the server.",
+                ),
+                restartFailure(
+                  "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                ),
               ),
         );
       }

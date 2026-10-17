@@ -428,6 +428,16 @@ const IDENTITY = {
  */
 const TOOLS = realpathSync(mkdtempSync(join(tmpdir(), "iva-install-tools-")));
 const RECORDER_PATH = join(TOOLS, "recorder");
+writeFileSync(
+  join(TOOLS, "uname"),
+  '#!/bin/sh\nprintf "%s\\n" "${IVA_TEST_OS:-Linux}"\n',
+  { mode: 0o755 },
+);
+writeFileSync(
+  join(TOOLS, "launchctl"),
+  '#!/bin/sh\necho "launchctl $*" >> "$IVA_TEST_CALLS"\n[ "${IVA_TEST_GUI:-1}" = 1 ] || exit 113\n',
+  { mode: 0o755 },
+);
 writeFileSync(RECORDER_PATH, RECORDER);
 chmodSync(RECORDER_PATH, 0o755);
 // Everything the installer may reach for, stubbed by name. The package layer is here on
@@ -2048,4 +2058,33 @@ void test("updater GWS path rejects corrupt bytes before npm and removes its dow
   assert.match(result.stdout + result.stderr, /SHA-256 mismatch/u);
   assert.doesNotMatch(world.calls(), /npm i/u);
   assert.deepEqual(leftovers(world.tmp), []);
+});
+
+void test("Darwin installer uses brew and launchd without swap or linger", (t) => {
+  const world = createWorld(t);
+  const result = world.run({ env: { IVA_TEST_OS: "Darwin" } });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(world.calls(), /launchctl print gui\//u);
+  assert.doesNotMatch(world.calls(), /loginctl|swapon|mkswap|apt-get|dnf/u);
+  assert.match(result.stdout, /iva logs -f/u);
+  assert.match(result.stdout, /Mac is on, awake/u);
+});
+void test("Darwin installer stops without a GUI login or Homebrew", (t) => {
+  for (const env of [
+    { IVA_TEST_OS: "Darwin", IVA_TEST_GUI: "0", IVA_TEST_MISSING_COMMANDS: "" },
+    {
+      IVA_TEST_OS: "Darwin",
+      IVA_TEST_GUI: "1",
+      IVA_TEST_MISSING_COMMANDS: "brew",
+    },
+  ]) {
+    const world = createWorld(t);
+    const result = world.run({ env });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(
+      result.stdout + result.stderr,
+      /войдите в систему на экране|Install Homebrew/u,
+    );
+    assert.doesNotMatch(world.calls(), /_activate-units|loginctl|swapon/u);
+  }
 });

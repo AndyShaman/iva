@@ -226,6 +226,8 @@ export function createPluginTrustCommands(context: PluginCliContext) {
     try {
       done = reconcilePluginUnits({
         plan,
+        manager: systemd.manager,
+        root: ROOT,
         unitDir: UNIT_DIR,
         systemd,
         ensureDataDir: (plugin) =>

@@ -5,6 +5,7 @@
 // друга не видят. Срок IVA_JOB_STOP_AT признаком владения замком не служит.
 import { spawnSync } from "node:child_process";
 import { MEMORY_LOCK_HELD_ENV } from "#lib/schedule-runner.ts";
+import { lockCommand } from "#lib/lock-command.ts";
 
 const BUSY = 75;
 
@@ -13,24 +14,26 @@ const BUSY = 75;
 export function underMemoryLock(
   lockPath: string,
   env = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): number | null {
   if (env[MEMORY_LOCK_HELD_ENV] === "1") return null;
+  const lock = lockCommand({ file: lockPath, nonBlocking: true }, platform);
   const run = spawnSync(
-    "flock",
+    lock.command,
     [
-      "-n",
-      "-E",
-      String(BUSY),
-      lockPath,
+      ...lock.args,
       process.execPath,
       ...process.execArgv,
       ...process.argv.slice(1),
     ],
-    { stdio: "inherit", env: { ...env, [MEMORY_LOCK_HELD_ENV]: "1" } },
+    {
+      stdio: platform === "darwin" ? ["inherit", "inherit", "pipe"] : "inherit",
+      env: { ...env, [MEMORY_LOCK_HELD_ENV]: "1" },
+    },
   );
   if (run.error) {
     console.error(
-      `cannot take ${lockPath}: flock is unavailable (${run.error.message})`,
+      `cannot take ${lockPath}: ${lock.command} is unavailable (${run.error.message})`,
     );
     return 1;
   }
@@ -40,5 +43,18 @@ export function underMemoryLock(
     );
     return 1;
   }
+  reportDarwinLock(lockPath, run.status, run.stderr, platform);
   return run.status ?? 1;
+}
+
+function reportDarwinLock(
+  file: string,
+  status: number | null,
+  stderr: Buffer | null,
+  platform: NodeJS.Platform,
+): void {
+  if (platform !== "darwin") return;
+  if (status === 73)
+    console.error(`cannot take ${file}: ${String(stderr).trim()}`);
+  else if (stderr) process.stderr.write(stderr);
 }

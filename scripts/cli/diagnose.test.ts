@@ -7,6 +7,7 @@
 //
 // КАК ВОСПРОИЗВЕСТИ ПАДЕНИЕ: seed в имени теста; при провале подставь ещё и path:
 // fc.assert(prop, { seed: SEED, path }).
+import "../fixtures/systemd-env.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {

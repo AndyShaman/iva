@@ -178,6 +178,10 @@ for (const scenario of [
  * behind it is not.
  */
 async function press(launcher: string): Promise<string[]> {
+  // This fixture characterizes the Linux transient-unit path even on a Mac.
+  writeFileSync(join(launcher, "systemctl"), "#!/bin/sh\nexit 97\n", {
+    mode: 0o755,
+  });
   const texts: string[] = [];
   const previousFetch = mutableGlobal.fetch;
   const previousPath = process.env.PATH;
@@ -322,6 +326,9 @@ test("/update --force starts a rebuild of the running version without asking ups
   rmSync(jobs, { recursive: true, force: true });
   const bin = join(dataDir, "bin-force");
   mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "systemctl"), "#!/bin/sh\nexit 97\n", {
+    mode: 0o755,
+  });
   writeFileSync(join(bin, "systemd-run"), "#!/bin/sh\nexit 0\n", {
     mode: 0o755,
   });

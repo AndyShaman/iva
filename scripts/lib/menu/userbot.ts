@@ -1,3 +1,5 @@
+import { serviceManager } from "../service-manager.ts";
+import { runLaunchd } from "../launchd.ts";
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion -- conversion keeps the injectable exec boundary source-compatible. */
 // Экран «Userbot» меню (/menu → 📡). Статус личного userbot-прокси (Telegram) + подключение.
 // Общая CLI/Telegram-проба проверяет systemd, health endpoint и авторизацию Telethon.
@@ -85,6 +87,14 @@ const turnOffLine = (ctx: MenuContext) =>
   )}`;
 
 function run(cmd: string, args: string[], timeout = 1500) {
+  if (cmd === "systemctl" && serviceManager() === "launchd") {
+    const result = runLaunchd(args.slice(1));
+    return Promise.resolve({
+      failed: result.code !== 0,
+      code: result.code,
+      stdout: result.out,
+    });
+  }
   return new Promise<{ failed: boolean; code: number; stdout: string }>(
     (resolve) => {
       execFile(cmd, args, { timeout, encoding: "utf8" }, (err, stdout = "") =>

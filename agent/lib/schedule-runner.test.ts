@@ -233,9 +233,12 @@ void test("lockPath given: the spawned command is flock-wrapped in the documente
     },
   });
 
-  assert.equal(seen!.cmd, "flock");
+  assert.equal(
+    seen!.cmd,
+    process.platform === "darwin" ? "/usr/bin/lockf" : "flock",
+  );
   assert.deepEqual(seen!.args, [
-    "-w",
+    process.platform === "darwin" ? "-t" : "-w",
     // Above the job timeout on purpose: a queued rollup must WAIT for .memory.lock, not
     // give up on the night while the previous period is still holding it.
     "3900",

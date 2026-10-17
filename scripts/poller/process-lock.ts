@@ -1,3 +1,4 @@
+import { lockCommand as platformLockCommand } from "#lib/lock-command.ts";
 import { randomUUID } from "node:crypto";
 import {
   spawn,
@@ -191,30 +192,24 @@ function lockCommand(
   timeoutMs: number,
   marker: string,
 ): { command: string; args: string[] } {
-  const waitSeconds = Math.max(1, Math.ceil(timeoutMs / 1_000));
-  if (platform === "darwin") {
-    return {
-      command: "/usr/bin/lockf",
-      args: [
-        "-t",
-        String(waitSeconds),
-        lockFile,
-        node,
-        "--input-type=module",
-        "-e",
-        HOLDER_SOURCE,
-        marker,
-      ],
-    };
-  }
-  const flock = ["/usr/bin/flock", "/bin/flock"].find(existsSync);
-  if (!flock) throw new Error("Telegram process guard requires lockf or flock");
+  const command =
+    platform === "darwin"
+      ? undefined
+      : ["/usr/bin/flock", "/bin/flock"].find(existsSync);
+  if (platform !== "darwin" && !command)
+    throw new Error("Telegram process guard requires lockf or flock");
+  const lock = platformLockCommand(
+    {
+      file: lockFile,
+      waitSeconds: Math.max(1, Math.ceil(timeoutMs / 1_000)),
+      command,
+    },
+    platform,
+  );
   return {
-    command: flock,
+    command: lock.command,
     args: [
-      "-w",
-      String(waitSeconds),
-      lockFile,
+      ...lock.args,
       node,
       "--input-type=module",
       "-e",

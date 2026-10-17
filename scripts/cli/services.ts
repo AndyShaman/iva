@@ -6,6 +6,8 @@ import {
 } from "../lib/health-probe.ts";
 import { LEGACY_BRAIN_UNITS } from "../lib/legacy-memory-units.ts";
 import { SystemdControlError } from "../lib/systemd-control.ts";
+import { logPaths } from "../lib/systemd-control.ts";
+import { describeLaunchd } from "../lib/launchd.ts";
 import { classifyRoot } from "../lib/version-layout.ts";
 import { betaOf } from "../lib/update-channel.ts";
 import { createVersionStore, parseVersionName } from "../lib/version-store.ts";
@@ -63,6 +65,13 @@ export function createServiceCommands(
     const updates = betaOf(ROOT) ? "beta" : "stable";
     console.log(`updates: ${updates} (iva beta / iva stable)`);
     requireSystemd();
+    if (systemd.manager === "launchd") {
+      for (const state of describeLaunchd([...SERVICES, ...TIMERS], {
+        unitDir: UNIT_DIR,
+      }))
+        console.log(launchdStatusLine(state));
+      return;
+    }
     run("systemctl", [
       "--user",
       "status",
@@ -245,6 +254,23 @@ export function createServiceCommands(
 
   function cmdLogs(args: readonly string[]): void {
     requireSystemd();
+    if (systemd.manager === "launchd") {
+      const name = args.find((arg) => /\.service$|\.timer$/u.test(arg));
+      const unit = args.includes("poll")
+        ? "iva-telegram-poll.service"
+        : (name ?? "iva.service");
+      const files = logPaths(unit).filter(existsSync);
+      if (!files.length) {
+        console.log("логов пока нет");
+        return;
+      }
+      const index = args.indexOf("-n");
+      const lines = index < 0 ? "50" : (args[index + 1] ?? "");
+      if (!/^\d+$/u.test(lines))
+        throw new Error("-n requires a nonnegative integer");
+      run("tail", ["-n", lines, "-f", ...files]);
+      return;
+    }
     const unit = args.includes("poll")
       ? "iva-telegram-poll.service"
       : "iva.service";
@@ -260,4 +286,15 @@ export function createServiceCommands(
     cmdLogs,
     cmdAwaitHealthy,
   };
+}
+
+function launchdStatusLine(
+  state: ReturnType<typeof describeLaunchd>[number],
+): string {
+  const status = state.running
+    ? "running"
+    : state.loaded
+      ? "loaded"
+      : "unloaded";
+  return `${state.unit}: ${status}${state.pid ? ` pid=${state.pid}` : ""}${state.lastExit === null ? "" : ` exit=${state.lastExit}`}${state.nextRun ? ` next=${state.nextRun}` : ""}`;
 }

@@ -1,3 +1,4 @@
+import { serviceManager } from "../lib/service-manager.ts";
 import { execFile, spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -84,6 +85,23 @@ export function launchIvaCommand(
   ivaArgs: readonly string[],
 ): Promise<LaunchResult> {
   const command = [join(ROOT, "bin/iva.mjs"), ...ivaArgs];
+  if (serviceManager() === "launchd") {
+    return new Promise((resolve) => {
+      const child = spawn(NODE, command, {
+        cwd: ROOT,
+        env: { ...process.env, ASSISTANT_DATA_DIR: DATA_DIR },
+        detached: true,
+        stdio: "ignore",
+      });
+      child.once("spawn", () => {
+        child.unref();
+        resolve({ ok: true, msg: "detached" });
+      });
+      child.once("error", (error) =>
+        resolve({ ok: false, msg: error.message }),
+      );
+    });
+  }
   const args = [
     "--user",
     "--collect",

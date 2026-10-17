@@ -49,6 +49,7 @@ import {
   PortChecker,
   PortSelector,
   procProbe,
+  lsofProbe,
 } from "./ports.ts";
 import {
   acquireUpdateLock,
@@ -552,7 +553,12 @@ async function settleCustom(
 async function probeCandidate(run: UpdateRun): Promise<Health> {
   const { store, name, check, dir, log } = run;
   const scratch = store.sandboxState(name);
-  const selector = new PortSelector(new PortChecker([bindProbe, procProbe]));
+  const selector = new PortSelector(
+    new PortChecker([
+      bindProbe,
+      process.platform === "darwin" ? lsofProbe : procProbe,
+    ]),
+  );
   try {
     let from = DEFAULT_PORT + 100 + (process.pid % 100);
     for (let left = PROBE_PORTS; left > 0; left--) {

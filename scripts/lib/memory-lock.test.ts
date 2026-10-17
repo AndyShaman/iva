@@ -38,17 +38,21 @@ test("a process already under the lock just works", () => {
 
 test("a free lock reruns the process under flock on the resolver's path and returns its exit code", (t) => {
   const { env, args } = withFlock(t, "exit 7");
-  assert.equal(underMemoryLock(memoryLockPath("/srv/iva"), env), 7);
+  assert.equal(underMemoryLock(memoryLockPath("/srv/iva"), env, "linux"), 7);
   assert.match(args(), /^-n -E 75 \/srv\/iva\/\.memory\.lock /u);
 });
 
 test("the job's stop time is not a sign of holding the lock", (t) => {
   const { env, args } = withFlock(t, "exit 0");
   assert.equal(
-    underMemoryLock(memoryLockPath("/srv/iva"), {
-      ...env,
-      IVA_JOB_STOP_AT: String(Date.now() + 60_000),
-    }),
+    underMemoryLock(
+      memoryLockPath("/srv/iva"),
+      {
+        ...env,
+        IVA_JOB_STOP_AT: String(Date.now() + 60_000),
+      },
+      "linux",
+    ),
     0,
   );
   assert.match(args(), /\.memory\.lock/u, "flock was taken all the same");
@@ -56,9 +60,13 @@ test("the job's stop time is not a sign of holding the lock", (t) => {
 
 test("a held lock and a missing flock both refuse with exit 1", (t) => {
   const { env } = withFlock(t, "exit 75");
-  assert.equal(underMemoryLock("/srv/iva/.memory.lock", env), 1);
+  assert.equal(underMemoryLock("/srv/iva/.memory.lock", env, "linux"), 1);
   assert.equal(
-    underMemoryLock("/srv/iva/.memory.lock", { ...env, PATH: "/nonexistent" }),
+    underMemoryLock(
+      "/srv/iva/.memory.lock",
+      { ...env, PATH: "/nonexistent" },
+      "linux",
+    ),
     1,
   );
 });

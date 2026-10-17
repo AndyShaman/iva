@@ -8,7 +8,7 @@
 
 import net from "node:net";
 import { readFileSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -78,6 +78,27 @@ export const procProbe = {
     return { occupied: false };
   },
 } satisfies PortProbe;
+
+function lsofListeners(port: number) {
+  return spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+}
+
+export const lsofProbe: PortProbe = {
+  name: "lsof",
+  check(port) {
+    const result = lsofListeners(port);
+    const out = result.stdout ?? "";
+    const occupied = /\(LISTEN\)/u.test(out);
+    return Promise.resolve(
+      result.error || (result.status !== 0 && result.status !== 1)
+        ? { occupied: true, holder: "неизвестно (lsof недоступен)" }
+        : { occupied, holder: occupied ? out.trim() : undefined },
+    );
+  },
+};
 
 // Атрибуция: опубликованные docker-порты (именно это сломало :3000 на VPS).
 export const dockerProbe = {
@@ -164,7 +185,11 @@ export async function confirmOccupiedCurrentPort({
 
 // Готовый чекер со всеми доступными способами детекта.
 export function defaultChecker(): PortChecker {
-  return new PortChecker([bindProbe, procProbe, dockerProbe]);
+  return new PortChecker([
+    bindProbe,
+    process.platform === "darwin" ? lsofProbe : procProbe,
+    dockerProbe,
+  ]);
 }
 
 // Читает IVA_PORT из .env (приоритет), затем process.env, иначе дефолт.

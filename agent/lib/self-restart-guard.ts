@@ -138,6 +138,8 @@ const IVA_CLI_LETHAL =
 // или "iva.service" (iva-telegram-poll и таймеры не матчятся: после iva идёт дефис).
 const SYSTEMCTL_LETHAL =
   /^systemctl\b(?:\s+[\w=@.:%-]+)*?\s+(?:restart|try-restart|reload-or-restart|stop|kill)\s+(?:[\w@.:%-]+\s+)*iva(?:\.service)?(?![\w-])/;
+const LAUNCHCTL_LETHAL =
+  /^launchctl\b[^]*\b(?:bootout|kickstart|kill)\b[^]*\bapp\.iva\.iva(?=\.plist(?:\s|$)|\s|$)/u;
 
 // pkill/killall по node/eve/iva кладут сам процесс eve-сервера (и мост заодно).
 const PKILL_LETHAL = /^(?:pkill|killall)\b[^]*?\b(?:node|eve|iva)(?![\w-])/;
@@ -152,6 +154,10 @@ const RULES: Array<{ re: RegExp; what: string }> = [
     what: "systemctl restart/stop/kill юнита iva.service",
   },
   { re: PKILL_LETHAL, what: "pkill/killall по процессу node/eve/iva" },
+  {
+    re: LAUNCHCTL_LETHAL,
+    what: "launchctl bootout/kickstart/kill юнита app.iva.iva",
+  },
 ];
 
 /**

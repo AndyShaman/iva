@@ -1,27 +1,11 @@
+import { serviceManager } from "./service-manager.ts";
+import { launchdLabel } from "./launchd.ts";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+export { systemdExecArgument } from "./systemd-values.ts";
 const UNIT_RE = /^[A-Za-z0-9_.@:-]+$/;
-
-/**
- * One `ExecStart=` argument, quoted the way systemd reads it. `$` and `%` are doubled
- * because systemd expands both before the process ever starts, and a path with a NUL or
- * a newline in it is refused: the unit file is line-based, and a value that breaks the
- * line writes a directive nobody authored.
- */
-export function systemdExecArgument(value: string): string {
-  if (/[\0\r\n]/u.test(value))
-    throw new Error("systemd argument contains NUL or a newline");
-  let escaped = "";
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (character === "\\") escaped += "\\\\";
-    else if (character === '"') escaped += '\\"';
-    else if (character === "$") escaped += "$$";
-    else if (character === "%") escaped += "%%";
-    else if (code < 0x20 || code === 0x7f)
-      escaped += `\\x${code.toString(16).padStart(2, "0")}`;
-    else escaped += character;
-  }
-  return `"${escaped}"`;
-}
 
 interface CommandResult {
   readonly code?: number | null;
@@ -37,6 +21,7 @@ interface NormalizedResult {
 
 interface SystemdControlOptions {
   readonly run: (args: readonly string[]) => CommandResult;
+  readonly manager?: "systemd" | "launchd";
 }
 
 interface CleanupOptions {
@@ -65,8 +50,78 @@ function resultOf(result: CommandResult | undefined): NormalizedResult {
   };
 }
 
-function journalHint(unit: string): string {
-  return `journalctl --user -u ${safeUnit(unit)} -n 100 --no-pager`;
+export function logHint(
+  unit: string,
+  {
+    lines,
+    pager,
+    grep,
+  }: { lines?: number; pager?: boolean; grep?: string } = {},
+  manager = serviceManager(),
+): string {
+  const command =
+    manager === "launchd"
+      ? `tail -n ${lines ?? 100} ~/Library/Logs/Iva/${launchdLabel(safeUnit(unit)).slice(8)}.out.log`
+      : `journalctl --user -u ${safeUnit(unit)}${lines === undefined ? "" : ` -n ${lines}`}${pager ? " --no-pager" : ""}`;
+  return `${command}${grep ? ` | grep ${grep}` : ""}`;
+}
+
+export function logTail(unit: string, lines: number): string {
+  if (serviceManager() !== "launchd")
+    return (
+      spawnSync(
+        "journalctl",
+        [
+          "--user",
+          "-u",
+          safeUnit(unit),
+          "-n",
+          String(lines),
+          "--no-pager",
+          "-o",
+          "cat",
+        ],
+        { encoding: "utf8" },
+      ).stdout || ""
+    );
+  return logPaths(unit)
+    .filter(existsSync)
+    .map((file) =>
+      readFileSync(file, "utf8").trimEnd().split("\n").slice(-lines).join("\n"),
+    )
+    .join("\n");
+}
+
+export function logPaths(unit: string): string[] {
+  const base = join(
+    homedir(),
+    "Library/Logs/Iva",
+    launchdLabel(safeUnit(unit)).slice(8),
+  );
+  return [`${base}.out.log`, `${base}.err.log`];
+}
+
+export function restartFailure(text: string): string {
+  if (serviceManager() !== "launchd") return text;
+  return /[А-Яа-я]/u.test(text)
+    ? "Не удалось перезапустить — `iva logs`"
+    : "Couldn't restart — `iva logs`";
+}
+
+export function controlFailure(
+  args: readonly string[],
+  manager = serviceManager(),
+): string {
+  if (manager !== "launchd") return `systemctl --user ${args.join(" ")} failed`;
+  const unit = args.find((arg) => /\.(service|timer)$/u.test(arg));
+  const verb =
+    (
+      { restart: "kickstart", start: "bootstrap", stop: "bootout" } as Record<
+        string,
+        string
+      >
+    )[args[0]] ?? args[0];
+  return `launchctl ${verb}${unit ? ` ${launchdLabel(unit)}` : ""} failed`;
 }
 
 export class SystemdControlError extends Error {
@@ -75,9 +130,15 @@ export class SystemdControlError extends Error {
 
   constructor(
     message: string,
-    { unit, code }: { unit?: string; code?: number } = {},
+    {
+      unit,
+      code,
+      manager,
+    }: { unit?: string; code?: number; manager?: "systemd" | "launchd" } = {},
   ) {
-    const suffix = unit ? ` Check: ${journalHint(unit)}` : "";
+    const suffix = unit
+      ? ` Check: ${logHint(unit, { lines: 100, pager: true }, manager)}`
+      : "";
     super(`${message}${code === undefined ? "" : ` (exit ${code})`}.${suffix}`);
     this.name = "SystemdControlError";
     this.unit = unit;
@@ -120,7 +181,10 @@ export function cleanupSystemdUnits({
   return checkedUnits;
 }
 
-export function createSystemdControl({ run }: SystemdControlOptions) {
+export function createSystemdControl({
+  run,
+  manager = "systemd",
+}: SystemdControlOptions) {
   if (typeof run !== "function")
     throw new TypeError("systemd control requires run(args)");
 
@@ -130,10 +194,13 @@ export function createSystemdControl({ run }: SystemdControlOptions) {
     const result = query(...args);
     if (result.code !== 0) {
       throw new SystemdControlError(
-        `systemctl --user ${args.join(" ")} failed`,
+        manager === "launchd"
+          ? result.out || controlFailure(args, manager)
+          : controlFailure(args, manager),
         {
           unit,
           code: result.code,
+          manager,
         },
       );
     }
@@ -155,14 +222,20 @@ export function createSystemdControl({ run }: SystemdControlOptions) {
   function requireEnabledActive(unit: string): void {
     safeUnit(unit);
     if (!isEnabled(unit)) {
-      throw new SystemdControlError(`${unit} did not become enabled`, { unit });
+      throw new SystemdControlError(`${unit} did not become enabled`, {
+        unit,
+        manager,
+      });
     }
     if (!isActive(unit)) {
-      throw new SystemdControlError(`${unit} did not become active`, { unit });
+      throw new SystemdControlError(`${unit} did not become active`, {
+        unit,
+        manager,
+      });
     }
   }
 
-  return {
+  const control = {
     query,
     isEnabled,
     isActive,
@@ -180,7 +253,7 @@ export function createSystemdControl({ run }: SystemdControlOptions) {
         if (!isActive(unit)) {
           throw new SystemdControlError(
             `${unit} did not become active after restart`,
-            { unit },
+            { unit, manager },
           );
         }
       }
@@ -207,5 +280,8 @@ export function createSystemdControl({ run }: SystemdControlOptions) {
     daemonReload() {
       return mutate(["daemon-reload"]);
     },
+  };
+  return Object.assign(control, { manager }) as typeof control & {
+    manager?: "systemd" | "launchd";
   };
 }

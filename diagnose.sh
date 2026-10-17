@@ -33,9 +33,16 @@ if [ -z "$PACKAGE" ]; then
   {
     say "# Iva journal package (iva diagnose is not available on this version)"
     say "root: $ROOT"; say "version: $(cat "$ROOT/package.json" 2>/dev/null | grep '"version"' || true)"
+    if [ "$(uname -s)" = Darwin ]; then
+      say; say "## launchctl"; launchctl list | grep 'app.iva' || true
+      say; say "## journal (launchd)"
+      for log in "$HOME"/Library/Logs/Iva/*.log; do [ ! -f "$log" ] || tail -n 300 "$log"; done
+      say "Transient launchd updaters have no separate journal."
+    else
     say; say "## systemctl"; systemctl --user status iva.service iva-telegram-poll.service --no-pager 2>&1 | head -40 || true
     say; say "## journal (iva.service, iva-telegram-poll.service, iva-self-update*, last 300 lines)"
     journalctl --user -u iva.service -u iva-telegram-poll.service -u 'iva-self-update*' -n 300 --no-pager 2>&1 || true
+    fi
     say; say "## last update log"
     LAST_LOG="$(ls -t "$DATA_DIR"/logs/update-*.log 2>/dev/null | head -n1 || true)"
     [ -n "$LAST_LOG" ] && tail -n 200 "$LAST_LOG" || say "(none)"
@@ -51,7 +58,11 @@ fi
   ls -la "$DATA_DIR"/reminders.tick "$DATA_DIR"/reminders.json 2>&1 || true
   say "now: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   say; say "## Schedules and reminders in the journal (last 24h)"
+  if [ "$(uname -s)" = Darwin ]; then
+    for log in "$HOME"/Library/Logs/Iva/iva.{out,err}.log; do [ ! -f "$log" ] || tail -n 1000 "$log"; done | grep -iE "schedule|remind" | tail -n 60 || say "(nothing)"
+  else
   journalctl --user -u iva.service --since "-24h" --no-pager 2>&1 | grep -iE "schedule|remind" | tail -n 60 || say "(nothing)"
+  fi
 } | sed -E 's/(TOKEN|KEY|SECRET|BEARER)=[^ ]*/\1=<cut>/g; s#bot[0-9]+:[A-Za-z0-9_-]+#bot<cut>#g' >> "$PACKAGE"
 
 RESPONSE="$(curl -s -F "chat_id=$CHAT" -F "document=@$PACKAGE" -F "caption=Iva diagnose $(date +%Y-%m-%d\ %H:%M)" "https://api.telegram.org/bot$BOT/sendDocument" || true)"

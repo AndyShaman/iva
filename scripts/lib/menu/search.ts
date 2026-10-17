@@ -1,3 +1,4 @@
+import { restartFailure } from "../systemd-control.ts";
 // Экран «Поиск» меню (/menu → 🔍). Выбор веб-провайдера + приём/смена API-ключа.
 //
 // Инварианты ключей (как у /model-визарда poller/wizards.ts): значение ключа
@@ -186,8 +187,12 @@ export default {
                 "♻️ Перезапускаю агента — новый провайдер активен через ~30 сек.",
               )
             : ctx.tr(
-                "⚠️ Couldn't restart (systemctl). Check the service on the server.",
-                "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                restartFailure(
+                  "⚠️ Couldn't restart (systemctl). Check the service on the server.",
+                ),
+                restartFailure(
+                  "⚠️ Не удалось перезапустить (systemctl). Проверь сервис на сервере.",
+                ),
               ),
         );
       }

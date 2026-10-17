@@ -14,6 +14,7 @@ const WHAT = {
   CRONTAB: "crontab: запись расписания",
   AT_BATCH: "at/batch: отложенный запуск",
   SYSTEMCTL: "systemctl: запуск или включение своего юнита",
+  LAUNCHCTL: "launchctl: запуск или включение своего юнита",
   UNIT_DIR: "запись в ~/.config/systemd/user",
   SCRIPTS_DIR: "~/.iva-scripts: свой скрипт",
   TELEGRAM_HOST: "прямой вызов api.telegram.org",
@@ -26,7 +27,8 @@ const BAN_COMMANDS: Record<string, string> = {
   at: WHAT.AT_BATCH,
   batch: WHAT.AT_BATCH,
 };
-const UNIT_DIR = /systemd\/user(?![\w-])/;
+const UNIT_DIR =
+  /systemd\/user(?![\w-])|Library\/LaunchAgents\/app\.iva\.[\w.-]+/;
 const SCRIPTS_DIR = /\.iva-scripts(?![\w-])/;
 const TELEGRAM_HOST = /api\.telegram\.org/;
 // Чтение — единственный способ упомянуть запретное в командной позиции. `sed -i` пишет,
@@ -167,13 +169,22 @@ function positionViolation(
  * Текст отказа, если команда ставит свой таймер или отправляет в Telegram
  * мимо штатных инструментов, иначе null.
  */
+function launchctlViolation(segment: string): string | null {
+  return anchored("launchctl").test(segment) &&
+    /\b(?:bootstrap|load|enable|kickstart)\b/u.test(segment) &&
+    !/\bapp\.iva\.[\w.-]+/u.test(segment)
+    ? WHAT.LAUNCHCTL
+    : null;
+}
+
 export function schedulerBypassViolation(command: string): string | null {
   if (plainDataCommand(command) || plainHelpCommand(command)) return null;
   const positions = commandSegments(command);
   for (let index = 0; index < positions.length; index += 1) {
     const at = positions[index];
     if (!at) continue;
-    const what = positionViolation(at, positions, index);
+    const what =
+      launchctlViolation(at.command) ?? positionViolation(at, positions, index);
     if (what) {
       return (
         `ЗАБЛОКИРОВАНО: ${what}. Свои таймеры и свои отправки в Telegram из bash ` +

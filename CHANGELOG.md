@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- ✨ **Установка на macOS через launchd**: тот же установщик настраивает автозапуск Ивы на Mac; команды управления, обновление, журнал и ночные задания используют средства macOS. The installer supports macOS with launchd units, service controls, updates, logs and memory locks.
+
 ## [0.5.3] - 2026-10-16
 
 - 🔧 **Нажатый стоп больше не останавливает приём сообщений**: если Telegram присылал апдейт, который Ива не могла разобрать (так случилось с кнопкой ■ на черновике ответа), приём вставал целиком, и сообщения после него не доходили. Теперь такой апдейт пропускается с записью в журнал, остальные идут дальше; стоп с неожиданными полями сверяет обработчик стопа. One Telegram update that fails validation no longer stalls the whole getUpdates batch: it is acknowledged and logged with its field shape, and the updates after it are processed.

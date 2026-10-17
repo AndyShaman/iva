@@ -1,3 +1,11 @@
+import { systemdEnvironmentSegment } from "./systemd-values.ts";
+import { launchdPlan, writeLaunchdUnits } from "./launchd-plist.ts";
+import {
+  launchdUnitPath,
+  unloadLaunchd,
+  unitPath,
+  launchdLabel,
+} from "./launchd.ts";
 /**
  * The systemd units of a plugin: one MCP proxy per stdio server, one unit per declared
  * service (ADR-0009).
@@ -188,14 +196,6 @@ export function pluginServiceUnitBody({
  * newline is refused outright - the unit file is line-based, and a value that breaks the
  * line writes a directive nobody authored.
  */
-function systemdEnvironmentSegment(value: string): string {
-  if (/[\0\r\n]/u.test(value))
-    throw new Error("systemd environment value contains NUL or a newline");
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll('"', '\\"')
-    .replaceAll("%", "%%");
-}
 
 /**
  * One whole `Environment=` directive, quoted. The quotes are the point: without them a
@@ -360,13 +360,7 @@ export type PluginUnitReconcile = {
  * caller reports the failures; it does not roll the state back, because a proxy that does
  * not start is a thing to fix, not a reason to un-trust a plugin behind the owner's back.
  */
-export function reconcilePluginUnits({
-  plan,
-  unitDir,
-  systemd,
-  ensureDataDir = () => {},
-  log = () => {},
-}: {
+type ReconcileOptions = {
   readonly plan: PluginUnitPlan;
   readonly unitDir: string;
   readonly systemd: {
@@ -376,93 +370,146 @@ export function reconcilePluginUnits({
     readonly daemonReload: () => unknown;
     readonly resetFailed: (units?: readonly string[]) => unknown;
   };
-  /** `PLUGIN_DATA` must exist before a unit starts: the unit does not create it. */
   readonly ensureDataDir?: (plugin: string) => void;
   readonly log?: Say;
-}): PluginUnitReconcile {
-  const wanted = new Map(plan.units.map((unit) => [unit.unit, unit]));
-  const existing = existsSync(unitDir)
-    ? readdirSync(unitDir).filter((name) => PLUGIN_UNIT_RE.test(name))
-    : [];
-  const stale = existing.filter((unit) => !wanted.has(unit));
-  const failures: string[] = [];
-  const written: string[] = [];
+  readonly manager?: "systemd" | "launchd";
+  readonly root?: string;
+};
 
+const failureText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+function priorUnit(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+function plannedBody(
+  unit: PluginUnit,
+  plan: Map<string, string> | null,
+): string {
+  return plan?.get(launchdLabel(unit.unit)) ?? unit.body;
+}
+function clearPluginFailure(
+  unit: string,
+  systemd: ReconcileOptions["systemd"],
+): boolean {
+  try {
+    systemd.resetFailed([unit]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writePluginPlan({
+  plan,
+  unitDir,
+  manager = "systemd",
+  root = "",
+}: ReconcileOptions) {
   mkdirSync(unitDir, { recursive: true });
-  /**
-   * Units whose body on disk is not the body they should have. `enable --now` starts a
-   * unit that is stopped and does NOTHING to one that is already running, so a rewritten
-   * unit file without a restart leaves the old process serving the old code - the port,
-   * the token file or the command it was started with. Reading the old body first is the
-   * only way to know which ones that is.
-   */
+  const options = { root, now: new Date() };
+  const macPlan =
+    manager === "launchd" ? launchdPlan(plan.units, options) : null;
   const changed: string[] = [];
+  const written: string[] = [];
   for (const unit of plan.units) {
-    const file = join(unitDir, unit.unit);
-    let before = "";
-    try {
-      before = readFileSync(file, "utf8");
-    } catch {
-      // No unit yet: `enable --now` below starts it, and there is nothing to restart.
-    }
-    if (before !== "" && before !== unit.body) changed.push(unit.unit);
-    writeFileSync(file, unit.body);
+    const file = unitPath(unit.unit, unitDir, manager);
+    const before = priorUnit(file);
+    const body = plannedBody(unit, macPlan);
+    if (before !== "" && before !== body) changed.push(unit.unit);
+    if (manager !== "launchd") writeFileSync(file, body);
     written.push(unit.unit);
   }
-  // The old ones go before anything starts: a stale proxy holds the port its replacement
-  // wants, and `disable --now` is what frees it.
-  if (stale.length) {
-    try {
+  if (manager === "launchd") writeLaunchdUnits(plan.units, unitDir, options);
+  return { changed, written };
+}
+
+function removePluginFile(unit: string, options: ReconcileOptions): void {
+  if (options.manager === "launchd") unloadLaunchd(unit, options.unitDir);
+  rmSync(unitPath(unit, options.unitDir, options.manager), { force: true });
+}
+
+function settlePluginFiles(
+  stale: string[],
+  written: string[],
+  options: ReconcileOptions,
+): string[] {
+  const { systemd, log = () => {} } = options;
+  try {
+    if (stale.length) {
       cleanupSystemdUnits({
         units: stale,
         disable: (unit) => systemd.disableNow([unit]),
-        remove: (unit) => rmSync(join(unitDir, unit), { force: true }),
+        remove: (unit) => removePluginFile(unit, options),
         reload: () => systemd.daemonReload(),
         reset: () => systemd.resetFailed(),
       });
       log(`removed ${stale.length} plugin unit(s) that no longer belong`);
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
-    }
-  } else if (written.length) {
-    try {
-      systemd.daemonReload();
-    } catch (error) {
-      // A reload that fails is a systemd of its own to fix; it is not this command's
-      // to throw about, and every unit below will say so in its own words anyway.
-      failures.push(error instanceof Error ? error.message : String(error));
-    }
+    } else if (written.length) systemd.daemonReload();
+    return [];
+  } catch (error) {
+    return [failureText(error)];
   }
+}
 
+function startPluginUnit(
+  unit: PluginUnit,
+  changed: string[],
+  { systemd, ensureDataDir = () => {} }: ReconcileOptions,
+) {
+  const started: string[] = [];
+  const restarted: string[] = [];
+  try {
+    ensureDataDir(unit.plugin);
+  } catch (error) {
+    return {
+      started,
+      restarted,
+      failures: [
+        `${unit.plugin}: its data directory could not be created: ${failureText(error)}`,
+      ],
+    };
+  }
+  clearPluginFailure(unit.unit, systemd); // No previous failure is a normal state.
+  try {
+    systemd.activate([unit.unit]);
+    started.push(unit.unit);
+    if (changed.includes(unit.unit)) {
+      systemd.restart([unit.unit]);
+      restarted.push(unit.unit);
+    }
+    return { started, restarted, failures: [] as string[] };
+  } catch (error) {
+    return {
+      started,
+      restarted,
+      failures: [`${unit.unit}: ${failureText(error)}`],
+    };
+  }
+}
+
+export function reconcilePluginUnits(
+  options: ReconcileOptions,
+): PluginUnitReconcile {
+  const { plan, unitDir } = options;
+  const wanted = new Set(plan.units.map((unit) => unit.unit));
+  const stale = installedPluginUnits(unitDir).filter(
+    (unit) => !wanted.has(unit),
+  );
+  const { changed, written } = writePluginPlan(options);
+  // Free stale listeners before their replacements start. Files are already committed.
+  const failures = settlePluginFiles(stale, written, options);
   const started: string[] = [];
   const restarted: string[] = [];
   for (const unit of plan.units) {
-    try {
-      ensureDataDir(unit.plugin);
-    } catch (error) {
-      failures.push(
-        `${unit.plugin}: its data directory could not be created: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    try {
-      systemd.resetFailed([unit.unit]);
-    } catch {
-      // Nothing to reset is the normal case; a unit that never failed has no state.
-    }
-    try {
-      systemd.activate([unit.unit]);
-      started.push(unit.unit);
-      // Enabled and running is not enough when the file changed under it.
-      if (changed.includes(unit.unit)) {
-        systemd.restart([unit.unit]);
-        restarted.push(unit.unit);
-      }
-    } catch (error) {
-      failures.push(
-        `${unit.unit}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const result = startPluginUnit(unit, changed, options);
+    started.push(...result.started);
+    restarted.push(...result.restarted);
+    failures.push(...result.failures);
   }
   return { written, started, restarted, removed: stale, failures };
 }
@@ -505,7 +552,10 @@ export function runningPluginUnits({
   readonly isActive: (unit: string) => boolean;
 }): string[] {
   return units.filter(
-    (unit) => existsSync(join(unitDir, unit)) && isActive(unit),
+    (unit) =>
+      (existsSync(join(unitDir, unit)) ||
+        existsSync(launchdUnitPath(unit, unitDir))) &&
+      isActive(unit),
   );
 }
 
@@ -513,6 +563,11 @@ export function runningPluginUnits({
 export function installedPluginUnits(unitDir: string): string[] {
   if (!existsSync(unitDir)) return [];
   return readdirSync(unitDir)
+    .map((name) =>
+      /^app\.iva\.iva-(mcp|plugin)-.+\.plist$/u.test(name)
+        ? `${name.slice(8, -6)}.service`
+        : name,
+    )
     .filter((name) => PLUGIN_UNIT_RE.test(name))
     .sort();
 }

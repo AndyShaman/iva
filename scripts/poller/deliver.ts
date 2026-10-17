@@ -1,3 +1,4 @@
+import { logHint } from "../lib/systemd-control.ts";
 import {
   addTelegramQueueReceipt,
   TELEGRAM_ACCEPTANCE_KIND_HEADER,
@@ -243,12 +244,12 @@ async function notifyDeliverProblem(kind: string, status: unknown) {
   const text =
     kind === "config"
       ? tr(
-          `⚠️ Iva bridge can't deliver to eve: HTTP ${String(status)} — the webhook secret or route looks broken. Messages are queued (retrying every 60s). Check: journalctl --user -u iva-telegram-poll`,
-          `⚠️ Мост Iva не может доставить в eve: HTTP ${String(status)} — похоже, разъехались webhook-секрет или маршрут. Сообщения не теряются (ретрай раз в 60с). Проверь: journalctl --user -u iva-telegram-poll`,
+          `⚠️ Iva bridge can't deliver to eve: HTTP ${String(status)} — the webhook secret or route looks broken. Messages are queued (retrying every 60s). Check: ${logHint("iva-telegram-poll")}`,
+          `⚠️ Мост Iva не может доставить в eve: HTTP ${String(status)} — похоже, разъехались webhook-секрет или маршрут. Сообщения не теряются (ретрай раз в 60с). Проверь: ${logHint("iva-telegram-poll")}`,
         )
       : tr(
-          `⚠️ Iva bridge retained a Telegram update after repeated HTTP ${String(status)} rejections. It will retry from durable storage. Check the logs: journalctl --user -u iva-telegram-poll`,
-          `⚠️ Мост Iva сохранил Telegram-апдейт после повторных отказов HTTP ${String(status)}. Доставка повторится из дюрабельного хранилища. Проверь логи: journalctl --user -u iva-telegram-poll`,
+          `⚠️ Iva bridge retained a Telegram update after repeated HTTP ${String(status)} rejections. It will retry from durable storage. Check the logs: ${logHint("iva-telegram-poll")}`,
+          `⚠️ Мост Iva сохранил Telegram-апдейт после повторных отказов HTTP ${String(status)}. Доставка повторится из дюрабельного хранилища. Проверь логи: ${logHint("iva-telegram-poll")}`,
         );
   try {
     const res = await tg("sendMessage", { chat_id: target, text });

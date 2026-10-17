@@ -3,6 +3,8 @@ import { execFile } from "node:child_process";
 import { screenPayload } from "../lib/telegram-buttons.ts";
 import { redactTelegramBody } from "../lib/notice.ts";
 import { API, TOKEN, log } from "./config.ts";
+import { serviceManager } from "../lib/service-manager.ts";
+import { runLaunchd } from "../lib/launchd.ts";
 
 type TelegramResponse = {
   ok?: unknown;
@@ -144,7 +146,9 @@ async function edit(
 
 const sc = (...args: string[]) =>
   new Promise<boolean>((resolve) =>
-    execFile("systemctl", ["--user", ...args], (err) => resolve(!err)),
+    serviceManager() === "launchd"
+      ? resolve(runLaunchd(args).code === 0)
+      : execFile("systemctl", ["--user", ...args], (err) => resolve(!err)),
   );
 
 export { tg, downloadTelegramFile, reply, edit, sc };

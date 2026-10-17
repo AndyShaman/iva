@@ -29,7 +29,11 @@ CHAT="$(env_value TELEGRAM_ALLOWED_USER_IDS | cut -d, -f1)"
 # The Node that runs Iva: PATH first, then the service unit, then the newest nvm install.
 NODE="$(command -v node || true)"
 if [ -z "$NODE" ]; then
+  if [ "$(uname -s)" = Darwin ]; then
+    NODE="$(plutil -extract ProgramArguments.0 raw "$HOME/Library/LaunchAgents/app.iva.iva.plist" 2>/dev/null || true)"
+  else
   NODE="$(systemctl --user show iva.service -p ExecStart 2>/dev/null | grep -oE 'path=[^ ;]+' | head -n1 | cut -d= -f2 || true)"
+  fi
   case "$NODE" in */node) ;; *) NODE="" ;; esac
 fi
 [ -n "$NODE" ] || NODE="$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -n1 || true)"
@@ -117,8 +121,15 @@ fi
 
 # --- Journal: failures, limits and lifecycle only. Request bodies (prompts, chat) and job
 # tails (the agent's own reports) are dropped; a line is cut at 300 bytes.
+{
+if [ "$(uname -s)" = Darwin ]; then
+  for log in "$HOME"/Library/Logs/Iva/iva.{out,err}.log; do [ ! -f "$log" ] || tail -n 20000 "$log"; done
+  printf '%s\n' 'Transient launchd updaters have no separate journal.'
+else
 journalctl --user -u iva.service -u iva-telegram-poll.service -u 'iva-brain*' -u 'iva-self-update*' \
-  --since "-${DAYS}d" --no-pager 2>&1 \
+  --since "-${DAYS}d" --no-pager 2>&1
+fi
+} \
   | grep -vE "(content|text|prompt|instructions|messages|input|output|stdout|stderr|detail):" \
   | grep -iE "error|fail|warn|timeout|timed out|limit|retr|abort|cancel|kill|exit|restart|started|stopped|empty|invalid|refus|denied|[^0-9](4[0-9]{2}|5[0-9]{2})[^0-9]|schedule-runner|compaction" \
   | sed -E 's/ tail: .*/ tail: <cut>/' \

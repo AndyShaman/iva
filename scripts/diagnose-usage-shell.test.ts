@@ -273,7 +273,11 @@ function install(t: TestContext): {
     ].join("\n"),
   );
   writeFileSync(join(bin, "systemctl"), "#!/usr/bin/env bash\nexit 1\n");
-  for (const f of ["curl", "journalctl", "systemctl"])
+  writeFileSync(
+    join(bin, "uname"),
+    '#!/bin/sh\necho "${IVA_TEST_OS:-Linux}"\n',
+  );
+  for (const f of ["curl", "journalctl", "systemctl", "uname"])
     chmodSync(join(bin, f), 0o755);
 
   const run = (env: Record<string, string> = {}) =>
@@ -371,6 +375,23 @@ test("no chat text, tool input or output and no secret leaves the machine", (t) 
   ]) {
     assert.ok(!everything.includes(secret), `leaked: ${secret}`);
   }
+});
+
+test("Darwin collects the launchd error log with the same secret and chat filters", (t) => {
+  const { home, run } = install(t);
+  const logs = join(home, "Library/Logs/Iva");
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(
+    join(logs, "iva.err.log"),
+    `stream error: launchd session usage limit TELEGRAM_BOT_TOKEN=${BOT_TOKEN}\ncontent: ${CHAT_TEXT} error\n`,
+  );
+  run({ IVA_TEST_OS: "Darwin", IVA_DIAG_NO_SEND: "1" });
+  const pkg = unpack(home);
+  const journal = readFileSync(join(pkg, "journal.log"), "utf8");
+  assert.match(journal, /launchd session usage limit/u);
+  assert.doesNotMatch(journal, new RegExp(BOT_TOKEN));
+  assert.doesNotMatch(journal, /content:/u);
+  assert.ok(!readAll(pkg).includes(CHAT_TEXT));
 });
 
 test("no eve store and no counters still gives a package that says so", (t) => {

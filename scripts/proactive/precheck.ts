@@ -10,7 +10,10 @@
 // Сбои (T3) — `systemctl --user`: таймерные сервисы пользователя и сервисы плагинов; идут и при
 // выключенном тумблере.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { serviceManager } from "../lib/service-manager.ts";
+import { describeLaunchd } from "../lib/launchd.ts";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -412,6 +415,25 @@ export function exitTime(value: string): number | null {
  * последнего запуска не `success` (цикл перезапусков).
  */
 async function unitStates(run: Systemctl) {
+  if (run === runSystemctl && serviceManager() === "launchd") {
+    const dir = join(homedir(), "Library/LaunchAgents");
+    const names = existsSync(dir)
+      ? readdirSync(dir)
+          .filter((name) => /^app\.iva\..+\.plist$/u.test(name))
+          .map((name) => `${name.slice(8, -6)}.service`)
+      : [];
+    return {
+      units: describeLaunchd(names).map((state) => ({
+        unit: state.unit,
+        timer: state.nextRun !== null,
+        failing: state.lastExit !== null && state.lastExit !== 0 && !state.pid,
+        essence: String(state.lastExit ?? ""),
+        at: Date.now(),
+        note: `a regular job failed: ${state.unit}: exit status ${state.lastExit}`,
+      })),
+      error: null,
+    };
+  }
   const listed = await systemctl(run, "list-timers", "--all", "--no-legend");
   // Колонки `next left last passed unit activates`: сервисы — после имени таймера.
   const timers = new Set(
