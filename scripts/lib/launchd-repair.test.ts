@@ -239,38 +239,45 @@ void test("repair 10: running must keep the same pid for at least a second", (t)
   assert.equal(r.code, 0, r.out);
   assert.ok(Date.now() - started >= 1000);
 });
-void test("repair 5/7/9: plist shutdown budget, HOME and Homebrew node paths survive upgrades", () => {
-  const xml = unitToPlist(
-    {
-      unit: "iva.service",
-      body: "ExecStart=/opt/homebrew/Cellar/node@24/24.21.0/bin/node /fixture/main.ts\nRestart=always\n",
-    },
-    undefined,
-    {
-      root: "/fixture/current",
-      home: "/fixture/isolated",
-      node: "/opt/homebrew/Cellar/node@24/24.21.0/bin/node",
-    },
-  );
-  const p = spawnSync(
-    "/usr/bin/plutil",
-    ["-convert", "json", "-o", "-", "--", "-"],
-    { input: xml, encoding: "utf8" },
-  );
-  assert.equal(p.status, 0, p.stderr);
-  const value = JSON.parse(p.stdout) as {
-    EnvironmentVariables: Record<string, string>;
-    ExitTimeOut: number;
-    ProgramArguments: string[];
-  };
-  assert.equal(value.EnvironmentVariables.HOME, "/fixture/isolated");
-  assert.ok(value.ExitTimeOut > 20);
-  assert.equal(value.ProgramArguments[0], "/opt/homebrew/opt/node@24/bin/node");
-  assert.equal(
-    value.ProgramArguments.at(-2),
-    "/opt/homebrew/opt/node@24/bin/node",
-  );
-});
+void test(
+  "repair 5/7/9: plist shutdown budget, HOME and Homebrew node paths survive upgrades",
+  { skip: process.platform !== "darwin" },
+  () => {
+    const xml = unitToPlist(
+      {
+        unit: "iva.service",
+        body: "ExecStart=/opt/homebrew/Cellar/node@24/24.21.0/bin/node /fixture/main.ts\nRestart=always\n",
+      },
+      undefined,
+      {
+        root: "/fixture/current",
+        home: "/fixture/isolated",
+        node: "/opt/homebrew/Cellar/node@24/24.21.0/bin/node",
+      },
+    );
+    const p = spawnSync(
+      "/usr/bin/plutil",
+      ["-convert", "json", "-o", "-", "--", "-"],
+      { input: xml, encoding: "utf8" },
+    );
+    assert.equal(p.status, 0, p.stderr);
+    const value = JSON.parse(p.stdout) as {
+      EnvironmentVariables: Record<string, string>;
+      ExitTimeOut: number;
+      ProgramArguments: string[];
+    };
+    assert.equal(value.EnvironmentVariables.HOME, "/fixture/isolated");
+    assert.ok(value.ExitTimeOut > 20);
+    assert.equal(
+      value.ProgramArguments[0],
+      "/opt/homebrew/opt/node@24/bin/node",
+    );
+    assert.equal(
+      value.ProgramArguments.at(-2),
+      "/opt/homebrew/opt/node@24/bin/node",
+    );
+  },
+);
 void test("repair 6: writing a plist disables implicit login startup and preserves explicit enable", (t) => {
   const home = dir(t);
   const bin = join(home, "bin");
@@ -302,25 +309,29 @@ void test("repair 6: writing a plist disables implicit login startup and preserv
   assert.match(log, /disable gui\/\d+\/app\.iva\.iva-userbot/);
   assert.doesNotMatch(log, /disable gui\/\d+\/app\.iva\.iva(?:\n|$)/);
 });
-void test("repair 12: logTail reads a bounded suffix of a sparse log", (t) => {
-  const home = dir(t);
-  const priorHome = process.env.HOME;
-  const priorPath = process.env.PATH;
-  process.env.HOME = home;
-  process.env.PATH = "/usr/bin:/bin";
-  const folder = join(home, "Library/Logs/Iva");
-  mkdirSync(folder, { recursive: true });
-  const f = openSync(join(folder, "iva.out.log"), "w");
-  writeSync(f, Buffer.from("old\n"), 0, 4, 0);
-  writeSync(f, Buffer.from("\nlast line\n"), 0, 11, 600 * 1024 * 1024);
-  closeSync(f);
-  try {
-    assert.equal(logTail("iva.service", 1), "last line");
-  } finally {
-    process.env.HOME = priorHome;
-    process.env.PATH = priorPath;
-  }
-});
+void test(
+  "repair 12: logTail reads a bounded suffix of a sparse log",
+  { skip: process.platform !== "darwin" },
+  (t) => {
+    const home = dir(t);
+    const priorHome = process.env.HOME;
+    const priorPath = process.env.PATH;
+    process.env.HOME = home;
+    process.env.PATH = "/usr/bin:/bin";
+    const folder = join(home, "Library/Logs/Iva");
+    mkdirSync(folder, { recursive: true });
+    const f = openSync(join(folder, "iva.out.log"), "w");
+    writeSync(f, Buffer.from("old\n"), 0, 4, 0);
+    writeSync(f, Buffer.from("\nlast line\n"), 0, 11, 600 * 1024 * 1024);
+    closeSync(f);
+    try {
+      assert.equal(logTail("iva.service", 1), "last line");
+    } finally {
+      process.env.HOME = priorHome;
+      process.env.PATH = priorPath;
+    }
+  },
+);
 void test("repair 14: scheduler guard covers arbitrary LaunchAgents writes and launchctl loading", () => {
   for (const cmd of [
     "cp /tmp/x ~/Library/LaunchAgents/x.plist",
