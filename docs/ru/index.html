@@ -514,6 +514,21 @@
       .hero-install button.done {
         color: #bfe3b0;
       }
+      .hero-agent {
+        flex-direction: column;
+        padding: 10px 12px;
+        border-radius: 24px;
+      }
+      .hero-agent code {
+        max-width: 100%;
+        white-space: normal;
+        user-select: text;
+      }
+      .hero-agent-hint {
+        font-size: clamp(10px, 2.5vw, 12px);
+        white-space: nowrap;
+        color: rgba(255, 255, 255, 0.7);
+      }
       .hero-meta {
         font-size: 12px;
         letter-spacing: 0.18em;
@@ -997,6 +1012,18 @@
               Star on GitHub
             </a>
           </div>
+          <div class="liquid-glass hero-install hero-agent">
+            <button id="copy-ai" type="button" aria-describedby="agent-hint">
+              Установить с помощью ИИ-агента
+            </button>
+            <code id="agent-prompt" hidden
+              >Установи мне Иву, инструкция:
+              https://iva-agent.com/install.txt</code
+            >
+          </div>
+          <p id="agent-hint" class="hero-agent-hint">
+            Вставьте в Claude Code, Codex или Claude Desktop
+          </p>
           <div class="liquid-glass hero-install">
             <code id="cmd"
               >curl -fsSL
@@ -1487,22 +1514,36 @@
 
       function wireCopy(btnId, cmdId) {
         var btn = document.getElementById(btnId);
-        if (!btn) return;
+        var source = document.getElementById(cmdId);
+        if (!btn || !source) return;
+        var label = btn.textContent;
         btn.addEventListener("click", function () {
-          var cmd = document
-            .getElementById(cmdId)
-            .textContent.replace(/\s+/g, " ")
-            .trim();
-          navigator.clipboard.writeText(cmd).then(function () {
+          var cmd = source.textContent.replace(/\s+/g, " ").trim();
+          function selectText() {
+            source.hidden = false;
+            var range = document.createRange();
+            range.selectNodeContents(source);
+            var selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            btn.textContent = "Фраза выделена. Скопируйте её";
+          }
+          function copied() {
             btn.textContent = "Скопировано";
             btn.classList.add("done");
             setTimeout(function () {
-              btn.textContent = "Копировать";
+              btn.textContent = label;
               btn.classList.remove("done");
             }, 1600);
-          });
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(cmd).then(copied).catch(selectText);
+          } else {
+            selectText();
+          }
         });
       }
+      wireCopy("copy-ai", "agent-prompt");
       wireCopy("copy", "cmd");
       wireCopy("copy2", "cmd2");
 

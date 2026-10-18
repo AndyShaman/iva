@@ -34,6 +34,8 @@ export type WizardDeps = {
   readonly codexLoggedIn: (existing: Env) => boolean;
   /** Запись идёт в файл-кандидат `iva config`, а не в живой .env. */
   readonly staging: boolean;
+  /** First installation walks the settings, with saved values as defaults. */
+  readonly firstInstall?: boolean;
   readonly closeInput: () => void;
 };
 
@@ -240,7 +242,7 @@ function reportInvalidProvider(p: Progress): Promise<boolean> {
 
 // Уже настроено? По шагам не идём — спрашиваем один раз.
 function confirmSetup(p: Progress): Promise<boolean> {
-  if (p.config.isComplete) return keepOrReconfigure(p);
+  if (p.config.isComplete && !p.deps.firstInstall) return keepOrReconfigure(p);
   printFreshSetupIntro(p.ctx);
   return Promise.resolve(true);
 }

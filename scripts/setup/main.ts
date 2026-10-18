@@ -63,9 +63,16 @@ const rl = createInterface({
   output: process.stdout,
 });
 
+const inputClosed = new AbortController();
+rl.on("close", () =>
+  inputClosed.abort(
+    new Error("Setup input closed. Run the installer again in a terminal."),
+  ),
+);
+
 const dialog = createDialog(
   {
-    question: (prompt) => rl.question(prompt),
+    question: (prompt) => rl.question(prompt, { signal: inputClosed.signal }),
     print: (...args) => console.log(...args),
     write: (text) => {
       process.stdout.write(text);
@@ -83,6 +90,7 @@ export async function main(entryUrl = import.meta.url): Promise<void> {
     readExisting: () => loadEnvFile(SOURCE_ENV_PATH),
     codexLoggedIn: (existing) => existsSync(authFilePath(dataDirAbs(existing))),
     staging: STAGING_CONFIG,
+    firstInstall: process.argv.includes("--first-install"),
     closeInput: () => rl.close(),
   });
 }

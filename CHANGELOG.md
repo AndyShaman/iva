@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- ✨ **Установка через ИИ-агента**: дайте Claude Code, Codex или Claude Desktop фразу с `https://iva-agent.com/install.txt`. Агент проверит компьютер и сервер, установит или починит Иву и поможет получить ответ бота. Режим `install.sh --env-file` проходит без вопросов и дополняет настройки общим кодом мастера. Ask your agent to install Iva using `https://iva-agent.com/install.txt`. The agent checks the machine, installs or repairs Iva and helps verify a bot reply. Unattended installation validates and completes settings through the setup wizard's code.
+- 🔧 **Продолжение первой установки после обрыва SSH**: повторный запуск продолжает настройку с сохранёнными значениями и переиспользует готовые этапы. После потери соединения мастер завершается и освобождает замок; при занятом замке установщик показывает команду остановки прежнего процесса. Re-running an interrupted first install resumes setup with saved defaults and reuses completed stages. A disconnected setup releases its lock, and a busy lock message gives the command to stop the previous installer.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.

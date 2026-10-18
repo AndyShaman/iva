@@ -18,7 +18,15 @@
 
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data.
 
-**One command installs it:**
+[![Install with AI agent](https://img.shields.io/badge/Install_with_AI_agent-4d7c40?style=for-the-badge)](https://iva-agent.com/install.txt)
+
+Paste this into Claude Code, Codex or Claude Desktop:
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
+Or run the installer yourself:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | bash
@@ -102,6 +110,16 @@ The bot is half of Telegram. The other half is your personal account: connect th
 Web pages, search results, voice transcripts, captions and the vision model's description of a picture reach the model only through a prompt-injection sanitizer. On a forwarded text message the same gate annotates the turn with a warning instead of filtering the text, and document bodies, userbot-read chats and `agent-browser` output are not screened at all. Everything that leaves through the Outbox passes a secret-redaction gate, and the user allowlist fails closed — an empty list answers nobody. Your memory is a private git repo you own; the honest boundary is that the model and transcription are cloud APIs you choose and pay for. Gate internals and the full boundary: [docs/security.md](docs/security.md).
 
 ## Install
+
+[![Install with AI agent](https://img.shields.io/badge/Install_with_AI_agent-4d7c40?style=for-the-badge)](https://iva-agent.com/install.txt)
+
+Ask Claude Code, Codex or Claude Desktop to install Iva on your server or Mac:
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
+Or run the installer yourself.
 
 One command on any Ubuntu/Debian box — a fresh VPS or your own machine:
 

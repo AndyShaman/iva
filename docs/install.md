@@ -1,5 +1,13 @@
 # Install
 
+## Through an AI agent
+
+Paste this into Claude Code, Codex or Claude Desktop. The agent will check your server or Mac, run the installer and help you get a reply from your bot. [Instructions for the agent](https://iva-agent.com/install.txt).
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
 On macOS, the same installer uses Homebrew and launchd. Units are named `app.iva.*`; plists live in `~/Library/LaunchAgents` and logs in `~/Library/Logs/Iva/`. Log in on the Mac screen before installing. The Mac must stay on and awake for Iva to work. A night missed while the Mac is off is skipped; after sleep, launchd runs the pending calendar job when the Mac wakes. Use `iva status` and `iva logs -f` to inspect the installation.
 
 Everything between `curl` and a working bot. One command on a fresh server: the installer asks your language, walks you through five keys, and ends by messaging you from your own bot.

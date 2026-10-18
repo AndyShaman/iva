@@ -1,0 +1,34 @@
+# Install Iva for the person
+
+Iva is a self-hosted Telegram AI assistant with layered memory, running on the person's server or Mac.
+
+Talk to the person in their language. Follow the install-iva skill to check the machine, install or repair Iva,
+and verify that the bot answers them.
+
+If you can install skills, download every file below into your skills directory, preserving the paths inside
+skills/install-iva. Claude Code uses ~/.claude/skills/install-iva; Codex uses ~/.agents/skills/install-iva.
+Keep the full SKILL.md and references together, then read SKILL.md and follow it.
+
+Otherwise, fetch and read SKILL.md directly and follow its steps. Read each reference when its step calls for it.
+Resolve references/... against the file list below.
+
+Files from release v0.5.5:
+
+- skills/install-iva/SKILL.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/SKILL.md
+- skills/install-iva/references/preflight.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/preflight.md
+- skills/install-iva/references/target.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/target.md
+- skills/install-iva/references/access.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/access.md
+- skills/install-iva/references/server-security.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/server-security.md
+- skills/install-iva/references/iva-state.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/iva-state.md
+- skills/install-iva/references/keys.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/keys.md
+- skills/install-iva/references/finish.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/finish.md
+- skills/install-iva/references/secrets.md
+  https://raw.githubusercontent.com/smixs/iva-agent/v0.5.5/skills/install-iva/references/secrets.md

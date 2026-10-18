@@ -251,6 +251,7 @@ INSTALL_ENV_BACKUP=""
 INSTALL_OUTPUT_BACKUP=""
 INSTALL_LOCK=""
 INSTALL_DATA=""
+SETUP_PID=""
 # Set once the installation is known to hold the user's own state again — after a clean
 # rollback, or after a finished install. Only then are the copies this run made duplicates
 # that may be dropped.
@@ -294,7 +295,7 @@ process.stdout.write(resolveDataDir(root, process.env.ASSISTANT_DATA_DIR));
     if [ -f "$lock/pid" ]; then
       owner="$(cat "$lock/pid" 2>/dev/null || true)"
       if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
-        die "$(t "Another installer is already running here (pid $owner, lock: $lock). Wait for it to finish, or stop it, and run this again." "Здесь уже работает другой установщик (pid $owner, лок: $lock). Дождитесь его или остановите — и запустите снова.")"
+        die "$(t "Another installer is already running here (pid $owner, lock: $lock). Wait for it to finish. To stop an interrupted install, run: kill -TERM $owner; then run the installer again." "Здесь уже работает другой установщик (pid $owner, лок: $lock). Дождитесь его. Чтобы остановить оборванную установку, выполните: kill -TERM $owner; затем запустите установщик снова.")"
       fi
     # No owner written yet: the installer that made this directory is a moment away from
     # writing its pid into it, and taking the lock now would run two of us. Only a lock
@@ -499,6 +500,11 @@ finalize_install() {
   set +e
   # A log that stopped being writable mid-run must not take the rollback down with it: the
   # redirects below would fail before their commands ever ran.
+  if [ -n "$SETUP_PID" ]; then
+    kill -TERM "$SETUP_PID" 2>/dev/null
+    wait "$SETUP_PID" 2>/dev/null
+    SETUP_PID=""
+  fi
   : >>"$INSTALL_LOG" 2>/dev/null || INSTALL_LOG=/dev/null
   stop_spinner
   if [ "$INSTALL_COMPLETE" != true ]; then
@@ -531,6 +537,7 @@ while [ $# -gt 0 ]; do
     --non-interactive) NON_INTERACTIVE=true; RUN_SETUP=false ;;
     --env-file)
       [ -n "${2:-}" ] && [ -f "$2" ] && [ -r "$2" ] || die '--env-file requires a readable file'
+      NON_INTERACTIVE=true
       ENV_FILE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
     -h|--help)
       sed -n '2,22p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
@@ -615,13 +622,28 @@ SCRIPT_DIR=""
 if [ -n "$SOURCE" ] && [ -f "$SOURCE" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 fi
-# A configured installation, not merely a directory: an abandoned first clone has a .git
-# and still has every heavy package stage ahead of it, so .env (or the versioned layout)
-# is what tells a re-run from a first install.
+# A saved .env can precede a failed build or autostart. Only a completed first install
+# goes to the updater. Recognize older installations by their configured autostart.
+installation_finished() {
+  local root="$1"
+  [ -f "$root/.env" ] || return 1
+  [ ! -f "$root/.iva-installed" ] || return 0
+  [ ! -f "$root/.iva-dev" ] || return 0
+  if [ "$IVA_OS" = Darwin ]; then
+    [ -f "$HOME/Library/LaunchAgents/app.iva.iva.plist" ] \
+      && [ -f "$HOME/Library/LaunchAgents/app.iva.iva-telegram-poll.plist" ] \
+      && launchctl print "gui/$(id -u)/app.iva.iva" >/dev/null 2>&1 \
+      && launchctl print "gui/$(id -u)/app.iva.iva-telegram-poll" >/dev/null 2>&1
+  else
+    [ -f "$HOME/.config/systemd/user/iva.service" ] \
+      && [ -f "$HOME/.config/systemd/user/iva-telegram-poll.service" ] \
+      && systemctl --user is-enabled --quiet iva.service iva-telegram-poll.service
+  fi
+}
 INSTALL_EXISTS=false
-if [ -f "$INSTALL_DIR/.env" ] || [ -d "$INSTALL_DIR/versions" ]; then
+if installation_finished "$INSTALL_DIR"; then
   INSTALL_EXISTS=true
-elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/.env" ] && [ -f "$SCRIPT_DIR/package.json" ] \
+elif [ -n "$SCRIPT_DIR" ] && installation_finished "$SCRIPT_DIR" && [ -f "$SCRIPT_DIR/package.json" ] \
   && grep -q '"eve"' "$SCRIPT_DIR/package.json"; then
   INSTALL_EXISTS=true
 fi
@@ -936,7 +958,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ] && grep -q '"eve"' 
   # installer itself tells people to re-run, so it owes them the same undo as any other.
   CURRENT_STEP="$(t "saving your files" "сохранение ваших файлов")"
   save_env_copy
-elif [ -d "$INSTALL_DIR/.git" ] || [ -d "$INSTALL_DIR/versions" ]; then
+elif [ "$INSTALL_EXISTS" = true ]; then
   # Iva уже установлена: обновлять её установщик не имеет права - обновлятор один.
   # Куда идти с этим деревом, решает repair.sh того же канала: маркер `.iva-dev` -
   # отказ, версионная раскладка - её собственный обновлятор, чекаут - назад на релиз и
@@ -948,6 +970,11 @@ elif [ -d "$INSTALL_DIR/.git" ] || [ -d "$INSTALL_DIR/versions" ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then PROJECT_DIR="$INSTALL_DIR"; acquire_install_lock "$INSTALL_DIR/data"; fi
   record_beta_choice
   hand_installation_to_repair
+elif [ -d "$INSTALL_DIR/.git" ] && [ -f "$INSTALL_DIR/package.json" ]; then
+  PROJECT_DIR="$INSTALL_DIR"
+  step "$(t "Continuing first installation: $PROJECT_DIR" "Продолжаю первую установку: $PROJECT_DIR")"
+  acquire_install_lock
+  save_env_copy
 else
   run_stage "$(t "Cloning Iva" "Клонирую Iva")" "$(t "Iva downloaded" "Iva загружена")" \
     git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
@@ -1067,14 +1094,25 @@ fi
 # ─────────────────────────────────────────────────────────────────────────
 CURRENT_STEP="$(t "setup wizard" "мастер настройки")"
 SETUP_DONE=false
+# An asynchronous wait lets bash handle HUP/TERM while setup is waiting for input.
+# The exit handler stops setup before releasing the installer lock.
+run_setup() {
+  IVA_CONFIG_STAGING=0 node scripts/setup.mjs "$@" <&0 &
+  SETUP_PID=$!
+  local rc=0
+  wait "$SETUP_PID" || rc=$?
+  SETUP_PID=""
+  return "$rc"
+}
 if [ -n "$ENV_FILE" ]; then
-  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" IVA_CONFIG_STAGING=0 node scripts/setup.mjs --non-interactive </dev/null
+  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" run_setup --non-interactive </dev/null
   SETUP_DONE=true
 elif [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
-  IVA_CONFIG_STAGING=0 node scripts/setup.mjs < /dev/tty && SETUP_DONE=true
+  run_setup --first-install < /dev/tty
+  SETUP_DONE=true
 else
   warn "$(t "No terminal (/dev/tty) — skipping the wizard. Run it later: cd $PROJECT_DIR && npm run setup" "Нет терминала (/dev/tty) — пропускаю мастер. Запустите потом: cd $PROJECT_DIR && npm run setup")"
 fi
@@ -1236,6 +1274,9 @@ git -C "$PROJECT_DIR" config --local iva.updateBranch "$UPDATE_CHANNEL" 2>/dev/n
   || warn "$(t "couldn't record the update branch (not a git checkout) — 'iva update' will use the default" "не записал ветку обновлений (не git-checkout) — 'iva update' возьмёт ветку по умолчанию")"
 
 finish_install_update
+if [ "$AUTOSTART_READY" = true ]; then
+  (umask 077; printf 'autostart configured\n' >"$PROJECT_DIR/.iva-installed")
+fi
 INSTALL_COMPLETE=true
 
 # ─────────────────────────────────────────────────────────────────────────
