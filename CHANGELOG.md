@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
 
 - 🔎 **Память находит имя в любом падеже**: поиск по карточкам снимает русские окончания и не различает ё и е, поэтому «Ильёй встреча» находит карточку Ильи, а «Аксенов» — Аксёнова. Старые строки из раздела «История» и заменённые карточки ищутся только когда спрашивают о прошлом. Memory search now matches Russian word forms and treats ё as е; the History section and superseded, archived, cancelled or reverted cards are searched only when the query asks about the past.
 - 🔧 **Очередь сообщений сохраняется после отката**: после отката на прошлую версию очередь сообщений, записанная новой Ивой, больше не стирается: Ива останавливает приём и пишет причину, файл остаётся как был. After a rollback, Iva refuses a newer message queue format and logs the reason while preserving the file unchanged.
