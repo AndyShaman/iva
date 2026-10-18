@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🤝 **Длинная работа сразу уходит помощнику**: раньше Ива могла молчать десятки шагов, разбирая договор в чате. Теперь длинную работу (договор, ресёрч, разбор письма) Ива сразу отдаёт помощнику и отвечает вам, а не молчит десятки шагов. Iva delegates document analysis, extended research and work needing many tool calls to a helper immediately, then tells you what was handed off and the estimated wait.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.

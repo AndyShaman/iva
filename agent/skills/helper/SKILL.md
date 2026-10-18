@@ -1,12 +1,22 @@
 ---
 name: helper
-description: Hand long background work to a helper and report its outcome to the owner.
+description: Delegate document, contract or long email analysis, web research, many tool calls, or synthesis across sources.
 ---
 
 # Helper
 
 Use helper for work that can continue while Iva answers the owner now.
-Keep a short lookup in the current chat.
+Keep a short lookup or an answer from memory in the current chat.
+
+Call `helper start` immediately when any one of these applies:
+
+- Analyzing a document, contract or long email.
+- Web research needing more than two or three searches.
+- Work expected to need more than about ten tool calls.
+- Comparing or synthesizing many sources.
+
+After the receipt, tell the owner in one sentence that the helper has the work
+and give an estimated wait based on its scope.
 
 ## Границы
 
