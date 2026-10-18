@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [0.5.4] - 2026-10-18
 
-- ✨ **Установка на macOS через launchd**: тот же установщик настраивает автозапуск Ивы на Mac; команды управления, обновление, журнал и ночные задания используют средства macOS. The installer supports macOS with launchd units, service controls, updates, logs and memory locks.
+- ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
+
+[0.5.4]: https://github.com/smixs/iva-agent/releases/tag/v0.5.4
 
 ## [0.5.3] - 2026-10-16
 

@@ -175,7 +175,13 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.3 · 16.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.4 · 18.10.2026 — expand the latest releases</b></summary>
+
+### 18.10.2026
+
+#### v0.5.4
+
+- ✨ **Iva runs on Mac**: the installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
 
 ### 16.10.2026
 
@@ -209,21 +215,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 🔧 **DeepSeek continues after a tool call**: in thinking mode on Ollama Cloud and OpenCode Go, the model receives its reasoning along with the tool result.
 - 🌙 **Night preserves direct memory edits**: a conflict in one day lets the other days and the report finish. The updater preserves another process's lock and installs verified Google CLI; closed turns stay closed after a restart.
 - 🔧 **Iva retries the request up to three times after an empty response**: retries stay within the same step; previously Iva retried once.
-
-### 11.10.2026
-
-#### v0.4.17
-
-- 🐚 **Iva runs server commands in bash**: they used to go through the minimal `/bin/sh` shell, and on Ubuntu and Debian ordinary bash syntax failed with «Syntax error». Iva corrected herself, but lost a step and logged a failure. Now such commands pass the first time.
-- 🛡 **Iva refuses harmless commands less often**: search and print commands (grep, echo, head, cut, wc, ls, getent) were refused when quoted text held words like «batch» or «at». Now they pass, and so does `iva … --help`. Restarting Iva and schedules that bypass reminders are blocked as before. Command chains with sed, heredoc text and git commit messages may still be refused (#287).
-- 📓 **A helper's draft no longer lands in the daily note**: when Iva handed part of the work to a helper, its raw answer was written to the daily note as her reply, though you never received it. Now the daily note holds only what Iva wrote to you.
-
-#### v0.4.16
-
-- 📨 **Messages sent while Iva is busy reach her together**: if you send several messages or files while she is answering, Iva gets them at once and answers once instead of replying to each in turn. Commands, replies to her messages and button taps still go separately. In «Interrupt» mode a new message waits until Iva has picked up the ones already collected.
-- 💬 **During long work you can see what Iva is busy with**: a private chat shows a streaming draft with the current tool. The native ■ control stops the turn. Groups and topics show typing and use `/stop`. The final answer arrives as a separate reply.
-- 🔎 **Iva searches on her own first, then asks**: before asking you a question, she checks her memory, chats and mail, the web and the server, and in the question she says what she has already checked. What to choose and whether something may be done she still asks you.
-- 📄 **Replacements in Word files no longer double up**: in a merged table cell, replacing «100» with «1000» gave «10000». Now each replacement is made once, and page breaks, tabs and pictures next to the text stay in place.
 
 </details>
 
