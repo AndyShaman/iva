@@ -26,6 +26,10 @@ version ("Write your own"); read it before the first plugin of a turn.
   service — a process that stays up: `sh.iva/services/<svc>/service.json` with `command` and
   `port` (1024–65535), listening on `127.0.0.1:$IVA_SERVICE_PORT`. `propose` refuses a draft
   with a part the reader would drop and names the line.
+- Put script tests in `skills/<skill>/tests/`; give their run command in README.
+- In the plugin root `README.md`, use `## Keys` and `## Network`, each followed by
+  plain comma-separated variable names or network hostnames. Write `none` when empty.
+  List names only, never values; the proposal shows up to 120 characters per section.
 - No symlinks, no secrets in files: keys go to `.env` or `data/plugin-data/<name>/`, named in the
   README.
 
@@ -44,6 +48,8 @@ In an Insight turn you only build and run the draft; installing waits for the ow
 - Never install such a plugin any other way: `iva plugin add` refuses it outside the owner's
   terminal, and `iva plugin trust|enable|update|sync|install-proposal` are blocked in `bash`. An update of an
   installed plugin is `iva plugin update <name>` in the owner's terminal: tell the owner.
+- After confirmed installation, try one live action within the owner's approved scope.
+  An owner's "откати" means `iva plugin remove <name>` for this plugin.
 - A refusal from `propose` or `add` is plain text: fix the draft (the diagnostic names the file)
   and run it again.
 
