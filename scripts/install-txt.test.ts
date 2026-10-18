@@ -13,10 +13,13 @@ const phrases = {
   ru: `Установи мне Иву, инструкция: ${INSTALL_URL}`,
 };
 
-void test("install.txt pins every link to an existing file in the next patch release", () => {
+void test("install.txt pins every link to an existing file in the current or next patch release", () => {
   const { version } = JSON.parse(read("package.json")) as { version: string };
   const [major, minor, patch] = version.split(".").map(Number);
-  const tag = `v${major}.${minor}.${patch + 1}`;
+  const unreleased = /^## (?:\[Unreleased\]|Unreleased)$/mu.test(
+    read("CHANGELOG.md"),
+  );
+  const tag = unreleased ? `v${major}.${minor}.${patch + 1}` : `v${version}`;
   const links = read("docs/install.txt").match(/https?:\/\/[^\s<>]+/gu) ?? [];
   assert.ok(links.length > 0);
   for (const link of links) {

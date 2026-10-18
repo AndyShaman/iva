@@ -1,11 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.5] - 2026-10-19
 
-- 🔧 **Завершение отложенной установки**: повтор команды установки доделывает настройку автозапуска, включает linger на Linux и отправляет подтверждение в Telegram. Готовые этапы переиспользуются. Repeating the installer completes pending autostart, enables linger on Linux and sends the Telegram confirmation while reusing completed stages.
-- 🔧 **Первый коммит vault на свежем сервере**: Ива задаёт недостающие имя и почту автора в настройках самого vault, поэтому история памяти создаётся сразу. Глобальные настройки Git и заданная владельцем личность сохраняются. Iva fills missing author identity in the vault repository so its first commit succeeds on a fresh server, while preserving global Git settings and an existing author identity.
-- ✨ **Установка через ИИ-агента**: дайте Claude Code, Codex или Claude Desktop фразу с `https://iva-agent.com/install.txt`. Агент проверит компьютер и сервер, установит или починит Иву и поможет получить ответ бота. Режим `install.sh --env-file` проходит без вопросов и дополняет настройки общим кодом мастера. Ask your agent to install Iva using `https://iva-agent.com/install.txt`. The agent checks the machine, installs or repairs Iva and helps verify a bot reply. Unattended installation validates and completes settings through the setup wizard's code.
-- 🔧 **Продолжение первой установки после обрыва SSH**: повторный запуск продолжает настройку с сохранёнными значениями и переиспользует готовые этапы. После потери соединения мастер завершается и освобождает замок; при занятом замке установщик показывает команду остановки прежнего процесса. Re-running an interrupted first install resumes setup with saved defaults and reuses completed stages. A disconnected setup releases its lock, and a busy lock message gives the command to stop the previous installer.
+- ✨ **Установить через ИИ-агента**: скажите Claude Code, Codex или Claude Desktop: «Установи Иву по инструкции https://iva-agent.com/install.txt». Агент проверит компьютер и сервер, проведёт настройку и поможет получить ответ бота. Tell Claude Code, Codex or Claude Desktop: "Install Iva using https://iva-agent.com/install.txt". The agent checks your computer and server, guides setup and helps verify a bot reply.
+- 🔧 **Установка продолжается после обрыва SSH**: если связь с сервером оборвалась посреди настройки, повторите команду установки. Готовые шаги сохраняются, мастер предлагает прежние значения, а подсказка помогает остановить оставшийся установщик. Спасибо за отчёт Максиму Тигулеву. If the connection drops during setup, repeat the installer command. Completed steps are reused, the wizard offers your saved values, and a hint helps you stop an installer still running. Thanks to Maksim Tigulev for reporting this.
+- 🔧 **Отложенная установка завершается с автозапуском**: если настройка была отложена, запустите команду установки ещё раз. Она завершит настройку автозапуска и пришлёт подтверждение в Telegram. Ива продолжает работать после выхода с сервера. If setup was postponed, run the installer command again. It completes autostart and sends a confirmation in Telegram. Iva keeps running after you leave the server.
+- 🔧 **История памяти создаётся на свежем сервере**: Ива начинает сохранять историю изменений памяти сразу после установки, даже если Git на сервере ещё не настроен. Настройки Git для других проектов сохраняются. Iva starts tracking changes to your memory right after installation, even when Git has not been configured on the server. Git settings for other projects are preserved.
+
+[0.5.5]: https://github.com/smixs/iva-agent/releases/tag/v0.5.5
 
 ## [0.5.4] - 2026-10-18
 
