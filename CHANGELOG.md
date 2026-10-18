@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 📊 **Ива может объяснить, почему подорожал ход**: журнал расхода сохраняет короткие отпечатки инструкций, блоков кэша и инструментов, чтобы отличить смену запроса от обычного продолжения разговора. Request fingerprints help explain fresh cache writes and increased token use without storing prompt text.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
