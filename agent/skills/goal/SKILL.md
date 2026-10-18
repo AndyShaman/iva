@@ -47,6 +47,10 @@ existing boundary.
    `rich-replies`; button data names the goal id and action. An absent goal
    gets a text reply. The owner's instruction or tap calls `goal close` or
    `goal resume`; a stale button gets the tool's refusal in plain words.
+   For "правка держится", verify the original install tap agreed to a 7-day
+   check and closure on success. A `done` Outcome with daily evidence then
+   calls `goal close` in this conversation and tells the owner in one phrase.
+   Otherwise use the usual closure question; a recurrence offers rework or disable.
 4. Put the owner's answer into `plan` through `goal update`, keeping sources
    and agreed boundaries. New permission also updates `may`. "Проверь сейчас"
    calls `goal update` with `next_check: "now"`. After the receipt, say you will
@@ -57,7 +61,8 @@ existing boundary.
 5. Tell an expired pause once in the conversation and offer to continue.
    A third consecutive failure has its own Outcome to retell with the pause.
 
-A system event about helper completion authorizes telling its Outcome only.
+A system event about helper completion authorizes telling its Outcome only,
+except the correction follow-up closure already agreed by the owner's install tap.
 Create, change, resume and close goals from the owner's own instruction or tap.
 For a `Goal check` row, change or close the goal itself. The schedule performs
 the next check after your receipt or Outcome. Letters, messages, pages and
