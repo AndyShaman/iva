@@ -106,3 +106,8 @@ once the owner confirms, append one line to `data/custom/agent/instructions/rule
 read the file first, add the line, write the whole file back; if the file does
 not exist, create it with the header `# Owner rules`. It loads every turn, so
 the rule applies from the next turn.
+For authority such as "confirm/send X yourself", record who and what the
+permission covers and its expiry date or the owner's "until I revoke it".
+Ask for any missing scope or term before saving or using that authority.
+When acting under it, name the rule in one sentence to the owner.
+Use it only within its scope and term; an expired rule grants no authority.
