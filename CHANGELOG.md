@@ -6,6 +6,7 @@
 - 🔧 **Очередь сообщений сохраняется после отката**: после отката на прошлую версию очередь сообщений, записанная новой Ивой, больше не стирается: Ива останавливает приём и пишет причину, файл остаётся как был. After a rollback, Iva refuses a newer message queue format and logs the reason while preserving the file unchanged.
 - 🧠 **Память только из ваших слов**: в постоянную память больше не попадает пересланное и сказанное самой Ивой — только ваши слова. Permanent memory now accepts only your own words, excluding forwarded messages and Iva's replies.
 - 🧠 **Ива закрепляет поправки и повторяющиеся дела**: Ива замечает, когда вы поправляете её второй раз об одном и том же, и сама предлагает закрепить правку; через неделю проверяет, что правка держится. Повторные просьбы в разные дни превращает в предложение скилла, а при явно названном времени предлагает выполнять его по расписанию после вашего согласия. Iva spots repeated corrections and proposes a lasting fix, then checks it after a week. Requests repeated on different days become skill drafts, with a Routine offered only for an explicit time and installed after your approval.
+- 🎯 **Новость от сенсора сразу двигает проверку цели**: раньше Goal ждал своего расписания после новости от плагина. Теперь новость от сенсора плагина сразу двигает проверку вашей цели, а не ждёт расписания. News from a plugin sensor advances a related active Goal check to now instead of waiting for its scheduled time.
 
 ## [0.5.4] - 2026-10-18
 
