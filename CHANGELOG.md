@@ -14,6 +14,7 @@
 - 🧩 **Ива сначала ищет готовый плагин**: раньше Insight сразу собирал собственный черновик. Теперь перед сборкой Ива сверяет Marketplace и предлагает подходящий готовый плагин по имени; установка остаётся по вашему согласию. Before drafting a new plugin, Iva checks the Marketplace and offers a suitable ready-made plugin by name, keeping installation subject to your approval.
 - 🔒 **В строке «работаю» остаётся только инструмент**: раньше черновик ответа мог показывать часть пути, запроса или команды. Теперь в строке «работаю» больше не видно путей и запросов — только какой инструмент работает; у bash остаётся лишь распознанное имя программы. The working hint now shows only the tool name and, for bash, a recognized program name. Paths, URLs, queries and command arguments stay out of the draft hint.
 - 🧠 **Ива учится на повторяющихся делах**: раз в день Ива просматривает свои ходы за две недели: что вы просите регулярно и где она шла долго или с подсказками — и предлагает записать это навыком. Once a day, Iva reviews two weeks of chat turns for repeated work, long attempts and cases guided by the owner, and suggests saving the procedure as a skill.
+- 🎯 **Ива предлагает следить за ожиданием**: раньше ожидание могло остаться обещанием без проверки. Теперь, когда вы чего-то ждёте от человека или к сроку, Ива предлагает кнопку «Следить» и после нажатия сама проверит. When you are waiting on someone or a deadline, Iva offers a Follow button and schedules an observation Goal after your tap.
 
 ## [0.5.4] - 2026-10-18
 

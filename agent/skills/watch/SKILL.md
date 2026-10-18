@@ -33,6 +33,9 @@ job is the judgement: is it worth the owner's attention, and what is the next st
 5. Apply this judgement with each turn's delivery rules. Alert gets its message,
    morning Brief always answers, Signal and Reminder deliver.
 
+For a Watch or Brief item waiting on someone or a deadline, load `goal` and offer its «Следить» button.
+The owner's tap handles creation in chat; the scheduled turn only makes the offer.
+
 ## In a Watch turn
 
 If a new letter or message may answer an open goal, call `goal list`. Only for `status: active` and `check: null`, call `goal update` with `next_check: "now"`; its check owns the account to the owner.

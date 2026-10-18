@@ -62,6 +62,8 @@ existing overview or action message.
   answer, naming the person or the thing: «Оплатить счёт Билайна сегодня?»,
   «Взять ответ Максиму в задачи?». Then an empty line and the buttons.
   Items without an action stay in the overview.
+- An eligible waiting item gets the «Следить» button from `goal` in its own action message,
+  following Watch's shared procedure and the same single-item rule in chat.
 - A message with more than one item — the overview first of all — has no action
   buttons. Every item with an action is its own message, and the button `data`
   names the subject, who and what about: «Ответить: Иван, смета», «Черновик
