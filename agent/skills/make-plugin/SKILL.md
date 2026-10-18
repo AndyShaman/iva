@@ -31,6 +31,10 @@ source with the proposal; install after the owner's tap by step 2.
   service — a process that stays up: `sh.iva/services/<svc>/service.json` with `command` and
   `port` (1024–65535), listening on `127.0.0.1:$IVA_SERVICE_PORT`. `propose` refuses a draft
   with a part the reader would drop and names the line.
+- Put script tests in `skills/<skill>/tests/`; give their run command in README.
+- In the plugin root `README.md`, use `## Keys` and `## Network`, each followed by
+  plain comma-separated variable names or network hostnames. Write `none` when empty.
+  List names only, never values; the proposal shows up to 120 characters per section.
 - No symlinks, no secrets in files: keys go to `.env` or `data/plugin-data/<name>/`, named in the
   README.
 - A draft that fixes a failure follows `insight`'s safe before/after comparison
@@ -58,6 +62,8 @@ Wait for the code's Install tap as below; preserve the existing trust boundaries
 - Never install such a plugin any other way: `iva plugin add` refuses it outside the owner's
   terminal, and `iva plugin trust|enable|update|sync|install-proposal` are blocked in `bash`. An update of an
   installed plugin is `iva plugin update <name>` in the owner's terminal: tell the owner.
+- After confirmed installation, try one live action within the owner's approved scope.
+  An owner's "откати" means `iva plugin remove <name>` for this plugin.
 - A refusal from `propose` or `add` is plain text: fix the draft (the diagnostic names the file)
   and run it again.
 

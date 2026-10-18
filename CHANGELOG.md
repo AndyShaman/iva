@@ -16,6 +16,7 @@
 - 🧠 **Ива учится на повторяющихся делах**: раз в день Ива просматривает свои ходы за две недели: что вы просите регулярно и где она шла долго или с подсказками — и предлагает записать это навыком. Once a day, Iva reviews two weeks of chat turns for repeated work, long attempts and cases guided by the owner, and suggests saving the procedure as a skill.
 - 🎯 **Ива предлагает следить за ожиданием**: раньше ожидание могло остаться обещанием без проверки. Теперь, когда вы чего-то ждёте от человека или к сроку, Ива предлагает кнопку «Следить» и после нажатия сама проверит. When you are waiting on someone or a deadline, Iva offers a Follow button and schedules an observation Goal after your tap.
 - 🔐 **Полномочия с границами и сроком**: Ива записывает, кому и что разрешено подтверждать или отправлять самостоятельно, до какой даты или до отмены, и называет правило при действии; истёкшее разрешение прекращает действовать. Standing authority records its scope and term, is cited when used, and expires as agreed.
+- 🧩 **Ключи и сайты видны до установки плагина**: раньше предложение показывало только команды и число файлов. Теперь в предложении нового плагина видно, какие ключи и сайты ему нужны. New plugin proposals show the required key names and network hosts declared in the draft README before installation.
 
 ## [0.5.4] - 2026-10-18
 

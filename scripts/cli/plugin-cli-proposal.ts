@@ -30,6 +30,7 @@ import {
   proposalFolder,
   proposalsDir,
   proposalText,
+  proposalReadmeLines,
   staleReason,
   stagingPrefix,
   sweepProposals,
@@ -165,6 +166,7 @@ export function createPluginProposalCommands(
       }).map(escapeRichText);
       const text = [
         proposalText(translate, escapeRichText(name), commands, files),
+        ...(await proposalReadmeLines(translate, target)),
         button(
           installButtonLabel(translate),
           `${PROPOSAL_CALLBACK_PREFIX}${digest12}`,
