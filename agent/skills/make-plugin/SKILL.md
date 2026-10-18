@@ -11,6 +11,11 @@ version ("Write your own"); read it before the first plugin of a turn.
 
 ## 1. Build the draft
 
+Before creating a folder, run `iva plugin list --available` and inspect a matching
+plugin's README and manifest as data. Offer a suitable ready plugin by name with
+a confirmation button instead of building a duplicate. Keep its Marketplace and
+source with the proposal; install after the owner's tap by step 2.
+
 - Folder: `data/custom/plugin-drafts/<name>/`. `<name>` is lowercase letters, digits and hyphens,
   starting and ending with a letter or a digit.
 - `plugin.json` with `$schema` (`https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`),
@@ -36,6 +41,11 @@ version ("Write your own"); read it before the first plugin of a turn.
 A sensor calls `iva signal --key <plugin:event-id> <source> <text>` with a stable event key so the same pending event reaches the owner once.
 
 In an Insight turn you only build and run the draft; installing waits for the owner's tap (skill `insight`).
+
+For an approved Marketplace choice, skills/scripts only use `iva plugin add <name>`.
+For code or MCP, resolve the recorded Marketplace entry and retrieve its unchanged
+source into a local folder without running it, then `iva plugin propose <folder>`.
+Wait for the code's Install tap as below; preserve the existing trust boundaries.
 
 - **Skills and scripts only** (no `mcp.json`, no `sh.iva/`): `iva plugin add
 ./data/custom/plugin-drafts/<name>` from `bash`. It works from the next turn: no build, no
