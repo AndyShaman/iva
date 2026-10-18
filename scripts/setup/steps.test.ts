@@ -120,6 +120,141 @@ test("шаг провайдера: failure — отказ ключа возвр�
   assert.match(String(captured[0]), /rejected the key/u);
 });
 
+test("OpenRouter model boundary retries empty and rejected slugs, then keeps the accepted model", async () => {
+  const answers = ["", "vendor/rejected", "vendor/accepted", "vendor/vision"];
+  const checked: string[] = [];
+  const printed: string[] = [];
+  const ctx = makeContext({
+    askRequired: async (_label, options) => {
+      assert.equal(options?.existing, "router-key");
+      assert.equal(await options.validate?.("router-key"), null);
+      return "router-key";
+    },
+    ask: async () => {
+      const answer = answers.shift();
+      assert.notEqual(answer, undefined, "unexpected extra question");
+      return answer!;
+    },
+    openrouterModelCheck: async (key, model) => {
+      assert.equal(key, "router-key");
+      checked.push(model);
+      return model === "vendor/rejected" ? "model rejected" : null;
+    },
+    print: (line) => printed.push(String(line)),
+  });
+  const s = state("openrouter", {}, { OPENROUTER_API_KEY: "router-key" });
+  await askProviderSettings(s, ctx);
+  assert.deepEqual(checked, ["vendor/rejected", "vendor/accepted"]);
+  assert.equal(s.out.OPENROUTER_MODEL, "vendor/accepted");
+  assert.equal(s.out.OPENROUTER_VISION_MODEL, "vendor/vision");
+  assert.equal(s.out.OPENROUTER_CONTEXT_WINDOW, "131072");
+  assert.ok(printed.some((line) => line.includes("Required")));
+  assert.ok(printed.some((line) => line.includes("model rejected")));
+});
+
+test("OpenRouter model boundary stops after a rejected preset without asking again", async () => {
+  let questions = 0;
+  const ctx = makeContext({
+    nonInteractive: true,
+    ask: async () => {
+      assert.equal(++questions, 1, "unexpected retry");
+      return "vendor/rejected";
+    },
+    openrouterModelCheck: async () => "model rejected",
+  });
+  await assert.rejects(
+    askProviderSettings(state("openrouter"), ctx),
+    /model rejected/u,
+  );
+  assert.equal(questions, 1);
+});
+
+test("custom endpoint and catalog boundary preserves normalized URL, key and model selection", async () => {
+  const calls: unknown[] = [];
+  const ctx = makeContext({
+    envValue: (key) => (key === "CUSTOM_API_KEY" ? "custom-key" : undefined),
+    ask: async (question, def, existing) =>
+      question.includes("Endpoint base URL")
+        ? "https://example.invalid/v1/"
+        : existing || def || "",
+    fetchModels: async (...args) => {
+      calls.push(args);
+      return ["first", "chosen"];
+    },
+    pickFromList: async (items, current, recommended) => {
+      assert.deepEqual(items, ["first", "chosen"]);
+      assert.equal(current, "chosen");
+      assert.equal(recommended, "first");
+      return "chosen";
+    },
+  });
+  const s = state("custom", { CUSTOM_MODEL: "chosen" });
+  await askProviderSettings(s, ctx);
+  assert.deepEqual(calls, [
+    ["custom", "custom-key", { base: "https://example.invalid/v1" }],
+  ]);
+  assert.equal(s.out.CUSTOM_BASE_URL, "https://example.invalid/v1");
+  assert.equal(s.out.CUSTOM_API_KEY, "custom-key");
+  assert.equal(s.out.CUSTOM_MODEL, "chosen");
+  assert.equal(s.out.CUSTOM_VISION_MODEL, "");
+  assert.equal(s.out.CUSTOM_CONTEXT_WINDOW, "131072");
+});
+
+test("custom endpoint and manual model boundary retries invalid answers after catalog failure", async () => {
+  const bases = ["not-a-url", "https://example.invalid/v1"];
+  const models = ["", "manual-model"];
+  const printed: string[] = [];
+  const ctx = makeContext({
+    ask: async (question) => {
+      if (question.includes("Endpoint base URL")) return bases.shift()!;
+      if (question.includes("Model id, exactly")) return models.shift()!;
+      return "";
+    },
+    fetchModels: async () => {
+      throw new Error("catalog offline");
+    },
+    print: (line) => printed.push(String(line)),
+  });
+  const s = state("custom");
+  await askProviderSettings(s, ctx);
+  assert.equal(s.out.CUSTOM_BASE_URL, "https://example.invalid/v1");
+  assert.equal(s.out.CUSTOM_API_KEY, "");
+  assert.equal(s.out.CUSTOM_MODEL, "manual-model");
+  assert.equal(bases.length, 0);
+  assert.equal(models.length, 0);
+  for (const message of [
+    "Needs a full http(s) address",
+    "catalog offline",
+    "Required",
+  ])
+    assert.ok(
+      printed.some((line) => line.includes(message)),
+      message,
+    );
+});
+
+for (const field of ["CUSTOM_BASE_URL", "CUSTOM_MODEL"]) {
+  test(`custom boundary rejects invalid preset ${field} without a retry`, async () => {
+    const asked = new Set<string>();
+    const ctx = makeContext({
+      nonInteractive: true,
+      ask: async (question) => {
+        assert.ok(!asked.has(question), "unexpected retry");
+        asked.add(question);
+        if (question.includes("Endpoint base URL"))
+          return field === "CUSTOM_BASE_URL"
+            ? "not-a-url"
+            : "https://example.invalid/v1";
+        return "";
+      },
+    });
+    await assert.rejects(
+      askProviderSettings(state("custom"), ctx),
+      new RegExp(field, "u"),
+    );
+  });
+}
+
 test("шаг ключей: happy — Deepgram, поиск и память остаются на бесплатной базе", async () => {
   const ctx = makeContext({
     ask: async (question) =>

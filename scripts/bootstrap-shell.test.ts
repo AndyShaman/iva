@@ -75,6 +75,26 @@ void test("bootstrap summary asks for a reboot before promising reconnection", (
   assert.doesNotMatch(output, /will reboot now/u);
 });
 
+void test("bootstrap selects available t64 libraries and skips installed ABI packages", () => {
+  const assignments = readFileSync(BOOTSTRAP, "utf8")
+    .match(/^PACKAGES=".*"$/gmu)
+    ?.join("\n");
+  assert.ok(assignments);
+  const script = `set -eu\n${assignments}\nsection() { :; }\nok() { :; }\nwarn() { echo "$*"; }\napt_get() { :; }\napt-cache() { case "$2" in libasound2t64|libcups2t64|libglib2.0-0t64) return 0;; *) return 100;; esac; }\npackage_installed() { [ "$1" = libglib2.0-0t64 ]; }\nrun_sh() { echo "$IVA_APT_PKGS"; }\n${bashFunction("install_packages")}\ninstall_packages`;
+  const output = execFileSync("bash", ["-c", script], { encoding: "utf8" });
+  const packages = output.trim().split(/\s+/u);
+  assert.ok(packages.includes("libasound2t64"));
+  assert.ok(packages.includes("libcups2t64"));
+  for (const pkg of [
+    "libasound2",
+    "libcups2",
+    "libglib2.0-0",
+    "libglib2.0-0t64",
+  ])
+    assert.ok(!packages.includes(pkg), pkg);
+  assert.ok(packages.includes("libnss3"));
+});
+
 void test("bootstrap.sh answers --help before it needs root, and ignores junk flags", () => {
   const output = runBootstrap(["--not-a-flag", "--help"]);
   assert.match(output, /unknown flag: --not-a-flag \(ignoring\)/);

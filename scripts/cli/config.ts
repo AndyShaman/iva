@@ -28,6 +28,23 @@ type ConfigCommandOverrides = {
 
 type ProviderSelection = [model: string, key: string | null];
 
+function candidateSettings(
+  nextEnv: Record<string, string>,
+  defaultPort: string,
+) {
+  // Тот же каталог, что у мастера, доктора и кнопок /model.
+  const provider = nextEnv.MODEL_PROVIDER;
+  const catalog = catalogProvider(provider);
+  if (!catalog)
+    throw new Error("candidate configuration has an invalid model provider");
+  // Vision едет с кандидатом; живая проверка подтверждает текстовую модель.
+  const selected: ProviderSelection = [catalog.modelVar, catalog.keyVar];
+  const port = Number(nextEnv.IVA_PORT || defaultPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("candidate configuration has an invalid IVA_PORT");
+  return { provider, catalog, selected, port };
+}
+
 /** Create the config command without performing filesystem, process, or systemd work at import time. */
 export function createConfigCommand(
   runtime: CliRuntime,
@@ -95,6 +112,7 @@ export function createConfigCommand(
         ...childEnv,
         IVA_CONFIG_OUTPUT: candidatePath,
         IVA_CONFIG_INPUT: undefined,
+        IVA_CONFIG_STAGING: "1",
       };
       const result = run(NODE, ["scripts/setup.mjs"], { env: spawnEnv });
       if (result.status !== 0) {
@@ -108,22 +126,10 @@ export function createConfigCommand(
 
       const nextText = readFileSync(candidatePath, "utf8");
       const nextEnv = parseEnvText(nextText);
-      // Тот же каталог, что у мастера, доктора и кнопок /model, — и тот же перечень имён,
-      // что принимает рантайм (сверяет scripts/lib/model-catalog.test.ts).
-      const provider = nextEnv.MODEL_PROVIDER;
-      const catalog = catalogProvider(provider);
-      if (!catalog)
-        throw new Error(
-          "candidate configuration has an invalid model provider",
-        );
-      // Живой проверкой подтверждается только текстовая модель: мастер картинку не шлёт,
-      // и vision-переменная (catalog.visionVar) едет в транзакцию вместе с остальным .env
-      // как есть — отдельного шва ей не нужно.
-      const selected: ProviderSelection = [catalog.modelVar, catalog.keyVar];
-      const port = Number(nextEnv.IVA_PORT || DEFAULT_PORT);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error("candidate configuration has an invalid IVA_PORT");
-      }
+      const { provider, catalog, selected, port } = candidateSettings(
+        nextEnv,
+        DEFAULT_PORT,
+      );
 
       await applyTransaction(
         {

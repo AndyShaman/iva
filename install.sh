@@ -533,7 +533,7 @@ while [ $# -gt 0 ]; do
       [ -n "${2:-}" ] && [ -f "$2" ] && [ -r "$2" ] || die '--env-file requires a readable file'
       ENV_FILE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
     -h|--help)
-      sed -n '2,21p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+      sed -n '2,22p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) warn "$(t "unknown flag: $1 (ignoring)" "неизвестный флаг: $1 (игнорирую)")" ;;
   esac
@@ -1068,13 +1068,13 @@ fi
 CURRENT_STEP="$(t "setup wizard" "мастер настройки")"
 SETUP_DONE=false
 if [ -n "$ENV_FILE" ]; then
-  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" node scripts/setup.mjs --non-interactive </dev/null
+  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" IVA_CONFIG_STAGING=0 node scripts/setup.mjs --non-interactive </dev/null
   SETUP_DONE=true
 elif [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
-  node scripts/setup.mjs < /dev/tty && SETUP_DONE=true
+  IVA_CONFIG_STAGING=0 node scripts/setup.mjs < /dev/tty && SETUP_DONE=true
 else
   warn "$(t "No terminal (/dev/tty) — skipping the wizard. Run it later: cd $PROJECT_DIR && npm run setup" "Нет терминала (/dev/tty) — пропускаю мастер. Запустите потом: cd $PROJECT_DIR && npm run setup")"
 fi
@@ -1267,13 +1267,15 @@ echo "    gh repo create <user>/iva-vault --private --source=\"$VAULT_PATH\" --r
 echo
 if [ "$AUTOSTART_READY" = true ]; then
   echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+  if [ "$IVA_OS" = Darwin ]; then
+    echo "    iva status"
+    echo "    iva logs -f"
+  else
+    echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
+    echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
+  fi
 fi
 if [ "$IVA_OS" = Darwin ]; then
-  echo "    iva status"
-  echo "    iva logs -f"
   echo "$(t 'Iva runs while this Mac is on, awake and you are logged in. If it is off at night, that night’s memory care is skipped. For round-the-clock operation use a server or a Mac that stays awake (Settings → Battery / Energy Saver).' 'Ива работает, пока этот Mac включён, не спит и вы вошли в систему. Если Mac выключен ночью, ночной уход за памятью в эту ночь пропускается. Для работы круглосуточно — сервер или Mac, который не засыпает (Настройки → Аккумулятор / Энергосбережение)')"
-else
-echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
-echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
 fi
 echo

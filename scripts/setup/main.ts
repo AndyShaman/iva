@@ -39,7 +39,7 @@ const SOURCE_ENV_PATH = process.env.IVA_CONFIG_INPUT
 const ENV_PATH = process.env.IVA_CONFIG_OUTPUT
   ? resolve(process.env.IVA_CONFIG_OUTPUT)
   : SOURCE_ENV_PATH;
-const STAGING_CONFIG = ENV_PATH !== SOURCE_ENV_PATH;
+const STAGING_CONFIG = process.env.IVA_CONFIG_STAGING === "1";
 const dataDirAbs = (env: Env | null | undefined) => dataDirOf(ROOT, env);
 
 // Read from tty even when launched via `curl | bash`: there stdin is the script itself,

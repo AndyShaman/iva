@@ -31,6 +31,35 @@ import {
 } from "./fixtures/eve-archive.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
+const PYTHON = execFileSync("sh", ["-c", "command -v python3"], {
+  encoding: "utf8",
+}).trim();
+const RUN_IN_TTY = `import os,pty,select,signal,sys,time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('bash', ['bash', *sys.argv[1:]])
+os.write(fd, sys.stdin.buffer.read())
+deadline = time.monotonic() + 15
+try:
+    while True:
+        if select.select([fd], [], [], 0.1)[0]:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b''
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
+        finished, status = os.waitpid(pid, os.WNOHANG)
+        if finished:
+            break
+        if time.monotonic() > deadline:
+            os.killpg(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            raise TimeoutError('installer did not exit after terminal answers')
+finally:
+    os.close(fd)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
 
 /**
  * Every stand-in records the call and succeeds: what the installer must be judged on is
@@ -391,6 +420,7 @@ type RunOptions = {
   /** Run it with no stderr at all, the way a terminal that went away leaves it. */
   readonly closedStderr?: boolean;
   readonly pipedStdin?: boolean;
+  readonly ttyInput?: string;
 };
 
 type World = {
@@ -644,13 +674,16 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
               "--non-interactive",
             ]
           : [installer, ...(runOptions.args ?? ["--non-interactive"])];
-      return spawnSync("bash", argv, {
+      const shell = runOptions.ttyInput === undefined ? "bash" : PYTHON;
+      const command =
+        runOptions.ttyInput === undefined ? argv : ["-c", RUN_IN_TTY, ...argv];
+      return spawnSync(shell, command, {
         cwd: dir,
         encoding: "utf8",
         env: environment(runOptions),
         input: runOptions.pipedStdin
           ? readFileSync(installer, "utf8")
-          : undefined,
+          : runOptions.ttyInput,
       });
     },
     runAsync: (runOptions = {}) => {
@@ -791,6 +824,8 @@ void test("--env-file completes minimal answers through setup before activating 
     /oc-key-123456|123:tg-token/u,
   );
   assert.doesNotMatch(result.stdout, /Configure the keys first/u);
+  assert.match(result.stdout, /Done — everything written to \.env/u);
+  assert.doesNotMatch(result.stdout, /Ready — settings validated for apply/u);
 });
 
 for (const fault of ["provider", "telegram"]) {
@@ -835,13 +870,45 @@ void test("--env-file refuses configured installations and missing input before 
   assert.match(absent.stdout + absent.stderr, /--env-file.*file/iu);
 });
 
-void test("unconfigured installation reports setup instructions without bot readiness", (t) => {
-  const world = createWorld(t, { env: false });
-  const result = world.run();
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Configure the keys first/u);
-  assert.doesNotMatch(result.stdout, /✅ The bot is ready|✅ Бот готов/u);
-});
+for (const os of ["Linux", "Darwin"]) {
+  for (const configured of [false, true]) {
+    void test(`${os}: ${configured ? "declined autostart" : "unconfigured installation"} omits bot readiness and status hints`, (t) => {
+      const world = createWorld(t, { env: configured });
+      const result = world.run({
+        env: { IVA_TEST_OS: os },
+        ...(configured ? { args: ["--skip-setup"], ttyInput: "1\nn\n" } : {}),
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      if (configured) assert.match(result.stdout, /\[Y\/n\]/u);
+      else assert.match(result.stdout, /Configure the keys first/u);
+      const summary = result.stdout.slice(
+        result.stdout.lastIndexOf("Installation complete"),
+      );
+      assert.doesNotMatch(
+        summary,
+        /✅ The bot is ready|✅ Бот готов|Bot status:|Bot logs:|iva-telegram-poll/u,
+      );
+      assert.doesNotMatch(summary, /^ {4}iva (?:status|logs -f)\r?$/mu);
+      assert.doesNotMatch(world.calls(), /iva _(?:install|activate)-units/u);
+    });
+  }
+  void test(`${os}: enabled autostart retains bot readiness and status hints`, (t) => {
+    const world = createWorld(t);
+    const result = world.run({ env: { IVA_TEST_OS: os } });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const summary = result.stdout.slice(
+      result.stdout.lastIndexOf("Installation complete"),
+    );
+    assert.match(summary, /✅ The bot is ready/u);
+    if (os === "Darwin") {
+      assert.match(summary, /^ {4}iva status\r?$/mu);
+      assert.match(summary, /^ {4}iva logs -f\r?$/mu);
+    } else {
+      assert.match(summary, /Bot status:.*iva-telegram-poll/u);
+      assert.match(summary, /Bot logs:.*iva-telegram-poll/u);
+    }
+  });
+}
 
 void test("headless sudo refusal names root bootstrap before optional package work", (t) => {
   const world = createWorld(t, { env: false });
@@ -1289,6 +1356,8 @@ void test("an exit before any work is done stays quiet and succeeds", () => {
   assert.equal(help.status, 0, help.stdout + help.stderr);
   assert.equal(help.stderr, "");
   assert.match(help.stdout, /--skip-setup/u);
+  assert.match(help.stdout, /--env-file/u);
+  assert.match(help.stdout, /-h, --help\s+show this help/u);
 });
 
 void test("a stage killed mid-way fails the install and gives the old build back", (t) => {
