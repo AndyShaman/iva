@@ -53,12 +53,16 @@ function bashHead(command: string): string {
   const program = bashProgram(words);
   if (!HEAD.test(program) || READING_HEADS.has(program)) return "";
   const second = words[0] ?? "";
-  const head = program + (HEAD.test(second) ? ` ${second}` : "");
+  const sub =
+    /^(gws|tg|iva|gh|git|npm|bun)$/u.test(program) &&
+    /^[a-z][a-z0-9-]{0,19}$/u.test(second) &&
+    !/^[0-9a-f]{12,}$/u.test(second);
+  const head = program + (sub ? ` ${second}` : "");
   return !READING_HEADS.has(head) ? `bash:${clean(head)}` : "";
 }
 function bashOptions(words: string[]): void {
   const valueFlag =
-    /^(-[ugnCsok]|--(unset|chdir|user|group|signal|kill-after|adjustment))$/u;
+    /^(-[a-zA-Z]*[ugnCsokpUhrtDRTP]|--(unset|chdir|user|group|signal|kill-after|adjustment))$/u;
   while (words[0]?.startsWith("-"))
     if (valueFlag.test(words.shift()!)) words.shift();
 }
