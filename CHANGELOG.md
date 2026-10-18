@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🧩 **Скиллы Ивы сохраняют описание целиком**: раньше длинное описание черновика молча обрезалось в списке скиллов. Теперь навык, который Ива пишет сама, больше не теряет хвост описания: длинное описание она сокращает при сборке, и навык находится, когда нужен. Для установленных и внешних плагинов прежнее поведение сохранено. Iva checks its draft skill descriptions against the existing 120-character limit and asks for a shorter trigger before installation. Existing and external plugins retain their current behavior.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.

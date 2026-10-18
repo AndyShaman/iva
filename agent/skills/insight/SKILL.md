@@ -53,6 +53,7 @@ to the owner. Nothing fits — `QUIET`.
    `name` in `plugin.json`, not the name of a plugin already installed
    (`iva plugin list`). A skill with scripts first; MCP or `sh.iva/` only when a
    script cannot do the job.
+   Write the draft skill's description from the owner's request words, within 120 UTF-16 code units.
 3. A draft may be a sensor: a script that checks something for the owner and
    reports through `iva signal` only when there is news. It runs regularly as a
    plugin service (`make-plugin`, `sh.iva/services/`: a loop that stays up), so

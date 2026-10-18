@@ -132,6 +132,7 @@ export function createPluginProposalCommands(
         throw new Error(`${raw} is not a usable Agent Plugins folder`);
       }
       const name = report.manifest.name;
+      await context.checkDescriptions(report, folder);
       // Черновик, у которого читатель что-то выбросил, владельцу не уходит: после тапа он
       // встал бы без этой части. Строки возвращаются модели — она чинит и зовёт propose снова.
       if (report.diagnostics.length > 0) {

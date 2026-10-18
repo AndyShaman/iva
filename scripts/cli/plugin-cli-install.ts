@@ -246,6 +246,10 @@ export function createPluginInstallCommands(
         proposalOnly,
       );
       const name = manifest.name;
+      await context.checkDescriptions(
+        report,
+        source.kind === "local" && !previous && !provenance ? source.path : "",
+      );
       if (previous && previous.name !== name)
         throw new Error(
           `${formatPluginSource(source)} now calls itself ${JSON.stringify(name)}, not ${JSON.stringify(previous.name)} — remove the old one first`,
