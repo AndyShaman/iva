@@ -24,6 +24,7 @@ import {
   readUsageTokens,
   usageRecord,
   setUsageRequest,
+  takeUsageRequest,
   type UsageTokens,
 } from "./usage.ts";
 
@@ -44,6 +45,7 @@ const { name: PROVIDER, model: TEXT_MODEL } = resolveModelProvider();
 // с текстом eve пинует usage-tap.test.ts, гоняя настоящую компактацию eve.
 const COMPACTION_SYSTEM_PREFIX =
   "You are performing a CONTEXT CHECKPOINT COMPACTION.";
+let fingerprintWarned = false;
 
 /**
  * Чей это вызов: сессия и ход, в котором eve построил модель шага. Родителя тут нет: eve
@@ -209,25 +211,32 @@ export function compactionUsageMiddleware(
 ): LanguageModelMiddleware {
   return {
     transformParams({ params }) {
-      if (label && !isCompactionPrompt(params.prompt)) {
-        const stable = params.prompt.filter(
-          (message, i) =>
-            message.role !== "user" || i !== params.prompt.length - 1,
-        );
-        const blocks = stable.flatMap((message) => [
-          message,
-          ...(Array.isArray(message.content) ? message.content : []),
-        ]);
-        // prettier-ignore
-        const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 8);
-        setUsageRequest(label, {
-          system: hash(
-            params.prompt.filter((message) => message.role === "system"),
-          ),
-          cache: hash([...blocks, ...(params.tools ?? [])].filter(cacheMarked)),
-          tools: hash(params.tools ?? []),
-          toolCount: params.tools?.length ?? 0,
-        });
+      try {
+        if (label) takeUsageRequest(label);
+        if (label && !isCompactionPrompt(params.prompt)) {
+          const stable = params.prompt.filter(
+            (message, i) =>
+              message.role !== "user" || i !== params.prompt.length - 1,
+          );
+          const blocks = stable.flatMap((message) => [
+            message,
+            ...(Array.isArray(message.content) ? message.content : []),
+          ]);
+          // prettier-ignore
+          const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 8);
+          const tools = params.tools ?? [];
+          setUsageRequest(label, {
+            system: hash(
+              params.prompt.filter((message) => message.role === "system"),
+            ),
+            cache: hash([...blocks, ...tools].filter(cacheMarked)),
+            tools: hash(tools),
+            toolCount: tools.length,
+          });
+        }
+      } catch {
+        if (!fingerprintWarned) console.error("[usage] fingerprint skipped");
+        fingerprintWarned = true;
       }
       return Promise.resolve(params);
     },
