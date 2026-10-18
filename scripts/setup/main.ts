@@ -56,7 +56,12 @@ function promptInput(): NodeJS.ReadableStream {
     return process.stdin;
   }
 }
-const rl = createInterface({ input: promptInput(), output: process.stdout });
+const rl = createInterface({
+  input: process.argv.includes("--non-interactive")
+    ? process.stdin
+    : promptInput(),
+  output: process.stdout,
+});
 
 const dialog = createDialog(
   {
@@ -67,6 +72,7 @@ const dialog = createDialog(
     },
   },
   defaultChecker(),
+  process.argv.includes("--non-interactive"),
 );
 
 export async function main(entryUrl = import.meta.url): Promise<void> {

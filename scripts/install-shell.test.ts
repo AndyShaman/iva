@@ -45,6 +45,8 @@ exit 0
 /** sudo records root calls and models only D13's private cleanup and failure boundary. */
 const SUDO = `#!/bin/sh
 echo "sudo $*" >> "$IVA_TEST_CALLS"
+[ "$IVA_TEST_SUDO_PASSWORD" != 1 ] || exit 1
+[ "$1" != -n ] || shift
 
 replace_managed_path() {
   [ -n "$IVA_TEST_REPLACE_GH_PATH" ] || return
@@ -725,6 +727,138 @@ void test("install.sh is valid bash", () => {
   execFileSync("bash", ["-n", join(ROOT, "install.sh")]);
 });
 
+const MINIMAL_ENV =
+  "AGENT_LANGUAGE=en\nMODEL_PROVIDER=opencode\nOPENCODE_API_KEY=oc-key-123456\nOPENCODE_MODEL=deepseek-v4-pro\nTELEGRAM_BOT_TOKEN=123:tg-token\nTELEGRAM_ALLOWED_USER_IDS=11,22\nASSISTANT_TIMEZONE=Asia/Tashkent\n";
+
+function fileSetupWorld(t: TestContext): World {
+  const world = createWorld(t, { env: false });
+  // Run the real setup against synthetic HTTP, inside the installer's isolated tree.
+  cpSync(join(ROOT, "scripts/setup"), join(world.install, "scripts/setup"), {
+    recursive: true,
+  });
+  cpSync(join(ROOT, "scripts/lib"), join(world.install, "scripts/lib"), {
+    recursive: true,
+  });
+  cpSync(
+    join(ROOT, "scripts/setup.mjs"),
+    join(world.install, "scripts/setup.mjs"),
+  );
+  cpSync(join(ROOT, "packages"), join(world.install, "packages"), {
+    recursive: true,
+  });
+  mkdirSync(join(world.install, "node_modules"));
+  for (const entry of readdirSync(join(ROOT, "node_modules"))) {
+    if (!entry.startsWith("."))
+      symlinkSync(
+        join(ROOT, "node_modules", entry),
+        join(world.install, "node_modules", entry),
+      );
+  }
+  return world;
+}
+
+void test("--env-file completes minimal answers through setup before activating units", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV, { mode: 0o644 });
+  const result = world.run({
+    args: ["--non-interactive", "--env-file", source],
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const complete = readFileSync(join(world.install, ".env"), "utf8");
+  assert.match(complete, /^ASSISTANT_BEARER=[A-Za-z0-9_-]{43}$/mu);
+  assert.match(complete, /^TELEGRAM_WEBHOOK_SECRET_TOKEN=[a-f0-9]{48}$/mu);
+  assert.match(complete, /^TELEGRAM_BOT_USERNAME=ivabot$/mu);
+  for (const value of [
+    "ASSISTANT_VAULT_DIR=vault",
+    "ASSISTANT_DATA_DIR=data",
+    "IVA_PORT=",
+    "ASSISTANT_HOST=http://127.0.0.1:",
+    "TELEGRAM_DIGEST_CHAT_ID=11",
+    "ASSISTANT_TIMEZONE=Asia/Tashkent",
+    "OPENCODE_CONTEXT_WINDOW=131072",
+  ])
+    assert.ok(complete.includes(value), value);
+  assert.equal(statSync(join(world.install, ".env")).mode & 0o777, 0o600);
+  assert.equal(readFileSync(source, "utf8"), MINIMAL_ENV);
+  assert.match(world.calls(), /iva _install-units/u);
+  assert.match(world.calls(), /iva _activate-units/u);
+  assert.doesNotMatch(
+    result.stdout + result.stderr + world.calls(),
+    /oc-key-123456|123:tg-token/u,
+  );
+  assert.doesNotMatch(result.stdout, /Configure the keys first/u);
+});
+
+for (const fault of ["provider", "telegram"]) {
+  void test(`--env-file rejects invalid ${fault} credentials before writing units`, (t) => {
+    const world = fileSetupWorld(t);
+    const source = join(world.dir, "answers.env");
+    writeFileSync(source, MINIMAL_ENV);
+    const result = world.run({
+      args: ["--non-interactive", "--env-file", source],
+      env: {
+        NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+        IVA_TEST_SETUP_FAULT: fault,
+      },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(
+      result.stdout + result.stderr,
+      fault === "provider"
+        ? /OpenCode.*(?:key|credentials|ключ)/iu
+        : /Telegram.*(?:token|токен)/iu,
+    );
+    assert.doesNotMatch(world.calls(), /iva _(?:install|activate)-units/u);
+    assert.equal(existsSync(join(world.install, ".env")), false);
+  });
+}
+
+void test("--env-file refuses configured installations and missing input before changes", (t) => {
+  const world = createWorld(t);
+  const original = readFileSync(join(world.install, ".env"), "utf8");
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV);
+  const existing = world.run({ args: ["--env-file", source] });
+  assert.equal(existing.status, 1);
+  assert.match(
+    existing.stdout + existing.stderr,
+    /--env-file.*first install/iu,
+  );
+  assert.equal(readFileSync(join(world.install, ".env"), "utf8"), original);
+  assert.equal(world.calls(), "");
+  const absent = world.run({ args: ["--env-file"] });
+  assert.equal(absent.status, 1);
+  assert.match(absent.stdout + absent.stderr, /--env-file.*file/iu);
+});
+
+void test("unconfigured installation reports setup instructions without bot readiness", (t) => {
+  const world = createWorld(t, { env: false });
+  const result = world.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Configure the keys first/u);
+  assert.doesNotMatch(result.stdout, /✅ The bot is ready|✅ Бот готов/u);
+});
+
+void test("headless sudo refusal names root bootstrap before optional package work", (t) => {
+  const world = createWorld(t, { env: false });
+  const result = world.run({
+    env: { IVA_TEST_SUDO_PASSWORD: "1", IVA_TEST_MISSING_COMMANDS: "gh" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout + result.stderr,
+    /sudo.*(?:terminal|TTY).*bootstrap\.sh.*root/iu,
+  );
+  assert.match(world.calls(), /sudo -n/u);
+  assert.doesNotMatch(world.calls(), /sudo -v/u);
+  assert.match(world.calls(), /agent-browser install\n/u);
+  assert.doesNotMatch(world.calls(), /agent-browser install --with-deps/u);
+});
+
 void test("all downloaded installers and packages use exact pinned artifacts", () => {
   const source = readFileSync(join(ROOT, "install.sh"), "utf8");
   for (const artifact of Object.values(PINNED_ARTIFACTS)) {
@@ -997,7 +1131,7 @@ void test("optional GitHub CLI retries a transient private cleanup failure", (t)
   assert.equal(
     calls
       .split("\n")
-      .filter((line) => /sudo rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
+      .filter((line) => /sudo -n rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
     2,
   );
   assertPrivateGhAptBoundary(world, calls);
@@ -1021,7 +1155,7 @@ void test("optional GitHub CLI reports a persistent private cleanup failure", (t
   assert.equal(
     calls
       .split("\n")
-      .filter((line) => /sudo rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
+      .filter((line) => /sudo -n rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
     2,
   );
   assertNoSharedGhAptPaths(calls);

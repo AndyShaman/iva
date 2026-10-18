@@ -18,6 +18,7 @@
 # Flags (via `curl ... | bash -s -- <flags>`):
 #   --skip-setup        don't run the setup wizard (run it yourself: npm run setup)
 #   --non-interactive   don't ask any questions (use defaults; skip setup)
+#   --env-file <path>   validate and complete first-install settings without the wizard
 #   -h, --help          show this help
 # Instant reassurance: print something right away so there's no silence at startup.
 printf '\n  \033[36m⏳ Preparing environment / Идёт подготовка окружения — up to a minute, do not interrupt…\033[0m\n'
@@ -521,14 +522,18 @@ trap 'stop_spinner; exit 129' HUP
 # to each interactive consumer from /dev/tty, and probe for a terminal by trying to open it.
 RUN_SETUP=true
 NON_INTERACTIVE=false
+ENV_FILE=""
 if [ -t 0 ]; then IS_INTERACTIVE=true; else IS_INTERACTIVE=false; fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-setup)      RUN_SETUP=false ;;
     --non-interactive) NON_INTERACTIVE=true; RUN_SETUP=false ;;
+    --env-file)
+      [ -n "${2:-}" ] && [ -f "$2" ] && [ -r "$2" ] || die '--env-file requires a readable file'
+      ENV_FILE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
     -h|--help)
-      sed -n '2,19p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+      sed -n '2,21p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) warn "$(t "unknown flag: $1 (ignoring)" "неизвестный флаг: $1 (игнорирую)")" ;;
   esac
@@ -621,6 +626,10 @@ elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/.env" ] && [ -f "$SCRIPT_DIR/pack
   INSTALL_EXISTS=true
 fi
 
+if [ -n "$ENV_FILE" ] && [ "$INSTALL_EXISTS" = true ]; then
+  die "$(t '--env-file is for a first install only; use iva config for this installation.' '--env-file доступен только при первой установке; для этой установки выполните iva config.')"
+fi
+
 # A pending reboot after a kernel upgrade is a dead end for a first install: needrestart
 # draws its ncurses dialog inside every apt run below — including the ones agent-browser
 # makes on its own, where the environment above cannot reach — and the install stops there
@@ -646,7 +655,12 @@ if [ -e "$REBOOT_FLAG" ]; then
 fi
 
 # root runs directly; otherwise via sudo (cache the password once).
-run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; elif have_tty; then sudo "$@"; else sudo -n "$@"; fi; }
+HEADLESS_SUDO=false
+if [ "$(id -u)" -ne 0 ] && [ "$IVA_OS" != Darwin ] && ! have_tty && ! sudo -n true 2>/dev/null; then
+  HEADLESS_SUDO=true
+  warn "$(t 'sudo needs a terminal; run bootstrap.sh as root to prepare system packages, then retry installation.' 'sudo требует TTY; выполните bootstrap.sh от root для установки системных пакетов, затем повторите установку.')"
+fi
 
 # apt through plain run_root would lose DEBIAN_FRONTEND/NEEDRESTART_MODE the moment sudo
 # resets the environment, so pass them through `env` — which runs as root and hands them
@@ -797,7 +811,7 @@ if [ "${#need_pkgs[@]}" -gt 0 ]; then
     step "$(t "Need system packages: ${need_pkgs[*]} (via $PM)" "Нужны системные пакеты: ${need_pkgs[*]} (через $PM)")"
     # Cache the sudo password once up front (if not root and sudo is needed).
     if [ "$(id -u)" -ne 0 ] && [ "$PM" != "brew" ]; then
-      sudo -v || warn "$(t "sudo unavailable — system packages may not install" "sudo недоступен — системные пакеты могут не установиться")"
+      if have_tty; then sudo -v; else sudo -n -v; fi || warn "$(t "sudo unavailable — system packages may not install" "sudo недоступен — системные пакеты могут не установиться")"
     fi
     case "$PM" in
       apt)
@@ -820,7 +834,7 @@ if command -v gh >/dev/null 2>&1; then
   ok "$(t "gh ready" "gh готов")"
 else
   step "$(t "Installing optional GitHub CLI…" "Устанавливаю необязательный GitHub CLI…")"
-  install_optional_gh >>"$INSTALL_LOG" 2>&1 || true
+  if [ "$HEADLESS_SUDO" != true ]; then install_optional_gh >>"$INSTALL_LOG" 2>&1 || true; fi
   if command -v gh >/dev/null 2>&1; then
     ok "$(t "gh ready" "gh готов")"
     if [ -n "$OPTIONAL_GH_APT_CLEANUP_DEBT" ]; then
@@ -988,11 +1002,15 @@ if command -v agent-browser >/dev/null 2>&1 && agent-browser open about:blank >/
 else
   echo "  ${c_yellow}$(t "Chromium and its system libraries may take 1–3 minutes." "Chromium и системные библиотеки могут устанавливаться 1–3 минуты.")${c_reset}"
   # Refresh the sudo cache ahead of time (a visible prompt here, not a hidden one mid-install).
-  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then sudo -v 2>/dev/null || true; fi
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    if have_tty; then sudo -v; else sudo -n -v; fi 2>/dev/null || true
+  fi
   agent_browser_rc=0
   if run_stage "$(t "Installing agent-browser" "Ставлю agent-browser")" "$(t "agent-browser installed" "agent-browser установлен")" \
     install_verified_npm_tarball agent-browser "$AGENT_BROWSER_TARBALL_URL" "$AGENT_BROWSER_TARBALL_SHA256"; then
-    run_stage "$(t "Downloading Chromium" "Скачиваю Chromium")" "$(t "Chromium ready" "Chromium готов")" agent-browser install --with-deps \
+    browser_install=(agent-browser install)
+    if [ "$HEADLESS_SUDO" != true ]; then browser_install+=(--with-deps); fi
+    run_stage "$(t "Downloading Chromium" "Скачиваю Chromium")" "$(t "Chromium ready" "Chromium готов")" "${browser_install[@]}" \
       || warn "$(t "Finish later: agent-browser install --with-deps" "Завершите позже: agent-browser install --with-deps")"
     # Chrome won't start on Ubuntu 23.10+/24.04: the kernel forbids unprivileged user
     # namespaces (AppArmor) → "No usable sandbox". On Linux, enable --no-sandbox by
@@ -1049,7 +1067,10 @@ fi
 # ─────────────────────────────────────────────────────────────────────────
 CURRENT_STEP="$(t "setup wizard" "мастер настройки")"
 SETUP_DONE=false
-if [ "$RUN_SETUP" = false ]; then
+if [ -n "$ENV_FILE" ]; then
+  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" node scripts/setup.mjs --non-interactive </dev/null
+  SETUP_DONE=true
+elif [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
@@ -1201,7 +1222,7 @@ if [ "$AUTOSTART_READY" = true ]; then
     _chat="$(grep -E '^TELEGRAM_ALLOWED_USER_IDS=' .env | head -n1 | cut -d= -f2- | tr -d '"' | cut -d, -f1 || true)"
   fi
   if [ -n "$_bot" ] && [ -n "$_chat" ]; then
-    curl -s "https://api.telegram.org/bot$_bot/sendMessage" \
+    printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$_bot" | curl -s --config - \
       --data-urlencode "chat_id=$_chat" \
       --data-urlencode "text=$(t "✅ Iva is installed and online. Send me a message — I'll reply." "✅ Iva установлена и на связи. Напишите мне сообщение — отвечу.")" >/dev/null 2>&1 \
       && ok "$(t "Sent you a confirmation in Telegram — open the chat with the bot" "Отправил вам подтверждение в Telegram — откройте чат с ботом")" \
@@ -1244,7 +1265,9 @@ echo "  ${c_yellow}${c_bold}$(t "Vault backup in git" "Vault-бэкап в git")
 echo "    gh auth login"
 echo "    gh repo create <user>/iva-vault --private --source=\"$VAULT_PATH\" --remote=origin --push"
 echo
-echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+if [ "$AUTOSTART_READY" = true ]; then
+  echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+fi
 if [ "$IVA_OS" = Darwin ]; then
   echo "    iva status"
   echo "    iva logs -f"

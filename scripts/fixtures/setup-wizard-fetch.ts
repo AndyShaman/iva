@@ -10,6 +10,10 @@ globalThis.fetch = (input): Promise<Response> => {
         ? input.href
         : input.url;
   if (url.includes("opencode.ai/zen/go/v1/models")) {
+    if (process.env.IVA_TEST_SETUP_FAULT === "provider")
+      return Promise.resolve(
+        Response.json({ error: "invalid key" }, { status: 401 }),
+      );
     return Promise.resolve(
       Response.json({ data: [{ id: "deepseek-v4-pro" }] }),
     );
@@ -18,6 +22,13 @@ globalThis.fetch = (input): Promise<Response> => {
     return Promise.resolve(Response.json({}));
   }
   if (url.includes("api.telegram.org/") && url.endsWith("/getMe")) {
+    if (process.env.IVA_TEST_SETUP_FAULT === "telegram")
+      return Promise.resolve(
+        Response.json(
+          { ok: false, description: "Unauthorized" },
+          { status: 401 },
+        ),
+      );
     return Promise.resolve(
       Response.json({ ok: true, result: { username: "ivabot" } }),
     );

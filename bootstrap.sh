@@ -67,6 +67,8 @@ C_ERR=196       # red
 C_MUTED=245     # grey
 
 PACKAGES="sudo curl ca-certificates git python3 ffmpeg pandoc poppler-utils unattended-upgrades fail2ban ufw openssh-server"
+# Playwright Chromium dependencies, with the t64 ABI names selected by apt on newer systems.
+PACKAGES="$PACKAGES gh libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libwayland-client0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-cyrillic xfonts-scalable fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf"
 
 # ── Mutable state ────────────────────────────────────────────────────────────
 UI_MODE="plain"          # gum | plain | none
@@ -945,7 +947,7 @@ apt_upgrade() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. Required packages. install.sh owns the optional GitHub CLI boundary.
+# 7. System packages, including headless browser libraries and GitHub CLI.
 # ─────────────────────────────────────────────────────────────────────────────
 package_installed() {
   local status
@@ -962,6 +964,7 @@ install_packages() {
   export -f apt_get
   local missing=() pkg
   for pkg in $PACKAGES; do
+    if apt-cache show "${pkg}t64" >/dev/null 2>&1; then pkg="${pkg}t64"; fi
     if ! package_installed "$pkg"; then
       missing+=("$pkg")
     fi
@@ -1444,8 +1447,9 @@ final_card() {
     # Card lines stay ASCII: plain_card pads by ${#line}, which counts bytes in a
     # non-UTF-8 locale, and one em dash is enough to leave the box visibly ragged.
     card+=(
-      "Kernel was updated. The server will reboot now."
-      "Wait ~30 seconds, then continue from your LOCAL machine:"
+      "A system update requires a reboot before installing Iva."
+      "Reboot when ready: sudo reboot"
+      "After reboot, continue from your LOCAL machine:"
     )
   else
     card+=("Next steps, from your LOCAL machine:")

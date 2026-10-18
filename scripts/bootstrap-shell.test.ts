@@ -37,13 +37,42 @@ void test("bootstrap.sh parses: a truncated or half-edited script never reaches 
   );
 });
 
-void test("bootstrap leaves optional GitHub CLI installation to install.sh", () => {
+void test("bootstrap installs GitHub CLI and Chromium libraries as root", () => {
   const source = readFileSync(BOOTSTRAP, "utf8");
   assert.doesNotMatch(source, /\binstall_gh\b/u);
   assert.doesNotMatch(
     source,
     /(?:cli\.github\.com|githubcli-archive-keyring|github-cli\.list)/u,
   );
+  const assignments =
+    source.match(/^PACKAGES=".*"$/gmu)?.join("\n") ?? "PACKAGES=''";
+  const packages = execFileSync(
+    "bash",
+    ["-c", `${assignments}\nprintf '%s' "$PACKAGES"`],
+    { encoding: "utf8" },
+  );
+  for (const pkg of [
+    "gh",
+    "libnss3",
+    "libgbm1",
+    "libxkbcommon0",
+    "fonts-liberation",
+  ])
+    assert.ok(
+      packages.split(/\s+/u).includes(pkg),
+      `missing root package ${pkg}`,
+    );
+  const script = `set -eu\n${assignments}\nsection() { :; }\nok() { :; }\nwarn() { echo "$*"; }\napt_get() { :; }\napt-cache() { return 100; }\npackage_installed() { return 1; }\nrun_sh() { echo "$IVA_APT_PKGS"; }\n${bashFunction("install_packages")}\ninstall_packages`;
+  const output = execFileSync("bash", ["-c", script], { encoding: "utf8" });
+  assert.match(output, /\bgh\b/u);
+  assert.match(output, /\blibnss3\b/u);
+});
+
+void test("bootstrap summary asks for a reboot before promising reconnection", () => {
+  const script = `set -eu\nTARGET_USER=iva\nRAW_BASE=example\nLOG_FILE=/dev/null\nUI_MODE=none\npublic_ip() { echo 192.0.2.1; }\nreboot_pending() { return 0; }\nplain_card() { printf '%s\\n' "$@"; }\nlog() { :; }\n${bashFunction("final_card")}\nfinal_card`;
+  const output = execFileSync("bash", ["-c", script], { encoding: "utf8" });
+  assert.match(output, /sudo reboot/u);
+  assert.doesNotMatch(output, /will reboot now/u);
 });
 
 void test("bootstrap.sh answers --help before it needs root, and ignores junk flags", () => {
