@@ -31,6 +31,8 @@ version ("Write your own"); read it before the first plugin of a turn.
 
 ## 2. Install
 
+A sensor calls `iva signal --key <plugin:event-id> <source> <text>` with a stable event key so the same pending event reaches the owner once.
+
 In an Insight turn you only build and run the draft; installing waits for the owner's tap (skill `insight`).
 
 - **Skills and scripts only** (no `mcp.json`, no `sh.iva/`): `iva plugin add

@@ -9,6 +9,7 @@
 - 🎯 **Новость от сенсора сразу двигает проверку цели**: раньше Goal ждал своего расписания после новости от плагина. Теперь новость от сенсора плагина сразу двигает проверку вашей цели, а не ждёт расписания. News from a plugin sensor advances a related active Goal check to now instead of waiting for its scheduled time.
 - 🤝 **Длинная работа сразу уходит помощнику**: раньше Ива могла молчать десятки шагов, разбирая договор в чате. Теперь длинную работу (договор, ресёрч, разбор письма) Ива сразу отдаёт помощнику и отвечает вам, а не молчит десятки шагов. Iva delegates document analysis, extended research and work needing many tool calls to a helper immediately, then tells you what was handed off and the estimated wait.
 - 🧩 **Скиллы Ивы сохраняют описание целиком**: раньше длинное описание черновика молча обрезалось в списке скиллов. Теперь навык, который Ива пишет сама, больше не теряет хвост описания: длинное описание она сокращает при сборке, и навык находится, когда нужен. Для установленных и внешних плагинов прежнее поведение сохранено. Iva checks its draft skill descriptions against the existing 120-character limit and asks for a shorter trigger before installation. Existing and external plugins retain their current behavior.
+- ✨ **Сенсор пропускает повтор одного события**: сенсор плагина больше не присылает одно событие дважды: `iva signal --key` пропускает повтор, пока первый сигнал ждёт срабатывания. Plugin sensors can pass `iva signal --key` to skip a duplicate while the first signal is pending.
 
 ## [0.5.4] - 2026-10-18
 
