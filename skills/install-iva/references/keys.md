@@ -30,9 +30,9 @@ Provider variable names: `opencode` → `OPENCODE_API_KEY`/`OPENCODE_MODEL`; `ol
 `CLAUDE_MODEL` + sign-in. Everything else the installer fills in.
 
 For a subscription on a fresh machine, first run the installer with `--non-interactive` and no env file to prepare
-the CLI and dependencies. Complete the sign-in, run `cd ~/iva && npm run setup` in a terminal, then
-`cd ~/iva && bash install.sh` to configure autostart. Supply the answers already collected through the wizard's stdin.
-This successful preparation is an existing installation; subsequent configuration uses the setup wizard.
+the CLI and dependencies. Complete the sign-in, then repeat the installer with `--env-file` using the collected answers.
+Preparation leaves `autostart=false` in `.iva-installed`, so the next run continues the first installation and configures
+autostart. The subscription must be signed in before the env file can pass validation.
 
 A bot already connected to another service (a webhook is set — `getWebhookInfo` shows a URL) answers nobody through
 Iva: ask the person before `deleteWebhook`.

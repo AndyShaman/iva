@@ -3,18 +3,18 @@
 Read the state first (as `iva`, with `export PATH=$HOME/.local/bin:$PATH`):
 
 ```bash
-ssh iva 'export PATH=$HOME/.local/bin:$PATH; command -v iva && iva version; iva status 2>&1 | tail -20; test -f ~/iva/.env && echo ENV_PRESENT'
+ssh iva 'export PATH=$HOME/.local/bin:$PATH; command -v iva && iva version; iva status 2>&1 | tail -20; test -f ~/iva/.env && echo ENV_PRESENT; if test -f ~/iva/.iva-installed; then cat ~/iva/.iva-installed; fi'
 curl -fsSL https://api.github.com/repos/smixs/iva-agent/releases/latest | grep -m1 '"tag_name"'
 ```
 
 | State | Action |
 |---|---|
 | No `iva` command, no `~/iva` | First install → 4.1 |
+| Iva checkout has `.iva-installed` containing `autostart=false` | Resume the first install → 4.1, even if services are running; repeat installation configures autostart and sends confirmation |
+| Iva checkout has `.iva-installing` and no `.iva-installed` | Resume the interrupted first install → 4.1; the installer reuses finished stages |
 | Installed, services active, version = latest release | Leave alone. Tell the person "Iva is already installed (version X) and running" and go to step 6 |
 | Installed, services stopped or failing | `iva doctor` (it repairs what it can), then `iva restart`; read `iva logs` if still failing |
 | Installed, older than the latest release | `iva update`, then step 6 |
-| Iva checkout has `.iva-installing` and no `.iva-installed` | Resume the interrupted first install → 4.1; the installer reuses finished stages |
-| Installer finished successfully but setup was skipped | Run `cd ~/iva && npm run setup` in a terminal, then `cd ~/iva && bash install.sh` for autostart |
 | Iva under another user or path | ask the person which one is theirs; do not touch the other |
 
 A Mac target: same table, run locally (no `ssh iva`).

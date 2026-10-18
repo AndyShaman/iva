@@ -874,23 +874,103 @@ for (const kind of ["foreign", "unrecognized"]) {
   });
 }
 
-void test("a successful deferred install clears its marker and stays completed without autostart", (t) => {
-  const world = createWorld(t, { env: false });
-  writeFileSync(join(world.install, ".iva-installing"), "pending\n");
-  const result = world.run();
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.equal(existsSync(join(world.install, ".iva-installing")), false);
-  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
-  const second = world.run({
-    script: world.piped,
-    env: { REPO_URL: "https://github.com/smixs/iva-agent.git" },
+for (const os of ["Linux", "Darwin"]) {
+  void test(`${os}: a deferred install resumes from the downloaded command and completes autostart`, (t) => {
+    const world = fileSetupWorld(t);
+    const first = world.run({ env: { IVA_TEST_OS: os } });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=false\n",
+    );
+    // The documented npm run setup step has saved the person's configuration.
+    writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+    const callsPath = join(world.dir, "resume.log");
+    const second = world.run({
+      script: world.piped,
+      args: [],
+      ttyInput: "1\n",
+      calls: callsPath,
+      env: {
+        IVA_TEST_OS: os,
+        REPO_URL: "https://github.com/smixs/iva-agent.git",
+        NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+        IVA_TEST_DEFAULT_ANSWERS: "1",
+      },
+    });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    const calls = world.calls(callsPath);
+    assert.match(second.stdout, /Continuing first installation/u);
+    assert.match(second.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+    assert.doesNotMatch(calls, /^iva update$|^npm ci$/mu);
+    // Adding .env changes a build input; dependencies are still reusable.
+    assert.match(calls, /^npm exec -- eve build$/mu);
+    assert.match(calls, /^iva _install-units$/mu);
+    assert.match(calls, /^iva _activate-units$/mu);
+    if (os === "Linux") {
+      const linger = calls.indexOf("loginctl enable-linger ");
+      assert.ok(linger >= 0, calls);
+      assert.ok(linger < calls.indexOf("iva _install-units"), calls);
+    }
+    assert.match(calls, /^curl -s --config - --data-urlencode chat_id=11 /mu);
+    assert.match(second.stdout, /Sent you a confirmation in Telegram/u);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=true\n",
+    );
+    assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+
+    const thirdCalls = join(world.dir, "completed.log");
+    const third = world.run({
+      script: world.piped,
+      calls: thirdCalls,
+      env: {
+        IVA_TEST_OS: os,
+        REPO_URL: "https://github.com/smixs/iva-agent.git",
+      },
+    });
+    assert.equal(third.status, 0, third.stdout + third.stderr);
+    assert.match(world.calls(thirdCalls), /^iva update$/mu);
+    assert.doesNotMatch(world.calls(thirdCalls), /iva _activate-units/u);
   });
-  assert.equal(second.status, 0, second.stdout + second.stderr);
-  assert.match(world.calls(), /^iva update$/mu);
-});
+
+  void test(`${os}: declined autostart resumes with the existing build`, (t) => {
+    const world = createWorld(t);
+    const first = world.run({
+      args: ["--skip-setup"],
+      ttyInput: "1\nn\n",
+      env: { IVA_TEST_OS: os },
+    });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=false\n",
+    );
+    const callsPath = join(world.dir, "resume.log");
+    const second = world.run({
+      script: world.piped,
+      calls: callsPath,
+      env: { IVA_TEST_OS: os },
+    });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.match(second.stdout, /Continuing first installation/u);
+    assert.match(second.stdout, /Build is current/u);
+    assert.doesNotMatch(
+      world.calls(callsPath),
+      /^iva update$|^npm ci$|eve build/mu,
+    );
+    assert.match(world.calls(callsPath), /^iva _activate-units$/mu);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=true\n",
+    );
+  });
+}
 
 void test("a completion marker overrides a stale first-install marker", (t) => {
   const world = createWorld(t);
+  writeFileSync(join(world.install, ".iva-installed"), "autostart=true\n");
   writeFileSync(join(world.install, ".iva-installing"), "stale\n");
   const result = world.run({
     script: world.piped,
@@ -979,7 +1059,7 @@ void test("an unfinished checkout resumes first installation from the downloaded
   assert.equal(existsSync(join(world.install, ".iva-installed")), true);
 });
 
-void test("deferred setup finishes explicitly without repeating first installation", (t) => {
+void test("deferred setup finishes explicitly through the first-install wizard", (t) => {
   const world = fileSetupWorld(t);
   const first = world.run();
   assert.equal(first.status, 0, first.stdout + first.stderr);
@@ -999,9 +1079,12 @@ void test("deferred setup finishes explicitly without repeating first installati
   const calls = world.calls(join(world.dir, "resume.log"));
   assert.doesNotMatch(calls, /^iva update$|^npm ci$/mu);
   assert.match(calls, /^iva _activate-units$/mu);
-  assert.match(result.stdout, /Reconfigure from scratch\?/u);
-  assert.doesNotMatch(result.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
-  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
+  assert.doesNotMatch(result.stdout, /Reconfigure from scratch\?/u);
+  assert.match(result.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+  assert.equal(
+    readFileSync(join(world.install, ".iva-installed"), "utf8"),
+    "autostart=true\n",
+  );
 });
 
 void test("failed first activation resumes even when both legacy unit files exist", (t) => {

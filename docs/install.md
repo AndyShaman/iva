@@ -120,7 +120,13 @@ Skipped setup, or no terminal at install time:
 cd ~/iva && npm run setup
 ```
 
-Then re-run the install command above — it finds the existing checkout and finishes the build, the systemd units and the confirmation.
+Then repeat the regular install command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | bash
+```
+
+The installer continues the first installation while autostart is still pending. It reuses completed stages, opens the wizard with your saved values as defaults, enables autostart and sends the confirmation in Telegram. On Linux it also enables linger so Iva keeps running after you leave the SSH session. Once autostart is configured, later runs use the updater.
 
 ## Next steps
 

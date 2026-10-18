@@ -632,7 +632,9 @@ versioned_installation() {
   [ -d "$1/versions" ] && { [ -e "$1/current" ] || [ -L "$1/current" ]; }
 }
 RESUME_FIRST_INSTALL=false
-if iva_checkout "$INSTALL_DIR" && [ -f "$INSTALL_DIR/.iva-installing" ] && [ ! -f "$INSTALL_DIR/.iva-installed" ]; then
+if iva_checkout "$INSTALL_DIR" \
+  && { grep -qx 'autostart=false' "$INSTALL_DIR/.iva-installed" 2>/dev/null \
+    || { [ -f "$INSTALL_DIR/.iva-installing" ] && [ ! -f "$INSTALL_DIR/.iva-installed" ]; }; }; then
   RESUME_FIRST_INSTALL=true
 fi
 INSTALL_EXISTS=false
