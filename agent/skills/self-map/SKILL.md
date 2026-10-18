@@ -199,6 +199,19 @@ What becomes of your work — for the owner's questions about you.
 
 ## Spend, schedule, services
 
+### Why the cache warmed again
+
+Read only the relevant steps from `data/usage.jsonl`, matching `sessionId` and `turnId`.
+The optional `request` holds eight-character SHA-256 fingerprints: `system`, `cache`,
+`tools`, and `toolCount`. They identify changes, not the original text.
+Compare steps using the same provider and model: changed `system` means instructions
+changed; changed `tools` or `toolCount` means the advertised tool definitions changed.
+`cache` covers explicitly cache-marked messages/parts/tools, excluding the final user
+message; a changed hash can also mean more messages were added. User text alone leaves these hashes stable.
+Compare with `cacheRead`, `cacheWrite` and input tokens: a changed prefix can need a fresh
+cache write; matching hashes do not prove a hit (expiry and provider policy still matter).
+Older rows have no `request`: say the evidence is unavailable. Explain the cost in plain words.
+
 Goals: `goal list` shows the Plan, next check and waiting Outcome; Trace `helper.goal_*` and `helper.finished` with `goal` record their checks.
 
 - Spend: `iva usage today|week|month|by-source|by-model` — tokens and turns;

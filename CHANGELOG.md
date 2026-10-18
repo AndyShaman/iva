@@ -17,6 +17,7 @@
 - 🎯 **Ива предлагает следить за ожиданием**: раньше ожидание могло остаться обещанием без проверки. Теперь, когда вы чего-то ждёте от человека или к сроку, Ива предлагает кнопку «Следить» и после нажатия сама проверит. When you are waiting on someone or a deadline, Iva offers a Follow button and schedules an observation Goal after your tap.
 - 🔐 **Полномочия с границами и сроком**: Ива записывает, кому и что разрешено подтверждать или отправлять самостоятельно, до какой даты или до отмены, и называет правило при действии; истёкшее разрешение прекращает действовать. Standing authority records its scope and term, is cited when used, and expires as agreed.
 - 🧩 **Ключи и сайты видны до установки плагина**: раньше предложение показывало только команды и число файлов. Теперь в предложении нового плагина видно, какие ключи и сайты ему нужны. New plugin proposals show the required key names and network hosts declared in the draft README before installation.
+- 📊 **Ива может объяснить, почему подорожал ход**: журнал расхода сохраняет короткие отпечатки инструкций, блоков кэша и инструментов, чтобы отличить смену запроса от обычного продолжения разговора. Request fingerprints help explain fresh cache writes and increased token use without storing prompt text.
 
 ## [0.5.4] - 2026-10-18
 
