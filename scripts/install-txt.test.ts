@@ -146,3 +146,16 @@ for (const lang of ["en", "ru"] as const) {
 void test("llms.txt links agents to install.txt once", () => {
   assert.equal(read("docs/llms.txt").split(INSTALL_URL).length - 1, 1);
 });
+
+void test("the install skill offers only main and the official IVA_BETA=1 path", () => {
+  const skill = read("skills/install-iva/references/iva-state.md");
+  assert.match(
+    skill,
+    /https:\/\/raw\.githubusercontent\.com\/smixs\/iva-agent\/main\/install\.sh \| bash -s -- --env-file/u,
+  );
+  assert.match(
+    skill,
+    /https:\/\/raw\.githubusercontent\.com\/smixs\/iva-agent\/beta\/install\.sh \| IVA_BETA=1 bash -s -- --env-file/u,
+  );
+  assert.doesNotMatch(skill, /IVA_INSTALL_BRANCH|BRANCH=|<branch>/u);
+});

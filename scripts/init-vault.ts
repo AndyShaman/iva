@@ -6,9 +6,22 @@
 // copies the structure from vault-template/ (if the live vault is empty) and git-inits it.
 // Idempotent: an existing vault with data is not overwritten.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { vaultDirOrExit } from "./lib/vault-boundary.ts";
+
+function ensureVaultIdentity(vault: string): void {
+  for (const [key, fallback] of [
+    ["user.name", "Iva"],
+    ["user.email", "iva@localhost"],
+  ]) {
+    const configured = spawnSync("git", ["-C", vault, "config", "--get", key], {
+      encoding: "utf8",
+    });
+    if (!configured.stdout?.trim())
+      execFileSync("git", ["-C", vault, "config", "--local", key, fallback]);
+  }
+}
 
 // Точка входа: резолвер зовётся внутри main, поэтому его отказ — одна строка и код 1.
 function main(): void {
@@ -56,6 +69,7 @@ function main(): void {
   // The live vault is its own git repo (backup + Obsidian). doctor.ts then commits/pushes.
   if (!existsSync(resolve(VAULT, ".git"))) {
     execFileSync("git", ["-C", VAULT, "init", "-q"]);
+    ensureVaultIdentity(VAULT);
     execFileSync("git", ["-C", VAULT, "add", "-A"]);
     try {
       execFileSync("git", [
@@ -67,9 +81,8 @@ function main(): void {
         "chore: init memory vault from template",
       ]);
     } catch {
-      // No git identity — not critical: brain.ts will commit later.
       console.warn(
-        "init-vault: first commit failed (configure git user.name/email) — continuing",
+        "init-vault: first commit failed — check git status in the vault; continuing",
       );
     }
     console.log("init-vault: vault git repo initialized.");
@@ -79,6 +92,7 @@ function main(): void {
         "The nightly brain then auto-creates a private iva-vault repo and pushes to it.",
     );
   } else {
+    ensureVaultIdentity(VAULT);
     console.log("init-vault: vault git repo already exists — skipping init.");
   }
 }

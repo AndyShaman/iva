@@ -457,6 +457,7 @@ hand_installation_to_repair() {
     || die "$(t "Couldn't download $url — check the network and run again." "Не удалось скачать $url — проверьте сеть и запустите снова.")"
   step "$(t "Iva is already installed in $INSTALL_DIR — handing it to the updater" "Iva уже установлена в $INSTALL_DIR — передаю обновлятору")"
   if IVA_INSTALL_DIR="$INSTALL_DIR" AGENT_LANGUAGE="$IVA_LANG" bash "$script"; then rc=0; else rc=$?; fi
+  if [ "$rc" -eq 0 ]; then rm -f -- "$INSTALL_DIR/.iva-installing"; fi
   # Отменять нечего: дерева этот ход не касался, всю работу сделал обновлятор, и его код
   # возврата - ответ всей команды.
   INSTALL_COMPLETE=true
@@ -582,7 +583,8 @@ prompt_yes_no() {
 # so the language is asked exactly once.
 pick_language() {
   local ans="" default_lang="en" existing_env=""
-  if [ -f "$INSTALL_DIR/.env" ]; then existing_env="$INSTALL_DIR/.env"
+  if [ -n "${ENV_FILE:-}" ]; then existing_env="$ENV_FILE"
+  elif [ -f "$INSTALL_DIR/.env" ]; then existing_env="$INSTALL_DIR/.env"
   elif [ -f "./.env" ]; then existing_env="./.env"
   fi
   if [ -n "$existing_env" ]; then
@@ -622,32 +624,27 @@ SCRIPT_DIR=""
 if [ -n "$SOURCE" ] && [ -f "$SOURCE" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 fi
-# A saved .env can precede a failed build or autostart. Only a completed first install
-# goes to the updater. Recognize older installations by their configured autostart.
-installation_finished() {
-  local root="$1"
-  [ -f "$root/.env" ] || return 1
-  [ ! -e "$root/.iva-installing" ] || return 1
-  [ ! -f "$root/.iva-installed" ] || return 0
-  [ ! -f "$root/.iva-dev" ] || return 0
-  if [ "$IVA_OS" = Darwin ]; then
-    [ -f "$HOME/Library/LaunchAgents/app.iva.iva.plist" ] \
-      && [ -f "$HOME/Library/LaunchAgents/app.iva.iva-telegram-poll.plist" ] \
-      && launchctl print "gui/$(id -u)/app.iva.iva" >/dev/null 2>&1 \
-      && launchctl print "gui/$(id -u)/app.iva.iva-telegram-poll" >/dev/null 2>&1
-  else
-    [ -f "$HOME/.config/systemd/user/iva.service" ] \
-      && [ -f "$HOME/.config/systemd/user/iva-telegram-poll.service" ] \
-      && systemctl --user is-enabled --quiet iva.service \
-      && systemctl --user is-enabled --quiet iva-telegram-poll.service
-  fi
+# Layout owns the route. Disabled units do not change the identity of an installation.
+iva_checkout() {
+  [ -d "$1/.git" ] && [ -f "$1/package.json" ] && grep -q '"eve"' "$1/package.json"
 }
+versioned_installation() {
+  [ -d "$1/versions" ] && { [ -e "$1/current" ] || [ -L "$1/current" ]; }
+}
+RESUME_FIRST_INSTALL=false
+if iva_checkout "$INSTALL_DIR" && [ -f "$INSTALL_DIR/.iva-installing" ] && [ ! -f "$INSTALL_DIR/.iva-installed" ]; then
+  RESUME_FIRST_INSTALL=true
+fi
 INSTALL_EXISTS=false
-if installation_finished "$INSTALL_DIR"; then
+if versioned_installation "$INSTALL_DIR" || { iva_checkout "$INSTALL_DIR" && [ "$RESUME_FIRST_INSTALL" = false ]; }; then
   INSTALL_EXISTS=true
-elif [ -n "$SCRIPT_DIR" ] && installation_finished "$SCRIPT_DIR" && [ -f "$SCRIPT_DIR/package.json" ] \
-  && grep -q '"eve"' "$SCRIPT_DIR/package.json"; then
-  INSTALL_EXISTS=true
+fi
+# A foreign or incomplete layout must be left intact, including its hidden files.
+if { [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; } \
+  && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ] \
+  && ! iva_checkout "$INSTALL_DIR" && ! versioned_installation "$INSTALL_DIR"; then
+  printf -v occupied_path '%q' "$INSTALL_DIR"
+  die "$(t "INSTALL_DIR is occupied by an unrecognized tree. Inspect it: ls -la $occupied_path" "INSTALL_DIR занят неизвестным деревом. Осмотрите его: ls -la $occupied_path")"
 fi
 
 if [ -n "$ENV_FILE" ] && [ "$INSTALL_EXISTS" = true ]; then
@@ -950,7 +947,7 @@ checkout_release() {
 #    resolved at the top.
 # ─────────────────────────────────────────────────────────────────────────
 CURRENT_STEP="$(t "reading the installation" "чтение установки")"
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ] && grep -q '"eve"' "$SCRIPT_DIR/package.json"; then
+if ! versioned_installation "$INSTALL_DIR" && iva_checkout "$SCRIPT_DIR"; then
   PROJECT_DIR="$SCRIPT_DIR"
   UPDATE_CHANNEL="$(git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true)"
   UPDATE_CHANNEL="${UPDATE_CHANNEL:-main}"
@@ -972,7 +969,7 @@ elif [ "$INSTALL_EXISTS" = true ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then PROJECT_DIR="$INSTALL_DIR"; acquire_install_lock "$INSTALL_DIR/data"; fi
   record_beta_choice
   hand_installation_to_repair
-elif [ -d "$INSTALL_DIR/.git" ] && [ -f "$INSTALL_DIR/package.json" ]; then
+elif [ "$RESUME_FIRST_INSTALL" = true ]; then
   PROJECT_DIR="$INSTALL_DIR"
   step "$(t "Continuing first installation: $PROJECT_DIR" "Продолжаю первую установку: $PROJECT_DIR")"
   acquire_install_lock
@@ -1116,7 +1113,11 @@ elif [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
-  run_setup --first-install < /dev/tty
+  if [ "$RESUME_FIRST_INSTALL" = true ]; then
+    run_setup --first-install < /dev/tty
+  else
+    run_setup < /dev/tty
+  fi
   SETUP_DONE=true
 else
   warn "$(t "No terminal (/dev/tty) — skipping the wizard. Run it later: cd $PROJECT_DIR && npm run setup" "Нет терминала (/dev/tty) — пропускаю мастер. Запустите потом: cd $PROJECT_DIR && npm run setup")"
@@ -1278,10 +1279,8 @@ fi
 git -C "$PROJECT_DIR" config --local iva.updateBranch "$UPDATE_CHANNEL" 2>/dev/null \
   || warn "$(t "couldn't record the update branch (not a git checkout) — 'iva update' will use the default" "не записал ветку обновлений (не git-checkout) — 'iva update' возьмёт ветку по умолчанию")"
 
-if [ "$AUTOSTART_READY" = true ]; then
-  (umask 077; printf 'autostart configured\n' >"$PROJECT_DIR/.iva-installed")
-  rm -f -- "$PROJECT_DIR/.iva-installing"
-fi
+(umask 077; printf 'autostart=%s\n' "$AUTOSTART_READY" >"$PROJECT_DIR/.iva-installed")
+rm -f -- "$PROJECT_DIR/.iva-installing"
 finish_install_update
 INSTALL_COMPLETE=true
 

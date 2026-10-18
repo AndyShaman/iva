@@ -13,16 +13,16 @@ curl -fsSL https://api.github.com/repos/smixs/iva-agent/releases/latest | grep -
 | Installed, services active, version = latest release | Leave alone. Tell the person "Iva is already installed (version X) and running" and go to step 6 |
 | Installed, services stopped or failing | `iva doctor` (it repairs what it can), then `iva restart`; read `iva logs` if still failing |
 | Installed, older than the latest release | `iva update`, then step 6 |
-| `~/iva` exists but no `.env` (an earlier run stopped) | First install with the env file → 4.1; the installer reuses finished stages |
+| Iva checkout has `.iva-installing` and no `.iva-installed` | Resume the interrupted first install → 4.1; the installer reuses finished stages |
+| Installer finished successfully but setup was skipped | Run `cd ~/iva && npm run setup` in a terminal, then `cd ~/iva && bash install.sh` for autostart |
 | Iva under another user or path | ask the person which one is theirs; do not touch the other |
 
 A Mac target: same table, run locally (no `ssh iva`).
 
 ## Branch
 
-Install from `main` (the release). Use another branch only when the person asks for the beta (`beta`) or the
-environment sets `IVA_INSTALL_BRANCH`: then fetch scripts from `https://raw.githubusercontent.com/smixs/iva-agent/<branch>/`
-and run the installer with `BRANCH=<branch>` in its environment.
+Install the release from `main` by default. If the person explicitly asks for beta, fetch the beta installer and set
+`IVA_BETA=1` for the installer process. These are the two supported installation paths.
 
 ## 4.1 First install
 
@@ -30,7 +30,13 @@ Write the minimal env file from step 5 (`references/keys.md`), copy it to the se
 
 ```bash
 ssh iva 'umask 077; cat > ~/iva-setup.env' < <local env file>
-ssh iva 'curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/<branch>/install.sh | BRANCH=<branch> bash -s -- --env-file ~/iva-setup.env; rc=$?; rm -f ~/iva-setup.env; exit $rc'
+ssh iva 'curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | bash -s -- --env-file ~/iva-setup.env; rc=$?; rm -f ~/iva-setup.env; exit $rc'
+```
+
+For an explicitly requested beta installation, use this installer command instead:
+
+```bash
+ssh iva 'curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/beta/install.sh | IVA_BETA=1 bash -s -- --env-file ~/iva-setup.env; rc=$?; rm -f ~/iva-setup.env; exit $rc'
 ```
 
 `--env-file` runs without questions, including when a terminal is available. It is accepted for a first install or an

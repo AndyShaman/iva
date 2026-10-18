@@ -34,11 +34,9 @@ function withoutGitIdentity(root: string): NodeJS.ProcessEnv {
   delete env.GIT_CONFIG_GLOBAL;
   return {
     ...env,
-    GIT_CONFIG_COUNT: "2",
-    GIT_CONFIG_KEY_0: "user.name",
-    GIT_CONFIG_VALUE_0: "",
-    GIT_CONFIG_KEY_1: "user.email",
-    GIT_CONFIG_VALUE_1: "",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "user.useConfigOnly",
+    GIT_CONFIG_VALUE_0: "true",
     GIT_CONFIG_NOSYSTEM: "1",
     HOME: join(root, "empty-home"),
     XDG_CONFIG_HOME: join(root, "empty-xdg"),
@@ -65,22 +63,76 @@ void test("init-vault rejects a missing template before creating a vault", async
   assert.equal(existsSync(join(root, "live-vault")), false);
 });
 
-void test("init-vault creates the Russian template and continues without Git identity", async (t) => {
+void test("init-vault creates the first commit with repo-local identity on a fresh server", async (t) => {
   const root = await sandbox(t);
   makeTemplate(root);
-  const result = runInit(root, {
+  const env: NodeJS.ProcessEnv = {
     ...withoutGitIdentity(root),
     ASSISTANT_VAULT_DIR: "live-vault",
-  });
+  };
+  const result = runInit(root, env);
   const vault = join(root, "live-vault");
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /vault created from template/u);
-  assert.match(result.stderr, /first commit failed/u);
+  assert.doesNotMatch(
+    result.stderr,
+    /first commit failed|Author identity unknown/u,
+  );
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", vault, ...args], {
+      env,
+      encoding: "utf8",
+    }).trim();
+  assert.equal(git("log", "-1", "--format=%an <%ae>"), "Iva <iva@localhost>");
+  assert.equal(git("config", "--local", "--get", "user.name"), "Iva");
+  assert.equal(
+    git("config", "--local", "--get", "user.email"),
+    "iva@localhost",
+  );
+  assert.equal(existsSync(join(env.HOME!, ".gitconfig")), false);
+  assert.equal(existsSync(join(env.XDG_CONFIG_HOME!, "git/config")), false);
   assert.equal(readFileSync(join(vault, "CORE.md"), "utf8"), "Russian core\n");
   assert.equal(existsSync(join(vault, "CORE.en.md")), false);
   assert.equal(readFileSync(join(vault, "MOC.md"), "utf8"), "MOC\n");
   assert.equal(existsSync(join(vault, ".git")), true);
+});
+
+void test("init-vault preserves an existing vault identity and the global git configuration", async (t) => {
+  const root = await sandbox(t);
+  makeTemplate(root);
+  const vault = join(root, "live-vault");
+  const env: NodeJS.ProcessEnv = {
+    ...withoutGitIdentity(root),
+    ASSISTANT_VAULT_DIR: "live-vault",
+  };
+  mkdirSync(env.HOME!, { recursive: true });
+  const global = join(env.HOME!, ".gitconfig");
+  const globalText =
+    "[user]\n\tname = Global owner\n\temail = global@example.test\n";
+  writeFileSync(global, globalText);
+  execFileSync("git", ["init", "-q", vault], { env });
+  for (const [key, value] of [
+    ["user.name", "Vault owner"],
+    ["user.email", "vault@example.test"],
+  ])
+    execFileSync("git", ["-C", vault, "config", "--local", key, value], {
+      env,
+    });
+  const result = runInit(root, env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(global, "utf8"), globalText);
+  for (const [key, value] of [
+    ["user.name", "Vault owner"],
+    ["user.email", "vault@example.test"],
+  ])
+    assert.equal(
+      execFileSync("git", ["-C", vault, "config", "--local", "--get", key], {
+        env,
+        encoding: "utf8",
+      }).trim(),
+      value,
+    );
 });
 
 void test("init-vault selects English CORE when requested", async (t) => {

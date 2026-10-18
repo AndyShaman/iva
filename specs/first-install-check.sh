@@ -14,3 +14,5 @@ check() {
 check FirstInstall none
 check FirstInstall-env-unsafe CompletedBeforeUpdate
 check FirstInstall-release-unsafe SetupOwnsLock
+check FirstInstall-clone-unsafe SafeDestination
+check FirstInstall-refuse-witness RefusedOccupied
