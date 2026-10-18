@@ -432,3 +432,185 @@ void test("six long web hosts keep the opener intact within the Gate's line budg
   assert.ok(lines[0].length <= 1000);
   assert.ok(lines[0].endsWith("iva trace show s1/turn_1"));
 });
+
+const c1Shape = (rows: Row[]) =>
+  rows.map((row) =>
+    row.kind === "eve" ? { ...row, source: "channel:telegram" } : row,
+  );
+
+void test("R317-1: Eve channel:telegram events join Telegram inbound while http stays excluded", (t) => {
+  const options = { actions: [TOOL("send_file")], args: [{}], steps: 15 };
+  const rows = c1Shape(turn(1, NOW - 60_000, options));
+  rows.push(...turn(2, NOW - 30_000, { ...options, source: "http" }));
+  const lines = listTurnRepeats(journal(t, rows), NOW);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /long without skill.*median steps 15.*s1\/turn_1$/u);
+});
+
+void test("R317-2: load-skill uses args.skill even when its result name is empty", (t) => {
+  const rows = [1, 2, 3].flatMap((id) =>
+    turn(id, NOW - (id * DAY) / 2, {
+      actions: [
+        TOOL("bash"),
+        { kind: "load-skill", name: "" },
+        TOOL("send_file"),
+      ],
+      args: [{ command: "gh api /repos" }, { skill: "watch" }, {}],
+    }),
+  );
+  rows.push(
+    event(NOW - DAY / 2 + 20, "s1", "turn_1", "eve", "action.result", {
+      name: "",
+      status: "completed",
+    }),
+  );
+  assert.match(
+    listTurnRepeats(journal(t, rows), NOW)[0],
+    /bash:gh api → skill:watch → send_file/u,
+  );
+});
+
+void test("R317-3: bash heads skip assignments, wrappers and working-directory prefixes", (t) => {
+  for (const command of [
+    "GH_TOKEN=ghp_123456 gh api /private/repo",
+    "env TOKEN='12345 secret' gh api /private/repo",
+    "timeout -s TERM 30s gh api /private/repo",
+    "sudo -u root gh api /private/repo",
+    "nice -n 10 nohup gh api /private/repo",
+    "cd '/private/secret path' && gh api /private/repo",
+    "cd /private/secret; TOKEN=12345 env timeout 30 gh api /private/repo",
+    "env -u GH_TOKEN /usr/bin/gh api /private/repo",
+    "/usr/bin/env TOKEN=123456 /usr/bin/timeout 30 /usr/bin/gh api /private/repo",
+  ]) {
+    const rows = [1, 2, 3].flatMap((id) =>
+      turn(id, NOW - (id * DAY) / 2, {
+        args: [{ command }, { name: "x" }, {}],
+      }),
+    );
+    const lines = listTurnRepeats(journal(t, rows), NOW);
+    assert.equal(lines.length, 1, command);
+    assert.match(lines[0], /repeat bash:gh api → skill:x/u, command);
+    assert.doesNotMatch(lines[0], /GH_TOKEN|TOKEN|12345|private|secret/u);
+  }
+});
+
+void test("R317-4: c1-shaped mixed-source actions preserve skills and safe bash heads", (t) => {
+  const rows = [1, 2, 3].flatMap((id) =>
+    c1Shape(
+      turn(id, NOW - (id * DAY) / 2, {
+        actions: [
+          TOOL("bash"),
+          TOOL("bash"),
+          { kind: "load-skill" },
+          TOOL("send_file"),
+        ],
+        args: [
+          { command: "cd /private/data && gh api /repos" },
+          { command: "TOKEN=123456 cmd run" },
+          { skill: "watch" },
+          {},
+        ],
+      }),
+    ),
+  );
+  const lines = listTurnRepeats(journal(t, rows), NOW);
+  assert.equal(lines.length, 1);
+  assert.match(
+    lines[0],
+    /3× repeat bash:gh api → bash:cmd run → skill:watch → send_file/u,
+  );
+  assert.match(lines[0], /median steps 3.*tokens 90.*skill yes.*s1\/turn_1$/u);
+  assert.doesNotMatch(lines[0], /TOKEN|123456|private/u);
+});
+
+void test("R317-5: shell-only noise cannot form a repeated chain", (t) => {
+  for (const command of [
+    "cd /tmp",
+    "export TOKEN=123456",
+    "sleep 30",
+    "echo secret",
+  ]) {
+    const rows = [1, 2, 3].flatMap((id) =>
+      turn(id, NOW - (id * DAY) / 2, { args: [{ command }, {}, {}] }),
+    );
+    assert.deepEqual(listTurnRepeats(journal(t, rows), NOW), [], command);
+  }
+});
+
+void test("R317-6: a guided session selects its latest qualifying window", (t) => {
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8].flatMap((id) =>
+    turn(id, NOW - (id <= 4 ? 4 * 60 * 60_000 : 0) - (9 - id) * 60_000, {
+      actions: [],
+      args: [],
+      steps: id === 1 || id === 5 ? 10 : 1,
+      session: "guided",
+      request: id <= 4 ? "Старое дело" : "Новое дело",
+    }),
+  );
+  const lines = listTurnRepeats(journal(t, rows), NOW);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /4× guided.*Новое дело.*guided\/turn_8$/u);
+  assert.doesNotMatch(lines[0], /Старое дело/u);
+});
+
+void test("R317-7: a two-MiB day retains its morning within a bounded four-MiB read", (t) => {
+  const dir = journal(t, [
+    ...turn(1, NOW - 10 * 60 * 60_000, {
+      actions: [TOOL("send_file")],
+      args: [{}],
+      steps: 15,
+      request: "Утреннее дело",
+    }),
+    event(NOW - 60_000, "", "", "gate", "inbound", {
+      text: "x".repeat(2 * 1024 * 1024),
+    }),
+  ]);
+  assert.match(
+    listTurnRepeats(dir, NOW)[0] ?? "",
+    /Утреннее дело.*s1\/turn_1$/u,
+  );
+  assert.equal(TRACE_REPEAT_BYTES_PER_FILE, 4 * 1024 * 1024);
+});
+
+for (const seed of [1831701, 1831702]) {
+  void test(`R317-3 PROPERTY: bash arguments and secret tokens never enter heads (seed=${seed})`, (t) => {
+    const dir = journal(t, []);
+    const file = join(dir, "trace", "2026-10-18.jsonl");
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 100000000, max: 999999999 }),
+        fc.constantFrom("TOKEN=", "/private/", ""),
+        fc.constantFrom(
+          "",
+          "env ",
+          "timeout 30 ",
+          "sudo -u root ",
+          "nice -n 10 ",
+          "nohup ",
+          "cd /private/data && ",
+        ),
+        (secret, prefix, wrapper) => {
+          const token = `${prefix}${secret}`;
+          const command = `${wrapper}AUTH=${secret} gh ${token} /private/secret`;
+          const rows = turn(1, NOW - 60_000, {
+            actions: [TOOL("bash")],
+            args: [{ command }],
+            steps: 15,
+          });
+          writeFileSync(
+            file,
+            rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+          );
+          const lines = listTurnRepeats(dir, NOW);
+          assert.equal(lines.length, 1);
+          assert.match(lines[0], /long without skill bash:gh ·/u);
+          assert.doesNotMatch(
+            lines[0],
+            new RegExp(`${secret}|AUTH|TOKEN|private|=`, "u"),
+          );
+        },
+      ),
+      { seed, numRuns: 80 },
+    );
+  });
+}

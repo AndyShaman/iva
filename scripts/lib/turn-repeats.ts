@@ -1,10 +1,11 @@
 import { cutText, insightLine, readTrace, turnRef } from "./turn-failures.ts";
-
-export const TRACE_REPEAT_BYTES_PER_FILE = 1024 * 1024;
+const HEAD = /^[a-z][a-z0-9-]*$/u;
+const WORD = /(?:[^\s;&|"'\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+|&&|[;&|]/gu;
+export const TRACE_REPEAT_BYTES_PER_FILE = 4 * 1024 * 1024;
 const DAY = 86_400_000,
   WINDOW = 30 * 60_000;
 const READING_HEADS = new Set(
-  "cat,head,tail,less,more,rg,grep,ls,pwd,find,wc,sed,awk,iva trace,iva diagnose".split(
+  "cat,head,tail,less,more,rg,grep,ls,pwd,find,wc,sed,awk,cd,export,sleep,echo,iva trace,iva diagnose".split(
     ",",
   ),
 );
@@ -25,20 +26,18 @@ const dataFor = (events: Line[], kind: string) =>
 function group<T>(values: T[], key: (value: T) => string) {
   const groups = new Map<string, T[]>();
   for (const value of values) {
-    const k = key(value),
-      items = groups.get(k) ?? [];
-    items.push(value);
-    groups.set(k, items);
+    const k = key(value);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(value);
   }
   return groups;
 }
-
 function actionHead(value: unknown, input: unknown): string {
   const action = record(value),
     args = record(input),
     name = text(action.toolName);
   if (action.kind === "load-skill" || name === "load_skill")
-    return `skill:${clean(action.name || args.name)}`;
+    return `skill:${clean(action.name || args.skill || args.name)}`;
   if (name === "bash") return bashHead(text(args.command));
   if (name === "web_fetch") {
     try {
@@ -50,17 +49,36 @@ function actionHead(value: unknown, input: unknown): string {
   return clean(name);
 }
 function bashHead(command: string): string {
-  const [first = "", second = ""] = command.trim().split(/\s+/u);
-  const program = first.replace(/^.*\//u, "").replace(/^['"]|['"]$/gu, "");
-  const sub =
-    /^(gws|tg|iva|gh|git|npm|bun)$/u.test(program) &&
-    /^[a-z][\w-]*$/u.test(second)
-      ? ` ${second}`
-      : "";
-  const head = program + sub;
-  return head && !READING_HEADS.has(head) ? `bash:${clean(head)}` : "";
+  const words = command.match(WORD) ?? [];
+  const program = bashProgram(words);
+  if (!HEAD.test(program) || READING_HEADS.has(program)) return "";
+  const second = words[0] ?? "";
+  const head = program + (HEAD.test(second) ? ` ${second}` : "");
+  return !READING_HEADS.has(head) ? `bash:${clean(head)}` : "";
 }
-
+function bashOptions(words: string[]): void {
+  const valueFlag =
+    /^(-[ugnCsok]|--(unset|chdir|user|group|signal|kill-after|adjustment))$/u;
+  while (words[0]?.startsWith("-"))
+    if (valueFlag.test(words.shift()!)) words.shift();
+}
+function bashProgram(words: string[]): string {
+  while (words.length) {
+    const raw = words.shift()!;
+    if (/^[A-Za-z_]\w*=/u.test(raw)) continue;
+    const word = raw.replace(/^.*\/|^['"]|['"]$/gu, "");
+    if (word === "cd") {
+      const end = words.findIndex((w) => w === "&&" || w === ";");
+      if (end < 0) return "";
+      words.splice(0, end + 1);
+      continue;
+    }
+    if (!/^(env|timeout|sudo|nice|nohup)$/u.test(word)) return word;
+    bashOptions(words);
+    if (word === "timeout") words.shift();
+  }
+  return "";
+}
 function summarize(events: Line[], incoming: Map<string, Line>) {
   const first = events[0];
   const actions = dataFor(events, "eve.actions.requested").flatMap((data) =>
@@ -68,17 +86,12 @@ function summarize(events: Line[], incoming: Map<string, Line>) {
       actionHead(action, array(data.args)[i]),
     ),
   );
-  const inputs = dataFor(events, "turn.bound").flatMap((data) => {
-    const line = incoming.get(text(data.updateKey));
-    return line ? [line] : [];
-  });
+  const inputs = dataFor(events, "turn.bound").flatMap<Line>(
+    (data) => incoming.get(text(data.updateKey)) ?? [],
+  );
   const steps = new Map(
     dataFor(events, "eve.step.completed")
-      .filter(
-        (data) =>
-          Number.isSafeInteger(data.stepIndex) &&
-          number(data.stepIndex) === data.stepIndex,
-      )
+      .filter(({ stepIndex: i }) => Number.isSafeInteger(i) && number(i) === i)
       .map((data) => [
         data.stepIndex,
         ["in", "out", "cacheRead", "cacheWrite"].reduce(
@@ -110,11 +123,10 @@ function summarize(events: Line[], incoming: Map<string, Line>) {
 }
 type Turn = ReturnType<typeof summarize>;
 function collect(dataDir: string, now: number): Turn[] {
-  // Fifteen timezone-named files cover a rolling fourteen-day window.
   const lines = readTrace(dataDir, 15, TRACE_REPEAT_BYTES_PER_FILE)
     .lines.filter(
       (line) =>
-        line.source === "telegram" &&
+        /^(?:channel:)?telegram$/u.test(text(line.source)) &&
         at(line) >= now - 14 * DAY &&
         at(line) <= now,
     )
@@ -128,10 +140,8 @@ function collect(dataDir: string, now: number): Turn[] {
       )
       .map((line) => [text(line.turn), line]),
   );
-  const bound = lines.filter(
-    (line) =>
-      /^[\w-]{1,200}$/u.test(text(line.session)) &&
-      /^[\w-]{1,200}$/u.test(text(line.turn)),
+  const bound = lines.filter((line) =>
+    [line.session, line.turn].every((id) => /^[\w-]{1,200}$/u.test(text(id))),
   );
   return [
     ...group(bound, (line) =>
@@ -139,7 +149,6 @@ function collect(dataDir: string, now: number): Turn[] {
     ).values(),
   ].map((events) => summarize(events, incoming));
 }
-
 type Group = { heads: string[]; turns: Set<Turn> };
 function add(groups: Map<string, Group>, heads: string[], turn: Turn) {
   const key = JSON.stringify(heads),
@@ -174,7 +183,6 @@ function render(kind: string, group: Group, count = group.turns.size) {
     ),
   };
 }
-
 function patterns(turns: Turn[]) {
   const chains = new Map<string, Group>(),
     long = new Map<string, Group>();
@@ -197,11 +205,7 @@ function maximal(chains: Map<string, Group>) {
     hidden = new Set<Group>();
   for (const parent of repeats)
     for (let i = 0; i < parent.heads.length; i++)
-      for (
-        let n = 3;
-        n < parent.heads.length && i + n <= parent.heads.length;
-        n++
-      ) {
+      for (let n = 3; n < parent.heads.length; n++) {
         const child = chains.get(JSON.stringify(parent.heads.slice(i, i + n)));
         if (
           child &&
@@ -221,25 +225,23 @@ export function listTurnRepeats(dataDir: string, nowMs: number): string[] {
     const times = [
       ...new Map(session.flatMap((t) => [...t.messages])).values(),
     ].sort((a, b) => a - b);
-    const inWindow = (t: Turn, start: number) =>
-      t.at >= start && t.at <= start + WINDOW;
-    const start = times.find(
-      (time, i) =>
-        i + 3 < times.length &&
-        times[i + 3] - time <= WINDOW &&
-        session.some((t) => inWindow(t, time) && (t.stop || t.steps >= 10)),
-    );
-    if (start !== undefined)
-      out.push(
-        render(
-          "guided",
-          {
-            heads: [],
-            turns: new Set(session.filter((t) => inWindow(t, start))),
-          },
-          times.filter((t) => t >= start && t <= start + WINDOW).length,
-        ),
-      );
+    const inWindow = (time: number, start: number) =>
+      time >= start && time <= start + WINDOW;
+    const start = times
+      .filter(
+        (time, i) =>
+          i + 3 < times.length &&
+          times[i + 3] - time <= WINDOW &&
+          session.some(
+            (t) => inWindow(t.at, time) && (t.stop || t.steps >= 10),
+          ),
+      )
+      .at(-1);
+    if (start !== undefined) {
+      const turns = new Set(session.filter((t) => inWindow(t.at, start)));
+      const count = times.filter((t) => inWindow(t, start)).length;
+      out.push(render("guided", { heads: [], turns }, count));
+    }
   }
   return out
     .sort((a, b) => b.at - a.at || a.line.localeCompare(b.line))
