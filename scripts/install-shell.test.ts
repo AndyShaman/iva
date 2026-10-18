@@ -832,6 +832,34 @@ void test("deferred first install accepts --env-file on a repeat and reuses depe
   assert.equal(existsSync(join(world.install, ".iva-installed")), true);
 });
 
+void test("failed first activation resumes even when both legacy unit files exist", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV);
+  const options = {
+    script: world.piped,
+    args: ["--env-file", source],
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  };
+  const failed = world.run({
+    ...options,
+    env: { ...options.env, IVA_TEST_UNITS_FAIL: "1" },
+  });
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), false);
+  const units = join(world.home, ".config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  for (const unit of ["iva.service", "iva-telegram-poll.service"])
+    writeFileSync(join(units, unit), "written before activation failed\n");
+  const resumed = world.run(options);
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
+  assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+  assert.doesNotMatch(world.calls(), /^iva update$/mu);
+});
+
 const DROP_SETUP_TTY = `import os,pty,select,signal,sys,time
 mode, installer = sys.argv[1:]
 pid, fd = pty.fork()

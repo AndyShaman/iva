@@ -627,6 +627,7 @@ fi
 installation_finished() {
   local root="$1"
   [ -f "$root/.env" ] || return 1
+  [ ! -e "$root/.iva-installing" ] || return 1
   [ ! -f "$root/.iva-installed" ] || return 0
   [ ! -f "$root/.iva-dev" ] || return 0
   if [ "$IVA_OS" = Darwin ]; then
@@ -637,7 +638,8 @@ installation_finished() {
   else
     [ -f "$HOME/.config/systemd/user/iva.service" ] \
       && [ -f "$HOME/.config/systemd/user/iva-telegram-poll.service" ] \
-      && systemctl --user is-enabled --quiet iva.service iva-telegram-poll.service
+      && systemctl --user is-enabled --quiet iva.service \
+      && systemctl --user is-enabled --quiet iva-telegram-poll.service
   fi
 }
 INSTALL_EXISTS=false
@@ -983,6 +985,9 @@ else
   acquire_install_lock
 fi
 cd "$PROJECT_DIR"
+if [ "$INSTALL_EXISTS" != true ]; then
+  (umask 077; : >"$PROJECT_DIR/.iva-installing")
+fi
 
 # ─────────────────────────────────────────────────────────────────────────
 # 5. npm dependencies. Detect-then-skip: a re-run after a late failure must not
@@ -1273,10 +1278,11 @@ fi
 git -C "$PROJECT_DIR" config --local iva.updateBranch "$UPDATE_CHANNEL" 2>/dev/null \
   || warn "$(t "couldn't record the update branch (not a git checkout) — 'iva update' will use the default" "не записал ветку обновлений (не git-checkout) — 'iva update' возьмёт ветку по умолчанию")"
 
-finish_install_update
 if [ "$AUTOSTART_READY" = true ]; then
   (umask 077; printf 'autostart configured\n' >"$PROJECT_DIR/.iva-installed")
+  rm -f -- "$PROJECT_DIR/.iva-installing"
 fi
+finish_install_update
 INSTALL_COMPLETE=true
 
 # ─────────────────────────────────────────────────────────────────────────
