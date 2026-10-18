@@ -193,10 +193,14 @@ path.
 
 `skills/<name>/SKILL.md`, exactly one level deep, in the
 [Agent Skills](https://agentskills.io) format with `name` and `description` in the
-frontmatter. Write the description as a trigger condition ("Use when…"): before the skill is
+frontmatter. Keep the description within 120 UTF-16 code units, as a trigger condition ("Use when…"): before the skill is
 loaded, that line is all the model sees. Everything else about skills is in
 [extending.md](extending.md) — a plugin's skill is an ordinary skill that happens to arrive in
 a folder.
+
+`iva plugin add` and `propose` refuse longer skill descriptions in local
+`data/custom/plugin-drafts/` sources and ask for a shorter trigger.
+Other sources receive a warning and keep the existing truncation in the prompt index.
 
 ### Code: an eve Extension under `sh.iva/`
 

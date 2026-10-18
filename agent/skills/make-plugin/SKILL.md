@@ -16,7 +16,7 @@ version ("Write your own"); read it before the first plugin of a turn.
 - `plugin.json` with `$schema` (`https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`),
   `name` (the folder name), `version`, `description`.
 - The capability is a skill: `skills/<skill>/SKILL.md` with `name` and a trigger `description`
-  ("Use when…"). Its tools are scripts beside it (`skills/<skill>/scripts/`) with a `README.md`
+  ("Use when…"), at most 120 UTF-16 code units. Its tools are scripts beside it (`skills/<skill>/scripts/`) with a `README.md`
   that says what each one takes and prints. Run every script once before you install.
 - MCP (`mcp.json`) or code under `sh.iva/` only when a script cannot do the job: a server that
   must stay up, a tool the model calls on its own. Each of them makes the install wait for the
