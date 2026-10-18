@@ -630,9 +630,9 @@ export async function runTelegramInbound(
     const rawItems = rawBuffered.filter(
       (s: unknown): s is string => typeof s === "string" && s.trim().length > 0,
     );
-    const dailyPath = rawItems.length
-      ? appendDaily("[queued]", rawItems.join("\n"))
-      : undefined;
+    const dailyPath = rawItems
+      .map((text) => appendDaily("[queued]", text))
+      .at(-1);
     const items = rawItems.map((text) => {
       const sanitized = sanitizeInbound(text);
       // Порядок и состав — как у свежей реплики (gatedTextEntries): предупреждение,

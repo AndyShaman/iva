@@ -349,9 +349,16 @@ function usable(raw: DayAnswer, entries: DayEntry[], cards: Card[]) {
   const keep = <T extends Item>(
     items: T[],
     ok: (item: T) => boolean = () => true,
+    ownerOnly = false,
   ) =>
     items.flatMap((item) => {
-      const found = { ...item, src: item.src.filter((id) => byId.has(id)) };
+      const found = {
+        ...item,
+        src: item.src.filter(
+          (id) =>
+            byId.has(id) && (!ownerOnly || byId.get(id)?.origin === "owner"),
+        ),
+      };
       if (found.src.length > 0 && ok(found)) return [found];
       jobs.push(`отброшено: ${JSON.stringify(item)}`);
       return [];
@@ -371,7 +378,7 @@ function usable(raw: DayAnswer, entries: DayEntry[], cards: Card[]) {
       (a) => names.has(a.card) && said(a.src, a.alias) !== undefined,
     ),
     links: keep(answer.links, (l) => names.has(l.a) && names.has(l.b)),
-    core: keep(answer.core),
+    core: keep(answer.core, undefined, true),
   };
 }
 

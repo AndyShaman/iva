@@ -479,6 +479,33 @@ await test("прерванный ход, буфер занятости и цит
   );
 });
 
+await test("queued parts keep their own origin in daily", async () => {
+  const { parseDay } = await import("../../scripts/memory/night-input.ts");
+  const { effects } = harness();
+  const parts = [
+    "Мои слова",
+    "[forwarded from @ann]\nЧужие слова",
+    "Ещё мои слова",
+    "[forwarded]\nЕщё чужие слова",
+  ];
+  mkdirSync(join(VAULT, "daily"), { recursive: true });
+  const before = parseDay(dailyText()).length;
+  await inbound.runTelegramInbound(
+    privateText("продолжаем", { iva_buffered: parts }),
+    effects,
+  );
+  const queued = parseDay(dailyText()).slice(before, before + parts.length);
+  assert.deepEqual(
+    queued.map((entry) => entry.text),
+    parts,
+  );
+  assert.deepEqual(
+    queued.map((entry) => entry.origin),
+    ["owner", "forwarded", "owner", "forwarded"],
+  );
+  assert.ok(queued.every((entry) => entry.type === "[queued]"));
+});
+
 await test("помеченный гейтом буфер занятости едет с предупреждением и в лог", async (t) => {
   const lines = muteErrors(t);
   const { effects } = harness();
