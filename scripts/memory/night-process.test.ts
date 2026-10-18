@@ -23,6 +23,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
+import fc from "fast-check";
 import "../lib/ts-esm-hooks.ts";
 
 const cs = await import("../../agent/lib/card-store.ts");
@@ -914,6 +915,84 @@ void test("отказ коммита: день не готов; следующа
   assert.equal(fx.model.prompts.length, 1);
   assert.equal(git(fx.vault, "status", "--porcelain"), "");
   assert.equal(existsSync(summary(fx)), true);
+});
+
+for (const origin of ["iva", "forwarded"] as const)
+  void test(`CORE owner-only: ${origin} candidate is discarded`, async (t) => {
+    const fx = await fixture(t);
+    day(
+      fx,
+      `## 10:00 [text]\nМои слова\n\n## 10:01 [${origin === "iva" ? "iva" : "text"}]\n${origin === "forwarded" ? "[forwarded from @ann]\n" : ""}Люблю чай\n`,
+    );
+    const candidate = { text: "Любит чай", src: ["e2"] };
+    fx.model.replies = [
+      A({ core: [candidate] }),
+      { sections: [{ section: "Предпочтения", text: "- Любит чай" }] },
+    ];
+    const result = await night(fx);
+    assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(read(join(fx.vault, "CORE.md")), /Любит чай/u);
+    assert.ok(
+      result.stderr.includes(`отброшено: ${JSON.stringify(candidate)}`),
+    );
+    assert.equal(fx.model.prompts.length, 1);
+  });
+
+void test("CORE owner-only preserves every owner-backed candidate (seed 20261018)", async (t) => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.constantFrom("owner", "iva", "forwarded"), {
+        minLength: 1,
+        maxLength: 10,
+      }),
+      fc.array(fc.array(fc.nat({ max: 12 }), { maxLength: 8 }), {
+        maxLength: 12,
+      }),
+      async (generatedOrigins, refs) => {
+        const origins = [...generatedOrigins, "owner"];
+        const fx = await fixture(t);
+        day(
+          fx,
+          origins
+            .map(
+              (origin) =>
+                `## 10:00 [${origin === "iva" ? "iva" : "text"}]\n${origin === "forwarded" ? "[forwarded]\n" : ""}Слова\n`,
+            )
+            .join("\n"),
+        );
+        // Keep the accepted A answer in the real cache for source inspection.
+        const hook = join(fx.vault, ".git/hooks/pre-commit");
+        writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+        chmodSync(hook, 0o755);
+        const core = [
+          ...refs,
+          [origins.length - 1],
+          [0, origins.length - 1, 12],
+        ].map((ids, index) => ({
+          text: `candidate ${index}`,
+          src: ids.map((id) => `e${id + 1}`),
+        }));
+        fx.model.replies = [A({ core })];
+        const result = await night(fx);
+        assert.equal(result.code, 1, result.stderr);
+        const cache = JSON.parse(
+          read(join(fx.data, "memory/night", `${DATE}.json`)),
+        ) as {
+          pass: { a: Array<{ core: typeof core }> };
+        };
+        const kept = cache.pass.a[0].core;
+        for (const candidate of core) {
+          const accepted = kept.find((item) => item.text === candidate.text);
+          const ownerRefs = candidate.src.filter(
+            (id) => origins[Number(id.slice(1)) - 1] === "owner",
+          );
+          assert.equal(Boolean(accepted), ownerRefs.length > 0);
+          if (accepted) assert.deepEqual(accepted.src, ownerRefs);
+        }
+      },
+    ),
+    { seed: 20261018, numRuns: 30 },
+  );
 });
 
 void test("первая ночь без CORE: C зовётся, CORE создан, строка сразу под заголовком раздела (ДЕФ-6, ДЕФ-8)", async (t) => {
