@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🧠 **Ива закрепляет поправки и повторяющиеся дела**: Ива замечает, когда вы поправляете её второй раз об одном и том же, и сама предлагает закрепить правку; через неделю проверяет, что правка держится. Повторные просьбы в разные дни превращает в предложение скилла, а при явно названном времени предлагает выполнять его по расписанию после вашего согласия. Iva spots repeated corrections and proposes a lasting fix, then checks it after a week. Requests repeated on different days become skill drafts, with a Routine offered only for an explicit time and installed after your approval.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
