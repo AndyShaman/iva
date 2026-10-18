@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🧩 **Ива сначала ищет готовый плагин**: раньше Insight сразу собирал собственный черновик. Теперь перед сборкой Ива сверяет Marketplace и предлагает подходящий готовый плагин по имени; установка остаётся по вашему согласию. Before drafting a new plugin, Iva checks the Marketplace and offers a suitable ready-made plugin by name, keeping installation subject to your approval.
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
