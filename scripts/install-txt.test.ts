@@ -15,11 +15,18 @@ const phrases = {
 
 void test("install.txt pins every link to an existing file in the current or next patch release", () => {
   const { version } = JSON.parse(read("package.json")) as { version: string };
-  const [major, minor, patch] = version.split(".").map(Number);
+  // A beta prerelease (0.5.6-beta.1) already names its coming release.
+  const [core = "", prerelease] = version.split("-");
+  const [major, minor, patch] = core.split(".").map(Number);
   const unreleased = /^## (?:\[Unreleased\]|Unreleased)$/mu.test(
     read("CHANGELOG.md"),
   );
-  const tag = unreleased ? `v${major}.${minor}.${patch + 1}` : `v${version}`;
+  const tag =
+    prerelease !== undefined
+      ? `v${core}`
+      : unreleased
+        ? `v${major}.${minor}.${patch + 1}`
+        : `v${version}`;
   const links = read("docs/install.txt").match(/https?:\/\/[^\s<>]+/gu) ?? [];
   assert.ok(links.length > 0);
   for (const link of links) {
