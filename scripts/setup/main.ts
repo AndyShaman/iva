@@ -39,7 +39,7 @@ const SOURCE_ENV_PATH = process.env.IVA_CONFIG_INPUT
 const ENV_PATH = process.env.IVA_CONFIG_OUTPUT
   ? resolve(process.env.IVA_CONFIG_OUTPUT)
   : SOURCE_ENV_PATH;
-const STAGING_CONFIG = ENV_PATH !== SOURCE_ENV_PATH;
+const STAGING_CONFIG = process.env.IVA_CONFIG_STAGING === "1";
 const dataDirAbs = (env: Env | null | undefined) => dataDirOf(ROOT, env);
 
 // Read from tty even when launched via `curl | bash`: there stdin is the script itself,
@@ -56,17 +56,30 @@ function promptInput(): NodeJS.ReadableStream {
     return process.stdin;
   }
 }
-const rl = createInterface({ input: promptInput(), output: process.stdout });
+const rl = createInterface({
+  input: process.argv.includes("--non-interactive")
+    ? process.stdin
+    : promptInput(),
+  output: process.stdout,
+});
+
+const inputClosed = new AbortController();
+rl.on("close", () =>
+  inputClosed.abort(
+    new Error("Setup input closed. Run the installer again in a terminal."),
+  ),
+);
 
 const dialog = createDialog(
   {
-    question: (prompt) => rl.question(prompt),
+    question: (prompt) => rl.question(prompt, { signal: inputClosed.signal }),
     print: (...args) => console.log(...args),
     write: (text) => {
       process.stdout.write(text);
     },
   },
   defaultChecker(),
+  process.argv.includes("--non-interactive"),
 );
 
 export async function main(entryUrl = import.meta.url): Promise<void> {
@@ -77,6 +90,7 @@ export async function main(entryUrl = import.meta.url): Promise<void> {
     readExisting: () => loadEnvFile(SOURCE_ENV_PATH),
     codexLoggedIn: (existing) => existsSync(authFilePath(dataDirAbs(existing))),
     staging: STAGING_CONFIG,
+    firstInstall: process.argv.includes("--first-install"),
     closeInput: () => rl.close(),
   });
 }

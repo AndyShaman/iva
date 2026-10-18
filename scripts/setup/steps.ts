@@ -55,6 +55,7 @@ export const C = {
 
 /** Диалог и печать: в бою — readline мастера, в тестах — стаб. */
 export type SetupIo = {
+  nonInteractive?: boolean;
   t: (en: string, ru: string) => string;
   lang: () => string;
   print: (...args: unknown[]) => void;
@@ -272,6 +273,7 @@ async function askOpenrouterModel(
     );
     const err = await ctx.openrouterModelCheck(out.OPENROUTER_API_KEY, m);
     if (err) {
+      if (ctx.nonInteractive) throw new Error(err);
       ctx.print(
         `${C.r}${ctx.t("not ok", "не ок")}${C.x}\n${C.y}  ⚠ ${err}${C.x}\n`,
       );
@@ -343,6 +345,8 @@ async function askCustomEndpoint(
       out.CUSTOM_BASE_URL = base;
       break;
     }
+    if (ctx.nonInteractive)
+      throw new Error("CUSTOM_BASE_URL requires a full http(s) address");
     ctx.print(
       `${C.y}  ⚠ ${ctx.t("Needs a full http(s) address, e.g. https://api.example.com/v1.", "Нужен полный http(s)-адрес, напр. https://api.example.com/v1.")}${C.x}\n`,
     );
@@ -401,6 +405,7 @@ async function askCustomModel(
       out.CUSTOM_MODEL = id;
       break;
     }
+    if (ctx.nonInteractive) throw new Error("CUSTOM_MODEL is required");
     ctx.print(
       `${C.y}  ⚠ ${ctx.t("Required — this endpoint has no default model.", "Обязательно — дефолтной модели у этого эндпоинта нет.")}${C.x}\n`,
     );
@@ -441,6 +446,7 @@ async function askClaudeSettings(
     `\n  ${ctx.t("Claude by subscription: Iva calls the claude CLI on this server. No API key — sign the CLI in once and Iva uses that login.", "Claude по подписке: Ива зовёт CLI claude на этом же сервере. API-ключа нет — войдите в CLI один раз, и Ива пользуется этим входом.")}`,
   );
   let status = await ctx.claudeCli();
+  if (ctx.nonInteractive && !status.ready) throw new Error(status.hint);
   while (!status.ready) {
     ctx.print(`  ${C.y}${status.hint}${C.x}`);
     if (
@@ -1014,20 +1020,7 @@ export async function askVaultAndPort(
   ctx.print(
     `  ${ctx.t("The timezone lets Iva use your real local time, not the server's.", "Часовой пояс нужен, чтобы Iva понимала ваше реальное время, а не время сервера.")}`,
   );
-  for (;;) {
-    const candidate = await ctx.ask(
-      `  ${ctx.t("Timezone (IANA, e.g. Asia/Almaty, Asia/Tashkent, Europe/Berlin)", "Часовой пояс (IANA, напр. Asia/Almaty, Asia/Tashkent, Europe/Moscow)")}`,
-      out.ASSISTANT_TIMEZONE || "Asia/Almaty",
-    );
-    const timezone = validateTimeZone(candidate);
-    if (timezone) {
-      out.ASSISTANT_TIMEZONE = timezone;
-      break;
-    }
-    ctx.print(
-      `${C.r}  ${ctx.t("Unknown IANA timezone. Try again.", "Неизвестный часовой пояс IANA. Введите ещё раз.")}${C.x}`,
-    );
-  }
+  out.ASSISTANT_TIMEZONE = await askTimezone(ctx, out.ASSISTANT_TIMEZONE);
   out.ASSISTANT_VAULT_DIR =
     (await ctx.ask(
       `  ${ctx.t("Vault directory (memory + git backup)", "Каталог vault (память + git-бэкап)")}`,
@@ -1049,6 +1042,25 @@ export async function askVaultAndPort(
       ? `http://127.0.0.1:${out.IVA_PORT}`
       : out.ASSISTANT_HOST;
   return out;
+}
+
+async function askTimezone(
+  ctx: SetupContext,
+  current: string,
+): Promise<string> {
+  for (;;) {
+    const candidate = await ctx.ask(
+      `  ${ctx.t("Timezone (IANA, e.g. Asia/Almaty, Asia/Tashkent, Europe/Berlin)", "Часовой пояс (IANA, напр. Asia/Almaty, Asia/Tashkent, Europe/Moscow)")}`,
+      current || "Asia/Almaty",
+    );
+    const timezone = validateTimeZone(candidate);
+    if (timezone) return timezone;
+    if (ctx.nonInteractive)
+      throw new Error("ASSISTANT_TIMEZONE requires an IANA timezone");
+    ctx.print(
+      `${C.r}  ${ctx.t("Unknown IANA timezone. Try again.", "Неизвестный часовой пояс IANA. Введите ещё раз.")}${C.x}`,
+    );
+  }
 }
 
 /** Итог мастера: чем закончилась настройка. */

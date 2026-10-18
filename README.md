@@ -18,7 +18,15 @@
 
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data.
 
-**One command installs it:**
+[![Install with AI agent](https://img.shields.io/badge/Install_with_AI_agent-4d7c40?style=for-the-badge)](https://iva-agent.com/install.txt)
+
+Paste this into Claude Code, Codex or Claude Desktop:
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
+Or run the installer yourself:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | bash
@@ -103,6 +111,16 @@ Web pages, search results, voice transcripts, captions and the vision model's de
 
 ## Install
 
+[![Install with AI agent](https://img.shields.io/badge/Install_with_AI_agent-4d7c40?style=for-the-badge)](https://iva-agent.com/install.txt)
+
+Ask Claude Code, Codex or Claude Desktop to install Iva on your server or Mac:
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
+Or run the installer yourself.
+
 One command on any Ubuntu/Debian box — a fresh VPS or your own machine:
 
 ```bash
@@ -175,7 +193,16 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.4 · 18.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.5 · 19.10.2026 — expand the latest releases</b></summary>
+
+### 19.10.2026
+
+#### v0.5.5
+
+- ✨ **Install with an AI agent**: tell Claude Code, Codex or Claude Desktop: "Install Iva using https://iva-agent.com/install.txt". The agent checks your computer and server, guides setup and helps verify a bot reply.
+- 🔧 **Installation continues after an SSH disconnect**: if the connection drops during setup, repeat the installer command. Completed steps are reused, the wizard offers your saved values, and a hint helps you stop an installer still running. Thanks to Maksim Tigulev for reporting this.
+- 🔧 **Deferred setup completes with autostart**: if setup was postponed, run the installer command again. It completes autostart and sends a confirmation in Telegram. Iva keeps running after you leave the server.
+- 🔧 **Memory changes are saved on a fresh server**: Iva starts tracking changes to your memory right after installation, even when Git has not been configured on the server. Git settings for other projects are preserved.
 
 ### 18.10.2026
 
@@ -192,29 +219,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 🔧 **One damaged record is kept aside**: reminders, helpers, goals and queues keep processing the healthy records; the deduplication and usage ledgers skip damaged entries.
 - 🔎 **Watch skips what you already read, Brief counts from the previous Brief**: right before sending, Iva rechecks chats and mail, and an item you read during the turn is dropped. Brief covers the window since the previous Brief, names an unreadable source in one line and carries over an item still waiting for your reply with the days waited.
 - 🔧 **Installs on Node newer than 24**: Iva accepts Node 24 and newer, and installs on Node 26 no longer warn with EBADENGINE.
-
-### 15.10.2026
-
-#### v0.5.2
-
-- 🔧 **Userbot QR login with a cloud password**: when the scan landed on the moment the QR code was being refreshed, Telegram reported "password needed" during the refresh, Iva treated it as a login failure and could not accept the password. Now that answer is caught throughout the login, and Iva asks for the password right away.
-
-#### v0.5.1
-
-- 🔧 **Updates and installs work with npm 12**: npm 12 refuses tarball-URL dependencies by default, and that is how Iva pins its copy of eve, so on servers where npm was upgraded by hand (Node 24 ships npm 11) the "Building Iva" step failed with EALLOWREMOTE. The project now allows archive URLs for its own dependencies only.
-
-#### v0.5.0
-
-- 💬 **Replies appear as they are written, ■ stops the turn**: in private chats, Iva shows a draft and the current tool. The final answer arrives as a separate message.
-- 🎯 **Goal follows through to the result**: a helper checks for a reply or change on a schedule and keeps a plan within the boundaries you set. Iva brings the result or a question; you close the goal.
-- 🤝 **A helper takes long work into the background**: Iva hands it an assignment and keeps talking with you. She reports the outcome in the main chat; you can stop the helper in words.
-- 🛠 **eve is built from Iva's sources**: installation and updates download the ready archive `eve-0.51.1-iva.3` with Iva's changes.
-- 🔎 **Iva prepares the next step for your tasks**: Watch, Brief and Insight check current goals and prior declines. Iva cites the source and why she is writing now, then prepares a reply draft or checked next steps.
-- 🛡 **Secrets stay on the server**: before sending a file, Iva checks its contents, including binary files. Replies hide keys and tokens by value, even without a label.
-- 🔘 **Button questions handle slow sending**: choices survive delays, and tapping an old button again stays a duplicate. Links with special characters open in full, topic service events stay silent, and deleted tasks keep their identifiers.
-- 🔧 **DeepSeek continues after a tool call**: in thinking mode on Ollama Cloud and OpenCode Go, the model receives its reasoning along with the tool result.
-- 🌙 **Night preserves direct memory edits**: a conflict in one day lets the other days and the report finish. The updater preserves another process's lock and installs verified Google CLI; closed turns stay closed after a restart.
-- 🔧 **Iva retries the request up to three times after an empty response**: retries stay within the same step; previously Iva retried once.
 
 </details>
 

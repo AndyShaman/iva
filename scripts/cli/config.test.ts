@@ -412,6 +412,7 @@ async function runWizard(
         AGENT_LANGUAGE: "en",
         IVA_CONFIG_INPUT: input,
         IVA_CONFIG_OUTPUT: candidate,
+        IVA_CONFIG_STAGING: "1",
       },
       stdio: ["pipe", "pipe", "pipe"],
       // Своя сессия без управляющего терминала: иначе мастер открывает /dev/tty того, кто
@@ -751,5 +752,6 @@ test("iva config never lets an inherited fixture seed replace the live .env", as
   assert.equal(seen[0].IVA_CONFIG_INPUT, undefined);
   // А выход и остальное окружение на месте.
   assert.equal(typeof seen[0].IVA_CONFIG_OUTPUT, "string");
+  assert.equal(seen[0].IVA_CONFIG_STAGING, "1");
   assert.equal(seen[0].PATH, base.childEnv.PATH);
 });

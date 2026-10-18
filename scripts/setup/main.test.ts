@@ -86,6 +86,7 @@ async function driveWizard(
         HOME: root,
         IVA_CONFIG_INPUT: input,
         IVA_CONFIG_OUTPUT: candidate,
+        IVA_CONFIG_STAGING: "1",
         ...(options.language ? { AGENT_LANGUAGE: options.language } : {}),
       },
       stdio: ["pipe", "pipe", "pipe"],

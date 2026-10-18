@@ -294,6 +294,37 @@ function fakeRuntime({
   };
 }
 
+test("quiesce skips absent required units while stopping present writers", () => {
+  for (const absent of [
+    ["iva.service"],
+    ["iva.service", "iva-telegram-poll.service"],
+  ]) {
+    const fake = fakeRuntime({
+      active: ["iva-telegram-poll.service"],
+      enabled: [],
+      unavailable: absent,
+    });
+    const stopped: string[] = [];
+    Object.assign(fake.runtime.systemd, {
+      stop(units: readonly string[]) {
+        for (const unit of units) {
+          if (absent.includes(unit))
+            throw new Error(`stop ${unit} failed (exit 5)`);
+          stopped.push(unit);
+          fake.activeUnits.delete(unit);
+        }
+      },
+    });
+    stopWriterUnits(fake.runtime);
+    assert.deepEqual(
+      stopped,
+      absent.includes("iva-telegram-poll.service")
+        ? []
+        : ["iva-telegram-poll.service"],
+    );
+  }
+});
+
 test("quiesce stops every old writer and leaves update-check alone", () => {
   const fake = fakeRuntime({
     active: [

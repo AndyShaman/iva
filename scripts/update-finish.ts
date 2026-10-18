@@ -214,28 +214,41 @@ export function captureOptionalWriterState(
   });
 }
 
-/** Stop every present writer. Missing optional units remain a valid legacy state. */
+/** Stop every present writer, including a partially installed set of core units. */
 export function stopWriterUnits(
   runtime: WriterRuntime,
   optional = captureOptionalWriterState(runtime),
 ): void {
-  const optionalTimers = optional
-    .filter(
-      (state) => present(state.loadState) && state.unit.endsWith(".timer"),
-    )
+  const loadedOptional = optional.filter((state) => present(state.loadState));
+  const optionalTimers = loadedOptional
+    .filter((state) => state.unit.endsWith(".timer"))
     .map((state) => state.unit);
-  const optionalServices = optional
-    .filter(
-      (state) => present(state.loadState) && state.unit.endsWith(".service"),
-    )
+  const optionalServices = loadedOptional
+    .filter((state) => state.unit.endsWith(".service"))
     .map((state) => state.unit);
   for (const writers of [optionalTimers, optionalServices, runtime.SERVICES]) {
     if (writers.length === 0) continue;
-    runtime.systemd.stop(writers);
-    for (const unit of writers) {
+    for (const unit of stopPresentWriters(runtime, writers)) {
       if (unitActive(runtime, unit))
         throw new Error(`writer ${unit} remained active after stop`);
     }
+  }
+}
+
+function stopPresentWriters(
+  runtime: WriterRuntime,
+  writers: readonly string[],
+): readonly string[] {
+  try {
+    runtime.systemd.stop(writers);
+    return writers;
+  } catch (error) {
+    const loaded = writers.filter((unit) =>
+      present(unitLoadState(runtime, unit)),
+    );
+    if (loaded.length === writers.length) throw error;
+    if (loaded.length > 0) runtime.systemd.stop(loaded);
+    return loaded;
   }
 }
 

@@ -10,6 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | b
 
 ## Docs
 
+- [Install with an AI agent](https://iva-agent.com/install.txt): Instructions for an agent to install or repair Iva for the person
 - [Use cases](https://iva-agent.com/use-cases.md): Who runs Iva and for what — scenarios for business owners, specialists, executives and everyday life
 - [Install](https://iva-agent.com/install.md): One command on a fresh Ubuntu VPS — requirements, what install.sh does, flags, and the bot's first message
 - [Configuration](https://iva-agent.com/configuration.md): Every .env variable and the setup wizard (`iva config`)

@@ -19,6 +19,15 @@
 - 🧩 **Ключи и сайты видны до установки плагина**: раньше предложение показывало только команды и число файлов. Теперь в предложении нового плагина видно, какие ключи и сайты ему нужны. New plugin proposals show the required key names and network hosts declared in the draft README before installation.
 - 📊 **Ива может объяснить, почему подорожал ход**: журнал расхода сохраняет короткие отпечатки инструкций, блоков кэша и инструментов, чтобы отличить смену запроса от обычного продолжения разговора. Request fingerprints help explain fresh cache writes and increased token use without storing prompt text.
 
+## [0.5.5] - 2026-10-19
+
+- ✨ **Установить через ИИ-агента**: скажите Claude Code, Codex или Claude Desktop: «Установи Иву по инструкции https://iva-agent.com/install.txt». Агент проверит компьютер и сервер, проведёт настройку и поможет получить ответ бота. Tell Claude Code, Codex or Claude Desktop: "Install Iva using https://iva-agent.com/install.txt". The agent checks your computer and server, guides setup and helps verify a bot reply.
+- 🔧 **Установка продолжается после обрыва SSH**: если связь с сервером оборвалась посреди настройки, повторите команду установки. Готовые шаги сохраняются, мастер предлагает прежние значения, а подсказка помогает остановить оставшийся установщик. Спасибо за отчёт Максиму Тигулеву. If the connection drops during setup, repeat the installer command. Completed steps are reused, the wizard offers your saved values, and a hint helps you stop an installer still running. Thanks to Maksim Tigulev for reporting this.
+- 🔧 **Отложенная установка завершается с автозапуском**: если настройка была отложена, запустите команду установки ещё раз. Она завершит настройку автозапуска и пришлёт подтверждение в Telegram. Ива продолжает работать после выхода с сервера. If setup was postponed, run the installer command again. It completes autostart and sends a confirmation in Telegram. Iva keeps running after you leave the server.
+- 🔧 **История памяти создаётся на свежем сервере**: Ива начинает сохранять историю изменений памяти сразу после установки, даже если Git на сервере ещё не настроен. Настройки Git для других проектов сохраняются. Iva starts tracking changes to your memory right after installation, even when Git has not been configured on the server. Git settings for other projects are preserved.
+
+[0.5.5]: https://github.com/smixs/iva-agent/releases/tag/v0.5.5
+
 ## [0.5.4] - 2026-10-18
 
 - ✨ **Ива работает на Mac**: установщик сам определяет Mac и настраивает Иву. Бот работает сразу после установки и запускается после перезагрузки и входа в систему. Обновлять можно кнопкой в Telegram или командой `iva update`. Mac должен быть включён и не спать. The installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.

@@ -34,6 +34,8 @@ export type WizardDeps = {
   readonly codexLoggedIn: (existing: Env) => boolean;
   /** Запись идёт в файл-кандидат `iva config`, а не в живой .env. */
   readonly staging: boolean;
+  /** First installation walks the settings, with saved values as defaults. */
+  readonly firstInstall?: boolean;
   readonly closeInput: () => void;
 };
 
@@ -70,20 +72,36 @@ const PROVIDER_MENU = [
 ];
 const LANGUAGES = new Set(["en", "ru"]);
 
+const SETTINGS_STEPS = [
+  askProviderSettings,
+  askKeysSettings,
+  askTelegramSettings,
+  askVaultAndPort,
+];
 const STEPS: readonly Step[] = [
   chooseLanguage,
   reportInvalidProvider,
   confirmSetup,
   chooseProvider,
-  settingsStep(askProviderSettings),
-  settingsStep(askKeysSettings),
-  settingsStep(askTelegramSettings),
-  settingsStep(askVaultAndPort),
+  ...SETTINGS_STEPS.map(settingsStep),
   writeStep,
 ];
 
 export async function runWizard(deps: WizardDeps): Promise<void> {
   const progress = await start(deps);
+  if (deps.ctx.nonInteractive) {
+    const { config, existing } = progress;
+    deps.setLang(existing.AGENT_LANGUAGE || "en");
+    if (!config.isComplete)
+      throw new Error(
+        "--env-file requires a valid MODEL_PROVIDER, its model and key or subscription login, TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_IDS",
+      );
+    progress.provider = config.prov0;
+    for (const step of SETTINGS_STEPS) await settingsStep(step)(progress);
+    await writeStep(progress);
+    deps.closeInput();
+    return;
+  }
   for (const step of STEPS) if (!(await step(progress))) break;
   deps.closeInput();
 }
@@ -92,7 +110,9 @@ async function start(deps: WizardDeps): Promise<Progress> {
   const existing = await deps.readExisting();
   return {
     deps,
-    ctx: deps.ctx,
+    ctx: deps.ctx.nonInteractive
+      ? { ...deps.ctx, envValue: (name) => existing[name] }
+      : deps.ctx,
     existing,
     out: { ...existing, ASSISTANT_BEARER: bearerOf(existing) },
     config: existingConfiguration(existing, deps.codexLoggedIn),
@@ -222,7 +242,7 @@ function reportInvalidProvider(p: Progress): Promise<boolean> {
 
 // Уже настроено? По шагам не идём — спрашиваем один раз.
 function confirmSetup(p: Progress): Promise<boolean> {
-  if (p.config.isComplete) return keepOrReconfigure(p);
+  if (p.config.isComplete && !p.deps.firstInstall) return keepOrReconfigure(p);
   printFreshSetupIntro(p.ctx);
   return Promise.resolve(true);
 }

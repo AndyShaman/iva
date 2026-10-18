@@ -23,6 +23,7 @@ export type Dialog = SetupIo & { readonly setLang: (lang: string) => void };
 
 type Translate = (en: string, ru: string) => string;
 type Core = DialogPort & {
+  readonly nonInteractive: boolean;
   readonly t: Translate;
   readonly checker: PortChecker;
 };
@@ -31,11 +32,16 @@ type Offer = { readonly def: string; readonly existing: string };
 
 const TOTAL_STEPS = 5;
 
-export function createDialog(port: DialogPort, checker: PortChecker): Dialog {
+export function createDialog(
+  port: DialogPort,
+  checker: PortChecker,
+  nonInteractive = false,
+): Dialog {
   let lang = "ru";
   const t: Translate = (en, ru) => (lang === "en" ? en : ru);
-  const d: Core = { ...port, t, checker };
+  const d: Core = { ...port, t, checker, nonInteractive };
   return {
+    nonInteractive,
     t,
     lang: () => lang,
     setLang: (next) => {
@@ -117,6 +123,7 @@ function ask(
 function carriedOffer(d: Core, offer: Offer): Offer {
   const complaint = envComplaint(d.t, offer.existing || offer.def);
   if (!complaint) return offer;
+  if (d.nonInteractive) throw new Error(complaint);
   d.print(
     `${C.y}  ⚠ ${d.t("The value in .env cannot stay", "Значение из .env оставить нельзя")}: ${complaint}${C.x}\n`,
   );
@@ -130,7 +137,7 @@ async function askRound(
 ): Promise<string | null> {
   const answer = settle(
     d,
-    (await d.question(prompt(q, offer.def))).trim(),
+    (d.nonInteractive ? "" : await d.question(prompt(q, offer.def))).trim(),
     offer,
   );
   const complaint = envComplaint(d.t, answer);
@@ -153,6 +160,7 @@ const keepsExisting = (d: Core, typed: string, existing: string) =>
 // Ответ «да/нет» в .env не пишется, поэтому проверка значения для .env его не касается:
 // иначе русское «да» отвергалось как символ вне латиницы.
 async function askYesNo(d: Core, q: string, def = false): Promise<boolean> {
+  if (d.nonInteractive) return def;
   const answer = (await d.question(`${q} (${yesNoHint(def)}): `)).trim();
   return answer ? isYesAnswer(answer) : def;
 }
@@ -191,6 +199,7 @@ async function requiredRound(
   const existing = options.existing ?? "";
   const answer = (await ask(d, label, mask(d, existing), existing)).trim();
   if (!answer) {
+    if (d.nonInteractive) throw new Error(`${label}: required in --env-file`);
     d.print(
       `${C.y}  ⚠ ${d.t("Required field — Iva won't run without it. Enter a value.", "Обязательное поле — без него Iva не заработает. Введите значение.")}${C.x}\n`,
     );
@@ -212,6 +221,7 @@ async function validated(
   d.write(`  ${d.t("checking…", "проверяю…")} `);
   const err = await validate(answer);
   if (err) {
+    if (d.nonInteractive) throw new Error(err);
     d.print(`${C.r}${d.t("not ok", "не ок")}${C.x}\n${C.y}  ⚠ ${err}${C.x}\n`);
     return null;
   }
@@ -234,6 +244,7 @@ async function pickFromList(
   current: string,
   recommended: string,
 ): Promise<string> {
+  if (d.nonInteractive && current) return current;
   const ids = items.map(itemId);
   items.forEach((item, i) =>
     d.print(listLine(itemLabel(item), i, itemId(item) === recommended)),
@@ -295,6 +306,7 @@ async function portRound(d: Core, def: string): Promise<string | null> {
     ),
   );
   if (port === null) {
+    if (d.nonInteractive) throw new Error("IVA_PORT must be a number 1..65535");
     d.print(
       `  ${C.r}${d.t("Invalid port", "Некорректный порт")}${C.x} — ${d.t("must be a number 1..65535.", "нужно число 1..65535.")}`,
     );
@@ -350,6 +362,7 @@ async function offerFreePort(
   holders: readonly string[],
 ): Promise<string | null> {
   const free = await new PortSelector(d.checker).firstFree(port + 1);
+  if (d.nonInteractive && !free) throw new Error("No free IVA_PORT found");
   d.print(
     `  ${C.y}${d.t(`Port ${port} is busy${holdersNote(holders)}.`, `Порт ${port} занят${holdersNote(holders)}.`)}${C.x}${freeNote(d, free)}`,
   );

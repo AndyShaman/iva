@@ -18,6 +18,7 @@
 # Flags (via `curl ... | bash -s -- <flags>`):
 #   --skip-setup        don't run the setup wizard (run it yourself: npm run setup)
 #   --non-interactive   don't ask any questions (use defaults; skip setup)
+#   --env-file <path>   validate and complete first-install settings without the wizard
 #   -h, --help          show this help
 # Instant reassurance: print something right away so there's no silence at startup.
 printf '\n  \033[36m⏳ Preparing environment / Идёт подготовка окружения — up to a minute, do not interrupt…\033[0m\n'
@@ -250,6 +251,7 @@ INSTALL_ENV_BACKUP=""
 INSTALL_OUTPUT_BACKUP=""
 INSTALL_LOCK=""
 INSTALL_DATA=""
+SETUP_PID=""
 # Set once the installation is known to hold the user's own state again — after a clean
 # rollback, or after a finished install. Only then are the copies this run made duplicates
 # that may be dropped.
@@ -293,7 +295,7 @@ process.stdout.write(resolveDataDir(root, process.env.ASSISTANT_DATA_DIR));
     if [ -f "$lock/pid" ]; then
       owner="$(cat "$lock/pid" 2>/dev/null || true)"
       if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
-        die "$(t "Another installer is already running here (pid $owner, lock: $lock). Wait for it to finish, or stop it, and run this again." "Здесь уже работает другой установщик (pid $owner, лок: $lock). Дождитесь его или остановите — и запустите снова.")"
+        die "$(t "Another installer is already running here (pid $owner, lock: $lock). Wait for it to finish. To stop an interrupted install, run: kill -TERM $owner; then run the installer again." "Здесь уже работает другой установщик (pid $owner, лок: $lock). Дождитесь его. Чтобы остановить оборванную установку, выполните: kill -TERM $owner; затем запустите установщик снова.")"
       fi
     # No owner written yet: the installer that made this directory is a moment away from
     # writing its pid into it, and taking the lock now would run two of us. Only a lock
@@ -455,6 +457,7 @@ hand_installation_to_repair() {
     || die "$(t "Couldn't download $url — check the network and run again." "Не удалось скачать $url — проверьте сеть и запустите снова.")"
   step "$(t "Iva is already installed in $INSTALL_DIR — handing it to the updater" "Iva уже установлена в $INSTALL_DIR — передаю обновлятору")"
   if IVA_INSTALL_DIR="$INSTALL_DIR" AGENT_LANGUAGE="$IVA_LANG" bash "$script"; then rc=0; else rc=$?; fi
+  if [ "$rc" -eq 0 ]; then rm -f -- "$INSTALL_DIR/.iva-installing"; fi
   # Отменять нечего: дерева этот ход не касался, всю работу сделал обновлятор, и его код
   # возврата - ответ всей команды.
   INSTALL_COMPLETE=true
@@ -498,6 +501,11 @@ finalize_install() {
   set +e
   # A log that stopped being writable mid-run must not take the rollback down with it: the
   # redirects below would fail before their commands ever ran.
+  if [ -n "$SETUP_PID" ]; then
+    kill -TERM "$SETUP_PID" 2>/dev/null
+    wait "$SETUP_PID" 2>/dev/null
+    SETUP_PID=""
+  fi
   : >>"$INSTALL_LOG" 2>/dev/null || INSTALL_LOG=/dev/null
   stop_spinner
   if [ "$INSTALL_COMPLETE" != true ]; then
@@ -521,14 +529,19 @@ trap 'stop_spinner; exit 129' HUP
 # to each interactive consumer from /dev/tty, and probe for a terminal by trying to open it.
 RUN_SETUP=true
 NON_INTERACTIVE=false
+ENV_FILE=""
 if [ -t 0 ]; then IS_INTERACTIVE=true; else IS_INTERACTIVE=false; fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-setup)      RUN_SETUP=false ;;
     --non-interactive) NON_INTERACTIVE=true; RUN_SETUP=false ;;
+    --env-file)
+      [ -n "${2:-}" ] && [ -f "$2" ] && [ -r "$2" ] || die '--env-file requires a readable file'
+      NON_INTERACTIVE=true
+      ENV_FILE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
     -h|--help)
-      sed -n '2,19p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+      sed -n '2,22p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) warn "$(t "unknown flag: $1 (ignoring)" "неизвестный флаг: $1 (игнорирую)")" ;;
   esac
@@ -570,7 +583,8 @@ prompt_yes_no() {
 # so the language is asked exactly once.
 pick_language() {
   local ans="" default_lang="en" existing_env=""
-  if [ -f "$INSTALL_DIR/.env" ]; then existing_env="$INSTALL_DIR/.env"
+  if [ -n "${ENV_FILE:-}" ]; then existing_env="$ENV_FILE"
+  elif [ -f "$INSTALL_DIR/.env" ]; then existing_env="$INSTALL_DIR/.env"
   elif [ -f "./.env" ]; then existing_env="./.env"
   fi
   if [ -n "$existing_env" ]; then
@@ -610,15 +624,33 @@ SCRIPT_DIR=""
 if [ -n "$SOURCE" ] && [ -f "$SOURCE" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 fi
-# A configured installation, not merely a directory: an abandoned first clone has a .git
-# and still has every heavy package stage ahead of it, so .env (or the versioned layout)
-# is what tells a re-run from a first install.
+# Layout owns the route. Disabled units do not change the identity of an installation.
+iva_checkout() {
+  [ -d "$1/.git" ] && [ -f "$1/package.json" ] && grep -q '"eve"' "$1/package.json"
+}
+versioned_installation() {
+  [ -d "$1/versions" ] && { [ -e "$1/current" ] || [ -L "$1/current" ]; }
+}
+RESUME_FIRST_INSTALL=false
+if iva_checkout "$INSTALL_DIR" \
+  && { grep -qx 'autostart=false' "$INSTALL_DIR/.iva-installed" 2>/dev/null \
+    || { [ -f "$INSTALL_DIR/.iva-installing" ] && [ ! -f "$INSTALL_DIR/.iva-installed" ]; }; }; then
+  RESUME_FIRST_INSTALL=true
+fi
 INSTALL_EXISTS=false
-if [ -f "$INSTALL_DIR/.env" ] || [ -d "$INSTALL_DIR/versions" ]; then
+if versioned_installation "$INSTALL_DIR" || { iva_checkout "$INSTALL_DIR" && [ "$RESUME_FIRST_INSTALL" = false ]; }; then
   INSTALL_EXISTS=true
-elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/.env" ] && [ -f "$SCRIPT_DIR/package.json" ] \
-  && grep -q '"eve"' "$SCRIPT_DIR/package.json"; then
-  INSTALL_EXISTS=true
+fi
+# A foreign or incomplete layout must be left intact, including its hidden files.
+if { [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; } \
+  && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ] \
+  && ! iva_checkout "$INSTALL_DIR" && ! versioned_installation "$INSTALL_DIR"; then
+  printf -v occupied_path '%q' "$INSTALL_DIR"
+  die "$(t "INSTALL_DIR is occupied by an unrecognized tree. Inspect it: ls -la $occupied_path" "INSTALL_DIR занят неизвестным деревом. Осмотрите его: ls -la $occupied_path")"
+fi
+
+if [ -n "$ENV_FILE" ] && [ "$INSTALL_EXISTS" = true ]; then
+  die "$(t '--env-file is for a first install only; use iva config for this installation.' '--env-file доступен только при первой установке; для этой установки выполните iva config.')"
 fi
 
 # A pending reboot after a kernel upgrade is a dead end for a first install: needrestart
@@ -646,7 +678,12 @@ if [ -e "$REBOOT_FLAG" ]; then
 fi
 
 # root runs directly; otherwise via sudo (cache the password once).
-run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; elif have_tty; then sudo "$@"; else sudo -n "$@"; fi; }
+HEADLESS_SUDO=false
+if [ "$(id -u)" -ne 0 ] && [ "$IVA_OS" != Darwin ] && ! have_tty && ! sudo -n true 2>/dev/null; then
+  HEADLESS_SUDO=true
+  warn "$(t 'sudo needs a terminal; run bootstrap.sh as root to prepare system packages, then retry installation.' 'sudo требует TTY; выполните bootstrap.sh от root для установки системных пакетов, затем повторите установку.')"
+fi
 
 # apt through plain run_root would lose DEBIAN_FRONTEND/NEEDRESTART_MODE the moment sudo
 # resets the environment, so pass them through `env` — which runs as root and hands them
@@ -797,7 +834,7 @@ if [ "${#need_pkgs[@]}" -gt 0 ]; then
     step "$(t "Need system packages: ${need_pkgs[*]} (via $PM)" "Нужны системные пакеты: ${need_pkgs[*]} (через $PM)")"
     # Cache the sudo password once up front (if not root and sudo is needed).
     if [ "$(id -u)" -ne 0 ] && [ "$PM" != "brew" ]; then
-      sudo -v || warn "$(t "sudo unavailable — system packages may not install" "sudo недоступен — системные пакеты могут не установиться")"
+      if have_tty; then sudo -v; else sudo -n -v; fi || warn "$(t "sudo unavailable — system packages may not install" "sudo недоступен — системные пакеты могут не установиться")"
     fi
     case "$PM" in
       apt)
@@ -820,7 +857,7 @@ if command -v gh >/dev/null 2>&1; then
   ok "$(t "gh ready" "gh готов")"
 else
   step "$(t "Installing optional GitHub CLI…" "Устанавливаю необязательный GitHub CLI…")"
-  install_optional_gh >>"$INSTALL_LOG" 2>&1 || true
+  if [ "$HEADLESS_SUDO" != true ]; then install_optional_gh >>"$INSTALL_LOG" 2>&1 || true; fi
   if command -v gh >/dev/null 2>&1; then
     ok "$(t "gh ready" "gh готов")"
     if [ -n "$OPTIONAL_GH_APT_CLEANUP_DEBT" ]; then
@@ -912,7 +949,7 @@ checkout_release() {
 #    resolved at the top.
 # ─────────────────────────────────────────────────────────────────────────
 CURRENT_STEP="$(t "reading the installation" "чтение установки")"
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ] && grep -q '"eve"' "$SCRIPT_DIR/package.json"; then
+if ! versioned_installation "$INSTALL_DIR" && iva_checkout "$SCRIPT_DIR"; then
   PROJECT_DIR="$SCRIPT_DIR"
   UPDATE_CHANNEL="$(git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true)"
   UPDATE_CHANNEL="${UPDATE_CHANNEL:-main}"
@@ -922,7 +959,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ] && grep -q '"eve"' 
   # installer itself tells people to re-run, so it owes them the same undo as any other.
   CURRENT_STEP="$(t "saving your files" "сохранение ваших файлов")"
   save_env_copy
-elif [ -d "$INSTALL_DIR/.git" ] || [ -d "$INSTALL_DIR/versions" ]; then
+elif [ "$INSTALL_EXISTS" = true ]; then
   # Iva уже установлена: обновлять её установщик не имеет права - обновлятор один.
   # Куда идти с этим деревом, решает repair.sh того же канала: маркер `.iva-dev` -
   # отказ, версионная раскладка - её собственный обновлятор, чекаут - назад на релиз и
@@ -934,6 +971,11 @@ elif [ -d "$INSTALL_DIR/.git" ] || [ -d "$INSTALL_DIR/versions" ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then PROJECT_DIR="$INSTALL_DIR"; acquire_install_lock "$INSTALL_DIR/data"; fi
   record_beta_choice
   hand_installation_to_repair
+elif [ "$RESUME_FIRST_INSTALL" = true ]; then
+  PROJECT_DIR="$INSTALL_DIR"
+  step "$(t "Continuing first installation: $PROJECT_DIR" "Продолжаю первую установку: $PROJECT_DIR")"
+  acquire_install_lock
+  save_env_copy
 else
   run_stage "$(t "Cloning Iva" "Клонирую Iva")" "$(t "Iva downloaded" "Iva загружена")" \
     git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
@@ -942,6 +984,9 @@ else
   acquire_install_lock
 fi
 cd "$PROJECT_DIR"
+if [ "$INSTALL_EXISTS" != true ]; then
+  (umask 077; : >"$PROJECT_DIR/.iva-installing")
+fi
 
 # ─────────────────────────────────────────────────────────────────────────
 # 5. npm dependencies. Detect-then-skip: a re-run after a late failure must not
@@ -988,11 +1033,15 @@ if command -v agent-browser >/dev/null 2>&1 && agent-browser open about:blank >/
 else
   echo "  ${c_yellow}$(t "Chromium and its system libraries may take 1–3 minutes." "Chromium и системные библиотеки могут устанавливаться 1–3 минуты.")${c_reset}"
   # Refresh the sudo cache ahead of time (a visible prompt here, not a hidden one mid-install).
-  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then sudo -v 2>/dev/null || true; fi
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    if have_tty; then sudo -v; else sudo -n -v; fi 2>/dev/null || true
+  fi
   agent_browser_rc=0
   if run_stage "$(t "Installing agent-browser" "Ставлю agent-browser")" "$(t "agent-browser installed" "agent-browser установлен")" \
     install_verified_npm_tarball agent-browser "$AGENT_BROWSER_TARBALL_URL" "$AGENT_BROWSER_TARBALL_SHA256"; then
-    run_stage "$(t "Downloading Chromium" "Скачиваю Chromium")" "$(t "Chromium ready" "Chromium готов")" agent-browser install --with-deps \
+    browser_install=(agent-browser install)
+    if [ "$HEADLESS_SUDO" != true ]; then browser_install+=(--with-deps); fi
+    run_stage "$(t "Downloading Chromium" "Скачиваю Chromium")" "$(t "Chromium ready" "Chromium готов")" "${browser_install[@]}" \
       || warn "$(t "Finish later: agent-browser install --with-deps" "Завершите позже: agent-browser install --with-deps")"
     # Chrome won't start on Ubuntu 23.10+/24.04: the kernel forbids unprivileged user
     # namespaces (AppArmor) → "No usable sandbox". On Linux, enable --no-sandbox by
@@ -1049,11 +1098,29 @@ fi
 # ─────────────────────────────────────────────────────────────────────────
 CURRENT_STEP="$(t "setup wizard" "мастер настройки")"
 SETUP_DONE=false
-if [ "$RUN_SETUP" = false ]; then
+# An asynchronous wait lets bash handle HUP/TERM while setup is waiting for input.
+# The exit handler stops setup before releasing the installer lock.
+run_setup() {
+  IVA_CONFIG_STAGING=0 node scripts/setup.mjs "$@" <&0 &
+  SETUP_PID=$!
+  local rc=0
+  wait "$SETUP_PID" || rc=$?
+  SETUP_PID=""
+  return "$rc"
+}
+if [ -n "$ENV_FILE" ]; then
+  IVA_CONFIG_INPUT="$ENV_FILE" IVA_CONFIG_OUTPUT="$PROJECT_DIR/.env" run_setup --non-interactive </dev/null
+  SETUP_DONE=true
+elif [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
-  node scripts/setup.mjs < /dev/tty && SETUP_DONE=true
+  if [ "$RESUME_FIRST_INSTALL" = true ]; then
+    run_setup --first-install < /dev/tty
+  else
+    run_setup < /dev/tty
+  fi
+  SETUP_DONE=true
 else
   warn "$(t "No terminal (/dev/tty) — skipping the wizard. Run it later: cd $PROJECT_DIR && npm run setup" "Нет терминала (/dev/tty) — пропускаю мастер. Запустите потом: cd $PROJECT_DIR && npm run setup")"
 fi
@@ -1201,7 +1268,7 @@ if [ "$AUTOSTART_READY" = true ]; then
     _chat="$(grep -E '^TELEGRAM_ALLOWED_USER_IDS=' .env | head -n1 | cut -d= -f2- | tr -d '"' | cut -d, -f1 || true)"
   fi
   if [ -n "$_bot" ] && [ -n "$_chat" ]; then
-    curl -s "https://api.telegram.org/bot$_bot/sendMessage" \
+    printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$_bot" | curl -s --config - \
       --data-urlencode "chat_id=$_chat" \
       --data-urlencode "text=$(t "✅ Iva is installed and online. Send me a message — I'll reply." "✅ Iva установлена и на связи. Напишите мне сообщение — отвечу.")" >/dev/null 2>&1 \
       && ok "$(t "Sent you a confirmation in Telegram — open the chat with the bot" "Отправил вам подтверждение в Telegram — откройте чат с ботом")" \
@@ -1214,6 +1281,8 @@ fi
 git -C "$PROJECT_DIR" config --local iva.updateBranch "$UPDATE_CHANNEL" 2>/dev/null \
   || warn "$(t "couldn't record the update branch (not a git checkout) — 'iva update' will use the default" "не записал ветку обновлений (не git-checkout) — 'iva update' возьмёт ветку по умолчанию")"
 
+(umask 077; printf 'autostart=%s\n' "$AUTOSTART_READY" >"$PROJECT_DIR/.iva-installed")
+rm -f -- "$PROJECT_DIR/.iva-installing"
 finish_install_update
 INSTALL_COMPLETE=true
 
@@ -1244,13 +1313,17 @@ echo "  ${c_yellow}${c_bold}$(t "Vault backup in git" "Vault-бэкап в git")
 echo "    gh auth login"
 echo "    gh repo create <user>/iva-vault --private --source=\"$VAULT_PATH\" --remote=origin --push"
 echo
-echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+if [ "$AUTOSTART_READY" = true ]; then
+  echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
+  if [ "$IVA_OS" = Darwin ]; then
+    echo "    iva status"
+    echo "    iva logs -f"
+  else
+    echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
+    echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
+  fi
+fi
 if [ "$IVA_OS" = Darwin ]; then
-  echo "    iva status"
-  echo "    iva logs -f"
   echo "$(t 'Iva runs while this Mac is on, awake and you are logged in. If it is off at night, that night’s memory care is skipped. For round-the-clock operation use a server or a Mac that stays awake (Settings → Battery / Energy Saver).' 'Ива работает, пока этот Mac включён, не спит и вы вошли в систему. Если Mac выключен ночью, ночной уход за памятью в эту ночь пропускается. Для работы круглосуточно — сервер или Mac, который не засыпает (Настройки → Аккумулятор / Энергосбережение)')"
-else
-echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
-echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
 fi
 echo
