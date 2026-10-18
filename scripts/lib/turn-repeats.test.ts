@@ -438,6 +438,95 @@ const c1Shape = (rows: Row[]) =>
     row.kind === "eve" ? { ...row, source: "channel:telegram" } : row,
   );
 
+for (const [command, expected] of [
+  ["sudo -U alice gh api", "gh api"],
+  ["sudo -h myhost", ""],
+  ["sudo -p hunter2", ""],
+  ["sudo -iu root gh api", "gh api"],
+  ["env -P /opt/secretdir gh api", "gh api"],
+  ["ssh myhost uptime", "ssh"],
+  ["gh abcdef0123456789", "gh"],
+  [`gh ${"x".repeat(21)}`, "gh"],
+] as const) {
+  void test(`R317b: ${command} keeps only the program and a permitted subcommand`, (t) => {
+    const rows = turn(1, NOW - 60_000, {
+      actions: [TOOL("bash")],
+      args: [{ command }],
+      steps: 15,
+    });
+    const [line] = listTurnRepeats(journal(t, rows), NOW);
+    assert.ok(line);
+    const head = expected ? ` bash:${expected}` : "";
+    assert.ok(line.startsWith(`1× long without skill${head} ·`), line);
+    assert.doesNotMatch(
+      line,
+      /alice|myhost|hunter2|root|secretdir|abcdef0123456789/u,
+    );
+  });
+}
+
+void test("R317b: known subcommands retain the 20-character boundary and the reading stop-list", (t) => {
+  for (const [command, expected] of [
+    [`gh ${"x".repeat(20)}`, `bash:gh ${"x".repeat(20)}`],
+    ["gws gmail list", "bash:gws gmail"],
+    ["iva trace show", ""],
+    ["git status", "bash:git status"],
+  ]) {
+    const rows = turn(1, NOW - 60_000, {
+      actions: [TOOL("bash")],
+      args: [{ command }],
+      steps: 15,
+    });
+    const [line] = listTurnRepeats(journal(t, rows), NOW);
+    assert.ok(
+      line.startsWith(
+        `1× long without skill${expected ? ` ${expected}` : ""} ·`,
+      ),
+      line,
+    );
+  }
+});
+
+for (const seed of [1831711, 1831712]) {
+  void test(`R317b PROPERTY: wrapper values and secret-shaped subcommands stay out of heads (seed=${seed})`, (t) => {
+    const dir = journal(t, []);
+    const file = join(dir, "trace", "2026-10-18.jsonl");
+    fc.assert(
+      fc.property(
+        fc.constantFrom(..."pUhrtDRTP"),
+        fc.constantFrom("", "i", "iv"),
+        fc.stringMatching(/^[a-f][0-9a-f]{11,18}$/u),
+        (flag, cluster, secret) => {
+          for (const command of [
+            `sudo -${cluster}${flag} private-${secret} gh api`,
+            `gh ${secret}`,
+          ]) {
+            const rows = turn(1, NOW - 60_000, {
+              actions: [TOOL("bash")],
+              args: [{ command }],
+              steps: 15,
+            });
+            writeFileSync(
+              file,
+              rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+            );
+            const [line] = listTurnRepeats(dir, NOW);
+            assert.ok(
+              line.startsWith(
+                `1× long without skill bash:gh${command.startsWith("sudo") ? " api" : ""} ·`,
+              ),
+              line,
+            );
+            assert.equal(line.includes(secret), false, line);
+            assert.equal(line.includes("private-"), false, line);
+          }
+        },
+      ),
+      { seed, numRuns: 60 },
+    );
+  });
+}
+
 void test("R317-1: Eve channel:telegram events join Telegram inbound while http stays excluded", (t) => {
   const options = { actions: [TOOL("send_file")], args: [{}], steps: 15 };
   const rows = c1Shape(turn(1, NOW - 60_000, options));
@@ -517,7 +606,7 @@ void test("R317-4: c1-shaped mixed-source actions preserve skills and safe bash 
   assert.equal(lines.length, 1);
   assert.match(
     lines[0],
-    /3× repeat bash:gh api → bash:cmd run → skill:watch → send_file/u,
+    /3× repeat bash:gh api → bash:cmd → skill:watch → send_file/u,
   );
   assert.match(lines[0], /median steps 3.*tokens 90.*skill yes.*s1\/turn_1$/u);
   assert.doesNotMatch(lines[0], /TOKEN|123456|private/u);
