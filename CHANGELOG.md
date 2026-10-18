@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 🔎 **Память находит имя в любом падеже**: поиск по карточкам снимает русские окончания и не различает ё и е, поэтому «Ильёй встреча» находит карточку Ильи, а «Аксенов» — Аксёнова. Старые строки из раздела «История» и заменённые карточки ищутся только когда спрашивают о прошлом. Memory search now matches Russian word forms and treats ё as е; the History section and superseded, archived, cancelled or reverted cards are searched only when the query asks about the past.
+
 ## [0.5.3] - 2026-10-16
 
 - 🔧 **Нажатый стоп больше не останавливает приём сообщений**: если Telegram присылал апдейт, который Ива не могла разобрать (так случилось с кнопкой ■ на черновике ответа), приём вставал целиком, и сообщения после него не доходили. Теперь такой апдейт пропускается с записью в журнал, остальные идут дальше; стоп с неожиданными полями сверяет обработчик стопа. One Telegram update that fails validation no longer stalls the whole getUpdates batch: it is acknowledged and logged with its field shape, and the updates after it are processed.
