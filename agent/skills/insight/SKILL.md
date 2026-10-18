@@ -60,6 +60,7 @@ to the owner. Nothing fits — `QUIET`.
    Routine: every firing of a Routine reaches the owner. The sensor takes the
    report command from `SIGNAL` (default `iva signal`); its trial run below sets
    `SIGNAL=echo`, so the trial prints and never sends.
+   The sensor passes `--key <plugin:event-id>`, stable for the event, so the same pending event reaches the owner once.
 4. Run every script once on the owner's real case, with a clean environment so
    the draft does not inherit keys:
    `env -i PATH="$PATH" HOME="$HOME" SIGNAL=echo PLUGIN_DATA="$(mktemp -d)" <command>`.
