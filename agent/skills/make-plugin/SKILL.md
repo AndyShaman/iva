@@ -1,6 +1,6 @@
 ---
 name: make-plugin
-description: "Use when the owner asks for a new capability ('make a plugin that…', 'teach yourself to…', 'connect X') or asks how to write a plugin: build it as a plugin folder, install a skills-only one yourself, propose one with code or MCP for the owner's tap."
+description: "Use when the owner asks for a new capability ('make a plugin that…', 'teach yourself to…', 'connect X'), asks how to write a plugin, or taps Disable <name> after an Insight: build a plugin folder, install skills-only plugins yourself, and propose code or MCP for the owner's tap."
 ---
 
 # Make a plugin
@@ -28,6 +28,8 @@ version ("Write your own"); read it before the first plugin of a turn.
   with a part the reader would drop and names the line.
 - No symlinks, no secrets in files: keys go to `.env` or `data/plugin-data/<name>/`, named in the
   README.
+- A draft that fixes a failure follows `insight`'s safe before/after comparison
+  on the failing input, with results in README and the proposal.
 
 ## 2. Install
 
@@ -46,6 +48,11 @@ In an Insight turn you only build and run the draft; installing waits for the ow
   installed plugin is `iva plugin update <name>` in the owner's terminal: tell the owner.
 - A refusal from `propose` or `add` is plain text: fix the draft (the diagnostic names the file)
   and run it again.
+
+After a confirmed failure-fix install, record its actual time on the Insight Card.
+On an owner's `Disable <name>` tap, match the Card and installed plugin, then run
+`iva plugin disable <name>`. Read the receipt, record the outcome and reply in one
+phrase. A scheduled Insight only proposes this action; a decline keeps the plugin.
 
 ## 3. Offer it to the Marketplace
 

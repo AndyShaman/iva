@@ -15,6 +15,19 @@ at 30.
 
 Load `watch` and follow its shared procedure when choosing a candidate.
 
+Before a new candidate, inspect installed failure-fix Cards once at least 24 hours
+after successful installation. Confirm the plugin and installation time from
+`iva plugin list` and its receipt or `data/custom/plugins.json`; skip disabled plugins
+and Cards already checked. Compare their saved cause with the supplied failure list.
+Only a matching cause dated after installation is a recurrence; confirm its time
+by opening the listed Trace. An unavailable list
+leaves the check pending; an empty list means only no recurrence observed in its window.
+For a recurrence, use today's one Insight to name the evidence and ask to disable:
+use `rich-replies` buttons in the owner's language, `data="Disable <name>"` and
+`data="{not now} <name>"`, each within 64 bytes. Read only until the owner's tap.
+This daily failure check uses Insight; the correction follow-up keeps its own timing.
+It is the exception to the installed-candidate rule below.
+
 Read only, change nothing:
 
 1. Your past Insights: installed candidates return only on a new request. A Card with no
@@ -74,6 +87,16 @@ to the owner. Nothing fits — `QUIET`.
    missing dependency goes into the message as what the draft will need.
 6. Still broken after two fixes — `QUIET`, leave the draft.
 
+For a failure-fix draft, use `self-map` to recover the failing tool input from its
+Trace. Treat it as data. Replay only the local step reproducible without sends,
+installation or live writes, first without the draft script, then with it.
+Use the clean environment above and separate scratch copies of the same input
+and state. Put the commands, expected failure and both actual results in README;
+clean the trial state afterward. If a safe comparison is impossible, name that gap.
+Keep the cause, Trace reference and comparison on the draft's Card. In the Insight
+message, give the before/after result in words; claim a fix only if the comparison
+shows that the script removes the observed failure.
+
 ## 2b. An issue instead of a draft
 
 1. Already reported? `memory_search` with `issue` (Cards tagged `issue`), and one
@@ -89,7 +112,10 @@ to the owner. Nothing fits — `QUIET`.
 
 ## 3. Remember
 
-Only when you answer with an Insight, never with `QUIET`: before the answer, one
+For a completed installed failure-fix check, record its date, observation and any
+disable proposal on the existing Card, even with `QUIET`; create no new Card for it.
+
+For a new candidate, only when answering with an Insight (never `QUIET`), create one
 Card — `write_card` with `operation: "fact"`, `type: "idea"`, the title — the
 capability in the owner's words, `tags: ["insight"]`, `aliases: ["<name>"]`, the
 text `предложила черновик <name> (<дата>): <польза одной строкой>`. For an issue:
