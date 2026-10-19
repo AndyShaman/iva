@@ -5,11 +5,13 @@ cd "$(dirname "$0")"
 mkdir -p ../.scratch/schedule-tool
 meta=$(mktemp -d ../.scratch/schedule-tool/tlc.XXXXXX)
 trap 'rm -rf "$meta"' EXIT
-for config in ScheduleTool ScheduleTool-mutant ScheduleTool-overlap; do
-  expected=none
-  case "$config" in ScheduleTool-mutant) expected=OncePerRequest;; ScheduleTool-overlap) expected=OneRunning;; esac
+check() {
+  config=$1; expected=$2
   code=0
   "${TLC:-$HOME/.local/bin/tlc}" -workers 1 -deadlock -metadir "$meta/$config" -config "$config.cfg" ScheduleTool.tla >"$meta/$config.log" 2>&1 || code=$?
-  tlc_expect "$meta/$config.log" "$code" "$config.cfg" "$expected" "" bfs
+  tlc_expect "$meta/$config.log" "$code" "$config.cfg" "$expected" "" bfs || { cat "$meta/$config.log"; exit 1; }
   echo "$config: $expected (exit $code)"
-done
+}
+check ScheduleTool none
+check ScheduleTool-mutant OncePerRequest
+check ScheduleTool-overlap OneRunning
