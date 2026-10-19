@@ -1,3 +1,4 @@
+import * as deferred from "../lib/deferred-command.ts";
 import { serviceManager } from "../lib/service-manager.ts";
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
@@ -177,6 +178,7 @@ export function createCliMain(root: string) {
     status: services.cmdStatus,
     restart: services.cmdRestart,
     reset: services.cmdReset,
+    "full-reset": services.cmdReset,
     usage: account.cmdUsage,
     notify: cmdNotify,
     remind: cmdRemind,
@@ -210,7 +212,9 @@ export function createCliMain(root: string) {
     commands,
     cmdHelp,
     dispatch: (argv: readonly string[]) =>
-      dispatchCli(argv, commands, { bad, help: cmdHelp }),
+      process.env.IVA_AGENT_TURN === "1" && deferred.deferrable(argv)
+        ? deferred.deferCommand(runtime.dataDirAbs(), argv)
+        : dispatchCli(argv, commands, { bad, help: cmdHelp }),
   };
 }
 
@@ -218,5 +222,9 @@ export function main(
   root: string,
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<unknown> {
+  if (argv[0] === "_deferred") {
+    const dir = createCliRuntime(root).dataDirAbs();
+    return deferred.executeDeferred(dir, root, argv[1]);
+  }
   return createCliMain(root).dispatch(argv);
 }

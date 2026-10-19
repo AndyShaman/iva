@@ -50,7 +50,7 @@ You can also just ask in the chat: she lists the same rows with their ids, the n
 
 ## What Iva no longer does
 
-She used to be able to build her own timer: a transient system unit, a `crontab` line, a `sleep` loop with a `curl` to the Telegram API, a small script of her own. All of that is now refused before it runs, and the refusal names the reminder tool as the replacement. Home-made timers failed in exactly three ways: they did not survive a reboot, they required converting your local time to the server's by hand and got it wrong by hours, and they were invisible — nothing listed them and a silent failure looked identical to success. Reading is untouched: Iva can still inspect `crontab -l`, service status and the journal.
+Use the `remind` tool for schedules. Delivery goes through the turn response; use `iva post` for an external chat.
 
 ## Limits
 

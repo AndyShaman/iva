@@ -160,12 +160,9 @@ name in today's daily file of the Vault (`vault/daily/<date>.md`). Then:
   arrives from a message sent before «Я в курсе» replaced it, it means the same «I know about it»: no rule,
   no task, no Reminder, one short line «Поняла».
 
-- «Починить: <name>» — fix the failure now. The fix is an edit of the script the
-  unit runs (`systemctl --user cat <unit>` shows `ExecStart`) and a direct run of
-  that script to check it; `systemctl start|restart` of a foreign unit is refused
-  by the guard. A script under `~/.iva-scripts`: the guard refuses running it too —
-  only edit it with `write_file`, then `systemctl --user reset-failed <unit>`; the
-  next timer run checks it. An Iva job (`memory-night`, `proactive`, …): fix the
+- «Починить: <name>» — fix the failure now. Read the unit with
+  `systemctl --user cat <unit>`, edit its script, then run it and check the result.
+  An Iva job (`memory-night`, `proactive`, …): fix the
   cause, then `iva jobs ack <name>` if nothing is left to rerun. A new regular task
   is only a Routine or a plugin service, never a hand-made timer.
 
