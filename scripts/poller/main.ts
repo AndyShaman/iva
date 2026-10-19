@@ -407,7 +407,7 @@ export async function main({
     } catch (error) {
       log("stale run reaper failed:", errorMessage(error));
     }
-    if (
+    scheduleBridgeTask("deferred-command", async () => {
       await reconcileDeferred(DATA_DIR, {
         busy: turnsRunning,
         launch: (argv) => launchIvaCommand("iva-deferred", argv),
@@ -416,11 +416,9 @@ export async function main({
           if (!chat || !(await reply(chat, text)))
             throw new Error("Deferred command report failed");
         },
-      })
-    ) {
-      await sleep(1000);
-      continue;
-    }
+        log,
+      });
+    });
     const pendingInboxCount = await promoteReadyInbox({
       collectorOptions: { quietMs: configuredCollectQuietMs },
     });

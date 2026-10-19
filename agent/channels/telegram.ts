@@ -82,6 +82,7 @@ import {
   endIdleCompaction,
   openIdleCompactionTurn,
   startIdleCompaction,
+  idleCompactionDue,
 } from "../lib/idle-compaction.js";
 import { providerConfig } from "../provider.js";
 import {
@@ -291,6 +292,13 @@ async function claimChatForCompaction(
     bearerMissingLogged = true;
     return false;
   }
+  const own = getChatStatus(chatKey);
+  if (
+    own?.resetAt === undefined &&
+    own?.sessionId === sessionId &&
+    own.compacting === true
+  )
+    return true;
   return takeOverTelegramChat({
     chatKey,
     patch: chatTakeOverPatch({ sessionId, compacting: true }),
@@ -402,16 +410,17 @@ const telegram = telegramChannel({
       try {
         await flushSettledTelegramQuestions(channel.state, channel.telegram);
       } finally {
-        try {
-          await finishTelegramStatus(
-            channel,
-            ctx.session.id,
-            "completed",
-            _data.turnId,
-          );
-        } finally {
-          closeIdleCompactionTurn(ctx.session.id, providerConfig.contextWindow);
-        }
+        closeIdleCompactionTurn(ctx.session.id, providerConfig.contextWindow);
+        await finishTelegramStatus(
+          channel,
+          ctx.session.id,
+          "completed",
+          _data.turnId,
+          Boolean(
+            process.env.ASSISTANT_BEARER?.trim() &&
+            idleCompactionDue(ctx.session.id),
+          ),
+        );
       }
     },
     async "turn.cancelled"(_data, channel, ctx) {
@@ -442,9 +451,23 @@ const telegram = telegramChannel({
       try {
         const parked = getChatStatus(chatKey);
         // Парковка застала запись пересказа этой сессии: он кончился.
-        if (parked?.sessionId === sessionId && parked.compacting === true)
+        if (
+          parked?.sessionId === sessionId &&
+          parked.compacting === true &&
+          !idleCompactionDue(sessionId)
+        )
           endIdleCompaction(sessionId);
-        await finishTelegramStatus(channel, sessionId, "completed");
+        await finishTelegramStatus(
+          channel,
+          sessionId,
+          "completed",
+          undefined,
+          Boolean(
+            bearer &&
+            parked?.resetAt === undefined &&
+            idleCompactionDue(sessionId),
+          ),
+        );
       } finally {
         // Ждём ответа eve: она ждёт этот обработчик, поэтому просьба встаёт в её очередь
         // раньше, чем она возьмёт следующее сообщение, и пересказ идёт под записью.

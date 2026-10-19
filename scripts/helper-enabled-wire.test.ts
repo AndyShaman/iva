@@ -130,19 +130,34 @@ test("real installed framework registry removes only the three automatic task to
     assert.ok(paths.includes(`tools/${kept}.ts`));
   assert.ok(paths.includes("agent.ts"));
 });
-test("enabled tools keep retained schemas and descriptions except the approved helper/goal additions and tasks description", async () => {
+test("enabled tools keep retained schemas and descriptions except approved helper/goal, memory and scheduling changes", async () => {
   const previous = Object.values(base.wires)[0];
   const removed = new Set(["agent", "task_cancel", "task_update", "planner"]);
   const tasks = enabled.tools.find((t) => t.name === "tasks");
   assert.ok(tasks);
   assert.equal(tasks.description, tasksTool.description);
+  const revised = new Map(
+    enabled.tools
+      .filter((t) =>
+        ["bash", "remind", "memory_search", "tasks"].includes(t.name),
+      )
+      .map((t) => [t.name, t]),
+  );
+  for (const name of ["bash", "remind"])
+    assert.doesNotMatch(
+      String(revised.get(name)?.description),
+      /Блокируются|заблокирован/,
+    );
+  assert.ok(
+    JSON.stringify(revised.get("memory_search")?.inputSchema).includes(
+      '"history"',
+    ),
+  );
   assert.deepEqual(
     enabled.tools.filter((t) => t.name !== "helper" && t.name !== "goal"),
     previous.tools
       .filter((t) => !removed.has(t.name))
-      .map((t) =>
-        t.name === "tasks" ? { ...t, description: tasks.description } : t,
-      ),
+      .map((t) => revised.get(t.name) ?? t),
   );
   assert.equal(
     enabled.tools.find((t) => t.name === "helper")?.description,

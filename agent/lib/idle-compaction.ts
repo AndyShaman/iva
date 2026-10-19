@@ -159,6 +159,8 @@ export function dropIdleCompactionTurn(sessionId: string): void {
     });
 }
 
+export const idleCompactionDue = (sessionId: string) =>
+  Boolean(turns.get(sessionId)?.due);
 /**
  * session.waiting: если законченный ход дошёл до порога — занять чат и попросить eve
  * пересказать историю. Никогда не бросает: ход уже закончен, отказ оставляет историю как

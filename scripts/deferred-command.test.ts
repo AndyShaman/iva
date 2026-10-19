@@ -2,8 +2,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import bash from "../agent/tools/bash.ts";
+const previousData = process.env.ASSISTANT_DATA_DIR;
+const testData = mkdtempSync(join(tmpdir(), "iva-deferred-scope-"));
+process.env.ASSISTANT_DATA_DIR = testData;
+after(() => {
+  rmSync(testData, { recursive: true, force: true });
+  if (previousData === undefined) delete process.env.ASSISTANT_DATA_DIR;
+  else process.env.ASSISTANT_DATA_DIR = previousData;
+});
+const { createCliMain } = await import("./cli/main.ts");
 
 void test("bash writes owner timers and marks commands as an agent turn", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "iva-deferred-"));
@@ -25,13 +34,21 @@ void test("bash writes owner timers and marks commands as an agent turn", async 
 import { existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import fc from "fast-check";
-import { createCliMain } from "./cli/main.ts";
 import {
   deferCommand,
   deferrable,
-  executeDeferred,
+  executeDeferred as executeClaimed,
   reconcileDeferred,
 } from "./lib/deferred-command.ts";
+
+async function executeDeferred(dir: string, root: string, id: string) {
+  await reconcileDeferred(dir, {
+    busy: () => false,
+    launch: () => Promise.resolve({ ok: true, msg: "reserved" }),
+    report: () => Promise.resolve(),
+  });
+  return executeClaimed(dir, root, id);
+}
 
 function fixture(t: import("node:test").TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "iva-deferred-"));
@@ -77,19 +94,8 @@ void test("agent CLI persists every disruptive verb without touching services", 
   });
   const cli = createCliMain(dir);
   for (const argv of [
-    ...[
-      "restart",
-      "stop",
-      "update",
-      "rollback",
-      "reset",
-      "full-reset",
-      "doctor",
-    ].map((x) => [x]),
-    ...["trust", "enable", "update", "sync", "install-proposal"].map((x) => [
-      "plugin",
+    ...["restart", "stop", "update", "rollback", "reset", "config"].map((x) => [
       x,
-      "example",
     ]),
   ]) {
     await cli.dispatch(argv);
@@ -97,6 +103,7 @@ void test("agent CLI persists every disruptive verb without touching services", 
     assert.ok(Date.parse(request(dir).createdAt));
     assert.equal(statSync(pending(dir)).mode & 0o777, 0o600);
     assert.equal(existsSync(join(dir, "calls")), false);
+    rmSync(pending(dir));
   }
 });
 
@@ -116,9 +123,9 @@ void test("terminal dispatch and help keep the ordinary CLI path", async (t) => 
   assert.equal(deferrable(["restart", "--help"]), false);
 });
 
-void test("idle gate, two replacements, concurrent launches and Bridge restart preserve one execution", async (t) => {
+void test("idle gate, repeated requests, concurrent launches and Bridge restart preserve one execution", async (t) => {
   const dir = fixture(t);
-  await deferCommand(dir, ["stop"]);
+  await deferCommand(dir, ["restart", "space value", "$(touch untouched)"]);
   await deferCommand(dir, ["restart", "space value", "$(touch untouched)"]);
   let busy = true;
   let launches = 0;
@@ -165,6 +172,11 @@ void test("detached runner survives an actual Bridge process exit before executi
   const dir = fixture(t);
   await deferCommand(dir, ["restart"]);
   const id = request(dir).id;
+  await reconcileDeferred(dir, {
+    busy: () => false,
+    launch: () => Promise.resolve({ ok: true, msg: "reserved" }),
+    report: () => Promise.resolve(),
+  });
   const moduleUrl = new URL("./lib/deferred-command.ts", import.meta.url).href;
   const bridge = `import {spawn} from 'node:child_process'; const child=spawn(process.execPath,['--input-type=module','-e',${JSON.stringify(`await new Promise(r=>setTimeout(r,100)); const {executeDeferred}=await import(${JSON.stringify(moduleUrl)}); await executeDeferred(${JSON.stringify(dir)},${JSON.stringify(dir)},${JSON.stringify(id)});`)}],{detached:true,stdio:'ignore'}); child.unref();`;
   execFileSync(process.execPath, ["--input-type=module", "-e", bridge]);
@@ -225,7 +237,7 @@ void test("failed and interrupted executors are reported once without replay", a
   await reconcileDeferred(dir, io);
   await reconcileDeferred(dir, io);
   assert.equal(reports.length, 2);
-  assert.match(reports[1], /исполнение прервано/);
+  assert.match(reports[1], /исполнение не подтверждено/);
 });
 
 void test("command selection preserves arbitrary argument tails and excludes read commands", () => {
@@ -236,7 +248,7 @@ void test("command selection preserves arbitrary argument tails and excludes rea
       fc.array(fc.string().filter((x) => x !== "--help" && x !== "-h")),
       (tail) => {
         assert.equal(deferrable(["restart", ...tail]), true);
-        assert.equal(deferrable(["plugin", "trust", ...tail]), true);
+        assert.equal(deferrable(["plugin", "trust", ...tail]), false);
         for (const verb of ["version", "status", "trace", "post"])
           assert.equal(deferrable([verb, ...tail]), false);
       },

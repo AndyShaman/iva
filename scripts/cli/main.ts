@@ -145,7 +145,9 @@ export function createCliMain(root: string) {
       }),
   });
   const cmdConfig = createConfigCommand(runtime, systemdLifecycle);
-  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle);
+  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle, {
+    readOnly: process.env.IVA_AGENT_TURN === "1",
+  });
   const cmdDiagnose = createDiagnoseCommand(runtime, systemdLifecycle);
   const trace = createTraceCommands(runtime);
   const cmdNotify = createNotifyCommand(runtime);
@@ -178,7 +180,6 @@ export function createCliMain(root: string) {
     status: services.cmdStatus,
     restart: services.cmdRestart,
     reset: services.cmdReset,
-    "full-reset": services.cmdReset,
     usage: account.cmdUsage,
     notify: cmdNotify,
     remind: cmdRemind,
@@ -212,9 +213,8 @@ export function createCliMain(root: string) {
     commands,
     cmdHelp,
     dispatch: (argv: readonly string[]) =>
-      process.env.IVA_AGENT_TURN === "1" && deferred.deferrable(argv)
-        ? deferred.deferCommand(runtime.dataDirAbs(), argv)
-        : dispatchCli(argv, commands, { bad, help: cmdHelp }),
+      deferred.fromTurn(runtime.dataDirAbs(), argv) ??
+      dispatchCli(argv, commands, { bad, help: cmdHelp }),
   };
 }
 

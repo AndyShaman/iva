@@ -75,7 +75,7 @@ the owner's rules.
 ## Settings and restarts
 
 `.env` is read at process start: you may edit it through `write_file`, but say
-honestly that it applies after `iva restart`. Перезапуск, обновление, откат — только `iva <глагол>`: он сам отложит действие до конца хода; systemctl/launchctl/pkill по Иве из хода убивают ответ.
+honestly that it applies after `iva restart`. Use `iva <verb>` for restart, update and rollback: it waits until all turns finish. Direct systemctl/launchctl/pkill commands against Iva interrupt the reply.
 
 ## Reminders and background work
 

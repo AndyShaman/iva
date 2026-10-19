@@ -158,20 +158,20 @@ export function helperResultPath(id: string): string {
     throw new HelperStoreError("invalid helper id");
   return join(root(), id, "out", "result.md");
 }
-export async function readHelpers(): Promise<HelpersState> {
+export async function readHelpers(path = file()): Promise<HelpersState> {
   let raw: string;
   try {
-    raw = await readFile(file(), "utf8");
+    raw = await readFile(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return { schemaVersion: 1, rows: [], goals: [] };
-    throw new HelperStoreError(`${file()}: ${String(error)}`);
+    throw new HelperStoreError(`${path}: ${String(error)}`);
   }
   try {
     const document = documentSchema.parse(JSON.parse(raw));
     const state: HelpersState = { ...document, rows: [], goals: [] };
     const damaged = (label: string, record: unknown) =>
-      quarantineDamagedRecord(file(), {
+      quarantineDamagedRecord(path, {
         reason: "invalid or inconsistent row",
         record,
         label: `helpers ${label}`,
@@ -213,7 +213,7 @@ export async function readHelpers(): Promise<HelpersState> {
     stateSchema.parse(state);
     return state;
   } catch (error) {
-    throw new HelperStoreError(`${file()}: ${String(error)}`);
+    throw new HelperStoreError(`${path}: ${String(error)}`);
   }
 }
 async function locked<T>(fn: (s: HelpersState) => Promise<T>): Promise<T> {

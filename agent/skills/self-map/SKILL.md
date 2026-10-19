@@ -20,7 +20,9 @@ they run to megabytes. A long turn — print only what is around its failures:
 
 ## Commands in a turn
 
-- `iva doctor` repairs run after the turn ends.
+Only one lifecycle command is accepted at a time; read its result before requesting another.
+
+- `iva doctor` in a turn prints the complete read-only diagnosis; repairs belong to the owner in a terminal.
 - Перезапуск, обновление, откат — только `iva <глагол>`: он сам отложит действие до конца хода; systemctl/launchctl/pkill по Иве из хода убивают ответ.
 - `iva diagnose` — read-only; in a turn only through `report-problem`.
 - `iva logs`, `iva trace tail` — they follow forever and end only on the bash
