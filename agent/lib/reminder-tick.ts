@@ -17,6 +17,7 @@ import { dataDir } from "./data-dir.ts";
 import {
   ReminderStoreError,
   commandFile,
+  COMMAND_CHILD_TIMEOUT_MS,
   reminderFile,
   fireDue,
   list,
@@ -195,10 +196,9 @@ async function fireRow(
         : ["scripts/reminders/fire.ts", row.id],
       root,
       nodeBin,
-      // Срока у ребёнка нет: ход напоминания живёт, пока идут события, и сторожит его
-      // тишина внутри хода (REMINDER_TURN_INACTIVITY_MS). Ночные расписания свой срок
-      // сохраняют — он у них по умолчанию (DEFAULT_TIMEOUT_MS).
-      timeoutMs: null,
+      // Commands have a deadline; prompt turns keep their inactivity watchdog.
+      timeoutMs: command ? COMMAND_CHILD_TIMEOUT_MS : null,
+      killGraceMs: command ? 0 : undefined,
       log,
     },
     runJob,
@@ -226,7 +226,10 @@ async function fireRow(
     return "filled";
   }
   // Ребёнок не сказал факта: причина — по коду выхода. Больше за эту строку не берёмся.
-  const failure = fireFailure(result);
+  const failure =
+    command && Date.now() >= (row.firedAt ?? 0) + COMMAND_CHILD_TIMEOUT_MS
+      ? "timeout"
+      : fireFailure(result);
   const recorded = await recordOutcome(
     row,
     { delivered: false, error: failure },

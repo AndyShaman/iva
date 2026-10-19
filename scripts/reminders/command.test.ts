@@ -69,7 +69,9 @@ test("command error alerts once, preserves error fact and journal, repeated fail
     return Promise.resolve({ ok: true, fellBack: false, error: "" });
   };
   await runCommandFire("c-test", { root: dir, send });
-  assert.deepEqual(messages, ["задача c-test не выполнилась: exit 7"]);
+  assert.deepEqual(messages, [
+    "Задача «echo broken; exit 7» не выполнилась: завершилась с ошибкой. Журнал: list",
+  ]);
   assert.equal((await list(commandFile()))[0]?.error, "exit 7");
   assert.match(readFileSync(commandLog("c-test"), "utf8"), /broken/);
   await reschedule("c-test", { nowMs: 3 }, commandFile());
@@ -93,7 +95,7 @@ test("timeout kills the shell and its descendant process group and alerts once",
     },
   });
   assert.equal(messages.length, 1);
-  assert.match(messages[0], /timeout/);
+  assert.match(messages[0], /не уложилась в 2 минуты/);
   const pid = readFileSync(pidFile, "utf8").trim();
   let state = "";
   try {
@@ -138,18 +140,19 @@ test("the shared dispatcher runs command rows through its command child once", a
 });
 test("real minute dispatcher child records a command result without a model", async () => {
   process.env.TELEGRAM_ALLOWED_USER_IDS = "";
+  const firing = Date.now();
   try {
     await add(
       {
         id: "c-child",
         text: "printf child-executed",
-        schedule: { kind: "at", atMs: 1 },
+        schedule: { kind: "at", atMs: firing },
       },
       { file: commandFile() },
     );
     const result = await runReminderTick({
       command: true,
-      nowMs: 2,
+      nowMs: firing,
       log: () => {},
     });
     assert.equal(result.spawned, 1);

@@ -11,6 +11,8 @@ import {
   commandFile,
   reminderFile,
   commandLog,
+  clearCommandAlert,
+  commandRunning,
   type Reminder,
 } from "../lib/reminder-store.ts";
 import { ownerTimeZone } from "../lib/reminder-time.ts";
@@ -22,19 +24,20 @@ import {
 } from "../lib/reminder-tool.ts";
 
 function scheduleView(row: Reminder, tz: string, command: boolean) {
+  const status =
+    row.firedAt === null
+      ? null
+      : row.error !== null
+        ? "error"
+        : row.delivered === null
+          ? "unknown"
+          : row.delivered
+            ? "ok"
+            : "error";
   return {
     ...describeReminder(row, tz),
     action_kind: command ? "command" : "prompt",
-    last_status:
-      row.firedAt === null
-        ? null
-        : row.error !== null
-          ? "error"
-          : row.delivered === null
-            ? "unknown"
-            : row.delivered
-              ? "ok"
-              : "error",
+    last_status: command && commandRunning(row) ? "running" : status,
     ...(command ? { log: commandLog(row.id) } : {}),
   };
 }
@@ -43,10 +46,11 @@ function plannedSchedule(
   input: { at?: string; cron?: string },
   nowMs: number,
   tz: string,
+  command = false,
 ) {
   if ((input.at === undefined) === (input.cron === undefined))
     throw new Error("Give exactly one of at or cron; e.g. at: in 30m");
-  const planned = planSchedule(input, nowMs, tz);
+  const planned = planSchedule(input, nowMs, tz, command);
   if ("refusal" in planned) throw new Error(planned.refusal);
   return planned;
 }
@@ -91,7 +95,7 @@ export default defineTool({
       if (input.action === "add") {
         if (input.text !== undefined || !input.command?.trim())
           throw new Error("Give text OR command");
-        const planned = plannedSchedule(input, nowMs, tz);
+        const planned = plannedSchedule(input, nowMs, tz, true);
         const row = await add(
           {
             id: `c-${randomBytes(6).toString("hex")}`,
@@ -112,11 +116,16 @@ export default defineTool({
       const file = command ? commandFile() : reminderFile();
       if (input.action === "remove") {
         const row = await remove(input.id, file);
-        if (command) rmSync(commandLog(row.id), { force: true });
+        if (command) {
+          rmSync(commandLog(row.id), { force: true });
+          await clearCommandAlert(row.id);
+        }
         return { ok: true, removed: { id: row.id, text: row.text } };
       }
       const planned =
-        input.action === "move" ? plannedSchedule(input, nowMs, tz) : {};
+        input.action === "move"
+          ? plannedSchedule(input, nowMs, tz, command)
+          : {};
       const row = await reschedule(input.id, { ...planned, nowMs }, file);
       return {
         ok: true,

@@ -94,3 +94,54 @@ test("run_now consumes one tick and preserves the recurring schedule", async () 
   assert.ok(row.nextRunAtMs > now);
   assert.equal((await store.fireDue(now + 1, 5)).length, 0);
 });
+test("R3 seeded moves keep a single live command until its fact arrives or deadline expires", async () => {
+  const now = Date.now();
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.integer({ min: 1, max: 120000 }), {
+        minLength: 1,
+        maxLength: 8,
+      }),
+      async (times) => {
+        rmSync(dir, { recursive: true, force: true });
+        await store.add(
+          {
+            id: "c-live",
+            text: "true",
+            schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+            nextRunAtMs: now,
+          },
+          { file: store.commandFile() },
+        );
+        await store.fireDue(now, 5, store.commandFile());
+        for (const offset of times) {
+          await store.reschedule(
+            "c-live",
+            { nowMs: now + offset },
+            store.commandFile(),
+          );
+          const claims = await Promise.all([
+            store.fireDue(now + offset, 5, store.commandFile()),
+            store.fireDue(now + offset, 5, store.commandFile()),
+          ]);
+          assert.equal(claims.flat().length, 0);
+          assert.equal((await store.list(store.commandFile()))[0].firedAt, now);
+        }
+        await store.recordDelivery(
+          "c-live",
+          { firedAt: now, delivered: false, error: "timeout" },
+          { file: store.commandFile() },
+        );
+        assert.equal(
+          (await store.list(store.commandFile()))[0].error,
+          "timeout",
+        );
+        assert.equal(
+          (await store.fireDue(now + 120001, 5, store.commandFile())).length,
+          1,
+        );
+      },
+    ),
+    { seed: 20261019, numRuns: 20 },
+  );
+});

@@ -16,7 +16,7 @@ test("one minute Schedule keeps helpers runnable during a pending reminder turn"
     }});
     const schedule = (await import('./agent/schedules/reminders.ts')).default;
     for (let n=0;n<2;n++) {
-      let work; schedule.run({waitUntil:p=>work=p}); await work;
+      let work; schedule.run({waitUntil:p=>work=p}); await work; await new Promise(setImmediate);
     }
     if (schedule.cron !== '* * * * *' || globalThis.helperTicks !== 2) throw Error('minute stalled');
     console.log('helpers completed two ticks');
@@ -87,4 +87,22 @@ test("v7 helper header uses the common reminder client and preserves R1 failure"
   assert.equal(turn.message, "ход упал");
   assert.equal(turn.cancelled, false);
   assert.deepEqual(resets, ["Reminder finished"]);
+});
+test("R4 a pending helper step cannot hold later reminder/command minutes", async () => {
+  const script = `
+ import './scripts/lib/ts-esm-hooks.ts';import {registerHooks} from 'node:module';
+ registerHooks({load(url,ctx,next){
+ if(url.endsWith('/agent/lib/reminder-tick.ts'))return{format:'module',shortCircuit:true,source:'export const runReminderTick = o => {globalThis.ticks=(globalThis.ticks??0)+1;return Promise.resolve();}'};
+ if(url.endsWith('/agent/lib/helper-tick.ts'))return{format:'module',shortCircuit:true,source:'export const runHelperTick = () => new Promise(()=>{});'};
+ return next(url,ctx);}});
+ const schedule=(await import('./agent/schedules/reminders.ts')).default;
+ for(let n=0;n<2;n++){let work;schedule.run({waitUntil:p=>work=p});
+ const result=await Promise.race([work,new Promise(r=>setTimeout(()=>r('held'),150))]);
+ if(result==='held')throw Error('helper held the minute');}
+ if(globalThis.ticks!==4)throw Error('reminder/command minute lost');`;
+  await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { timeout: 2000 },
+  );
 });

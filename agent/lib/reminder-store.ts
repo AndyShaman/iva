@@ -455,8 +455,11 @@ async function saveTable(file: string, rows: Reminder[]): Promise<void> {
 }
 
 /** Мутации — под локом: тик и живой чат ходят в один файл из одного процесса. */
-async function mutate<T>(file: string, run: () => Promise<T>): Promise<T> {
-  const lock = `${file}.lock`;
+async function mutate<T>(
+  file: string,
+  run: () => Promise<T>,
+  lock = `${file}.lock`,
+): Promise<T> {
   const token = await acquireLock(lock);
   try {
     return await run();
@@ -605,7 +608,12 @@ export async function fireDue(
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const due = rows
-      .filter((row) => row.status === "pending" && row.nextRunAtMs <= nowMs)
+      .filter(
+        (row) =>
+          row.status === "pending" &&
+          row.nextRunAtMs <= nowMs &&
+          !(file === commandFile() && commandRunning(row, nowMs)),
+      )
       .sort(byDeadline)
       .slice(0, limit);
     if (due.length === 0) return [];
@@ -621,6 +629,7 @@ export async function fireDue(
             row.schedule.expr,
             row.schedule.tz,
             nowMs,
+            file === commandFile(),
           );
         } catch (error) {
           row.status = "fired";
@@ -657,7 +666,9 @@ async function updateFiringRow(
     const rows = await loadTable(file);
     const row = rows.find((candidate) => candidate.id === id);
     if (row === undefined)
-      fail(file, `reminder ${JSON.stringify(id)} not found`);
+      throw new ReminderNotFoundError(
+        `${file}: reminder ${JSON.stringify(id)} not found`,
+      );
     if (row.firedAt !== firedAt) {
       recordLog(options)(
         `reminders: ${id} ${what} for firedAt=${firedAt} ignored: current firedAt=${row.firedAt}`,
@@ -665,6 +676,7 @@ async function updateFiringRow(
       return structuredClone(row);
     }
     update(row);
+    options.onRecord?.();
     await saveTable(file, rows);
     return structuredClone(row);
   });
@@ -719,6 +731,7 @@ export async function recordTurnSession(
 
 /** Журнал отброшенного результата: по умолчанию в stdout, как у планировщика. */
 export interface ReminderRecordOptions {
+  readonly onRecord?: () => void;
   readonly file?: string;
   readonly log?: (...args: unknown[]) => void;
 }
@@ -784,3 +797,25 @@ export const commandLog = (id: string): string =>
     dataDir(),
     `schedule-${createHash("sha256").update(id).digest("hex").slice(0, 16)}.log`,
   );
+
+export const COMMAND_TIMEOUT_MS = 120_000;
+export const COMMAND_CHILD_TIMEOUT_MS = 130_000;
+export const commandRunning = (row: Reminder, now = Date.now()): boolean =>
+  row.firedAt !== null &&
+  row.delivered === null &&
+  now < row.firedAt + COMMAND_CHILD_TIMEOUT_MS;
+
+export async function clearCommandAlert(id: string): Promise<void> {
+  const file = join(dataDir(), "alert-state.json");
+  await mutate(
+    file,
+    async () => {
+      const state = await loadJsonStrict<unknown>(file, {});
+      if (!isPlainObject(state) || !Object.hasOwn(state, `schedule-${id}`))
+        return;
+      delete state[`schedule-${id}`];
+      await saveJsonAtomic(file, state, { mode: 0o600 });
+    },
+    join(dataDir(), "alert-state.lock"),
+  );
+}
