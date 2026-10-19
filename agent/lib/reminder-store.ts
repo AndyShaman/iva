@@ -22,6 +22,7 @@ import {
   saveJsonAtomic,
 } from "./json-store.ts";
 import { nextCronRunMs } from "./reminder-time.ts";
+import { listChatStatuses, RUN_STALE_MS } from "./run-status.ts";
 
 export const REMINDER_SCHEMA_VERSION = 2;
 /** Сколько держим сработавшую разовую строку: столько владелец видит факт в remind list. */
@@ -612,7 +613,7 @@ export async function fireDue(
         (row) =>
           row.status === "pending" &&
           row.nextRunAtMs <= nowMs &&
-          !(file === commandFile() && commandRunning(row, nowMs)),
+          !scheduleRunning(row, nowMs, file === commandFile()),
       )
       .sort(byDeadline)
       .slice(0, limit);
@@ -800,10 +801,25 @@ export const commandLog = (id: string): string =>
 
 export const COMMAND_TIMEOUT_MS = 120_000;
 export const COMMAND_CHILD_TIMEOUT_MS = 130_000;
-export const commandRunning = (row: Reminder, now = Date.now()): boolean =>
-  row.firedAt !== null &&
-  row.delivered === null &&
-  now < row.firedAt + COMMAND_CHILD_TIMEOUT_MS;
+export const scheduleRunning = (
+  row: Reminder,
+  now = Date.now(),
+  command = false,
+): boolean => {
+  const pulse =
+    !command &&
+    row.sessionId &&
+    listChatStatuses().find(
+      ({ status }) =>
+        status.sessionId === row.sessionId && status.status === "running",
+    )?.status.updatedAt;
+  const span = command ? COMMAND_CHILD_TIMEOUT_MS : RUN_STALE_MS;
+  return (
+    row.firedAt !== null &&
+    row.delivered === null &&
+    now < (pulse || row.firedAt) + span
+  );
+};
 
 export async function clearCommandAlert(id: string): Promise<void> {
   const file = join(dataDir(), "alert-state.json");

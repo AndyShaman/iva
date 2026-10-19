@@ -12,7 +12,7 @@ import {
   reminderFile,
   commandLog,
   clearCommandAlert,
-  commandRunning,
+  scheduleRunning,
   type Reminder,
 } from "../lib/reminder-store.ts";
 import { ownerTimeZone } from "../lib/reminder-time.ts";
@@ -37,7 +37,7 @@ function scheduleView(row: Reminder, tz: string, command: boolean) {
   return {
     ...describeReminder(row, tz),
     action_kind: command ? "command" : "prompt",
-    last_status: command && commandRunning(row) ? "running" : status,
+    last_status: scheduleRunning(row, Date.now(), command) ? "running" : status,
     ...(command ? { log: commandLog(row.id) } : {}),
   };
 }
@@ -131,6 +131,9 @@ export default defineTool({
         ok: true,
         schedule: scheduleView(row, tz, command),
         next_run_at: scheduleView(row, tz, command).next_run_at,
+        message: scheduleRunning(row, nowMs, command)
+          ? "Задача сейчас выполняется, перенос применится после завершения."
+          : undefined,
       };
     } catch (error) {
       return toolFailure(error);

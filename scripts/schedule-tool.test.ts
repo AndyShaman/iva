@@ -8,12 +8,13 @@ import { join } from "node:path";
 import type { ToolContext } from "eve/tools";
 import fc from "fast-check";
 import { z } from "zod";
-import schedule from "../agent/tools/schedule.ts";
-import { commandFile, list } from "../agent/lib/reminder-store.ts";
 const dir = mkdtempSync(join(tmpdir(), "iva-schedule-tool-"));
 process.env.ASSISTANT_DATA_DIR = dir;
 process.env.ASSISTANT_TIMEZONE = "Asia/Tashkent";
 process.env.TELEGRAM_DIGEST_CHAT_ID = "123";
+const { default: schedule } = await import("../agent/tools/schedule.ts");
+const { commandFile, list, fireDue, recordDelivery } =
+  await import("../agent/lib/reminder-store.ts");
 const ctx = {} as ToolContext;
 const view = z.object({
   id: z.string(),
@@ -120,3 +121,39 @@ test("scheduling skill explains all actions within forty lines", () => {
   for (const action of ["add", "move", "remove", "list", "run_now"])
     assert.match(text, new RegExp(action));
 });
+
+for (const action of ["run_now", "move"] as const)
+  for (const recurring of [true, false])
+    test(`running text keeps its first fact during ${action}, recurring=${recurring}`, async (t) => {
+      const now = Date.UTC(2026, 9, 19, 3);
+      t.mock.timers.enable({ apis: ["Date"], now });
+      const added = await call({
+        action: "add",
+        text: "report",
+        ...(recurring ? { cron: "0 9 * * *" } : { at: "in 1h" }),
+      });
+      assert.ok(added.reminder);
+      const id = added.reminder.id;
+      await call({ action: "run_now", id });
+      assert.equal((await fireDue(now, 5)).length, 1);
+      const result = await schedule.execute(
+        { action, id, ...(action === "move" ? { at: "in 1m" } : {}) },
+        ctx,
+      );
+      assert.deepEqual(await fireDue(now + 60_000, 5), []);
+      assert.equal((await list())[0].firedAt, now);
+      await recordDelivery(id, { firedAt: now, delivered: true, error: null });
+      assert.equal((await list())[0].delivered, true);
+      const response = z
+        .object({
+          ok: z.literal(true),
+          message: z.string(),
+          schedule: z.object({ last_status: z.literal("running") }),
+        })
+        .parse(result);
+      assert.match(
+        response.message,
+        /задача сейчас выполняется.*перенос применится после/iu,
+      );
+      assert.equal((await fireDue(now + 60_000, 5)).length, 1);
+    });

@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
-import * as store from "./reminder-store.ts";
 const dir = mkdtempSync(join(tmpdir(), "iva-schedule-store-"));
 process.env.ASSISTANT_DATA_DIR = dir;
+const store = await import("./reminder-store.ts");
 after(() => rmSync(dir, { recursive: true, force: true }));
 beforeEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -144,4 +144,61 @@ test("R3 seeded moves keep a single live command until its fact arrives or deadl
     ),
     { seed: 20261019, numRuns: 20 },
   );
+});
+
+test("text claim expires at the existing run-status stale boundary", async () => {
+  const { RUN_STALE_MS } = await import("./run-status.ts");
+  const now = Date.now();
+  await store.add({
+    id: "r-expire",
+    text: "report",
+    schedule: { kind: "at", atMs: now },
+  });
+  await store.fireDue(now, 5);
+  await store.reschedule("r-expire", { nowMs: now });
+  assert.deepEqual(await store.fireDue(now + RUN_STALE_MS - 1, 5), []);
+  assert.equal((await store.fireDue(now + RUN_STALE_MS, 5)).length, 1);
+});
+
+test("a live text session pulse extends overlap protection beyond its initial stale boundary", async (t) => {
+  const { RUN_STALE_MS, setChatStatus } = await import("./run-status.ts");
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now });
+  await store.add({
+    id: "r-long",
+    text: "report",
+    schedule: { kind: "at", atMs: now },
+  });
+  await store.fireDue(now, 5);
+  await store.recordTurnSession("r-long", {
+    firedAt: now,
+    sessionId: "live-text",
+  });
+  await store.reschedule("r-long", { nowMs: now });
+  t.mock.timers.setTime(now + RUN_STALE_MS - 1);
+  setChatStatus("123:", { status: "running", sessionId: "live-text" });
+  assert.deepEqual(await store.fireDue(now + RUN_STALE_MS + 1, 5), []);
+  assert.equal((await store.list())[0].firedAt, now);
+  assert.equal((await store.fireDue(now + 2 * RUN_STALE_MS - 1, 5)).length, 1);
+});
+
+test("a recurring text waits for its first delivery before admitting an overdue interval", async () => {
+  const now = Date.UTC(2026, 9, 19, 3);
+  await store.add({
+    id: "r-interval",
+    text: "report",
+    schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+    nextRunAtMs: now,
+  });
+  const [first] = await store.fireDue(now, 5);
+  assert.equal(first.nextRunAtMs, now + 600_000);
+  assert.deepEqual(await store.fireDue(first.nextRunAtMs, 5), []);
+  const fact = await store.recordDelivery(first.id, {
+    firedAt: now,
+    delivered: true,
+    error: null,
+  });
+  assert.equal(fact.firedAt, now);
+  assert.equal(fact.delivered, true);
+  assert.equal((await store.fireDue(first.nextRunAtMs, 5)).length, 1);
 });
