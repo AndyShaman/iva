@@ -1,3 +1,4 @@
+import * as deferred from "../lib/deferred-command.ts";
 import { serviceManager } from "../lib/service-manager.ts";
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
@@ -144,7 +145,9 @@ export function createCliMain(root: string) {
       }),
   });
   const cmdConfig = createConfigCommand(runtime, systemdLifecycle);
-  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle);
+  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle, {
+    readOnly: process.env.IVA_AGENT_TURN === "1",
+  });
   const cmdDiagnose = createDiagnoseCommand(runtime, systemdLifecycle);
   const trace = createTraceCommands(runtime);
   const cmdNotify = createNotifyCommand(runtime);
@@ -210,6 +213,7 @@ export function createCliMain(root: string) {
     commands,
     cmdHelp,
     dispatch: (argv: readonly string[]) =>
+      deferred.fromTurn(runtime.dataDirAbs(), argv) ??
       dispatchCli(argv, commands, { bad, help: cmdHelp }),
   };
 }
@@ -218,5 +222,9 @@ export function main(
   root: string,
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<unknown> {
+  if (argv[0] === "_deferred") {
+    const dir = createCliRuntime(root).dataDirAbs();
+    return deferred.executeDeferred(dir, root, argv[1]);
+  }
   return createCliMain(root).dispatch(argv);
 }

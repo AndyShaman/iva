@@ -8,7 +8,7 @@ description: "Your evidence and how you work: one Trace turn to its cause and wh
 Paths are relative to the `bash` folder — the running Version
 (`~/iva/versions/<v>`; `~/iva/current` points at it). Your own code is here, not
 in `~/iva`. Data is `$ASSISTANT_DATA_DIR` (default `./data`). Everything below
-only reads.
+is for inspection unless the owner requests a repair.
 
 ## Keep the output small
 
@@ -18,9 +18,12 @@ they run to megabytes. A long turn — print only what is around its failures:
 
     iva trace show <session>/<turn> | grep -B4 -A2 -e 'failure=' -e 'turn.failed' -e 'step.failed'
 
-## Never in a turn without the owner
+## Commands in a turn
 
-- `iva doctor` — blocked: its repairs restart iva.service.
+Only one lifecycle command is accepted at a time; read its result before requesting another.
+
+- `iva doctor` in a turn prints the complete read-only diagnosis; repairs belong to the owner in a terminal.
+- Перезапуск, обновление, откат — только `iva <глагол>`: он сам отложит действие до конца хода; systemctl/launchctl/pkill по Иве из хода убивают ответ.
 - `iva diagnose` — read-only; in a turn only through `report-problem`.
 - `iva logs`, `iva trace tail` — they follow forever and end only on the bash
   timeout. Use `journalctl … --no-pager -n N` and `iva trace show`.
@@ -94,8 +97,7 @@ as an object and have no `failure`.
    `guard.repeat_stop` — the loop is part of the cause.
 
 Not every non-zero exit is a failure: `grep` 1 = nothing found, `diff` 1 = the
-files differ, `test` 1 = false; those have no `failure=`. «ЗАБЛОКИРОВАНО: …»
-from `bash` is the guard doing its job. «The Trace does not show why» is a
+files differ, `test` 1 = false; those have no `failure=`. «The Trace does not show why» is a
 correct answer; a guessed reason is not.
 
 ## Whose it is

@@ -136,6 +136,23 @@ test("enabled tools keep retained schemas and descriptions except the approved h
   const tasks = enabled.tools.find((t) => t.name === "tasks");
   assert.ok(tasks);
   assert.equal(tasks.description, tasksTool.description);
+  const revised = new Map(
+    enabled.tools
+      .filter((t) =>
+        ["bash", "remind", "memory_search", "tasks"].includes(t.name),
+      )
+      .map((t) => [t.name, t]),
+  );
+  for (const name of ["bash", "remind"])
+    assert.doesNotMatch(
+      String(revised.get(name)?.description),
+      /Блокируются|заблокирован/,
+    );
+  assert.ok(
+    JSON.stringify(revised.get("memory_search")?.inputSchema).includes(
+      '"history"',
+    ),
+  );
   assert.deepEqual(
     enabled.tools.filter(
       (t) => !["helper", "goal", "schedule"].includes(t.name),
@@ -144,14 +161,9 @@ test("enabled tools keep retained schemas and descriptions except the approved h
       .filter((t) => !removed.has(t.name))
       .map((t) =>
         t.name === "memory_search"
-          ? enabled.tools.find((current) => current.name === t.name)!
-          : ["tasks", "remind"].includes(t.name)
-            ? {
-                ...t,
-                description: enabled.tools.find(
-                  (current) => current.name === t.name,
-                )!.description,
-              }
+          ? revised.get(t.name)!
+          : revised.has(t.name)
+            ? { ...t, description: revised.get(t.name)!.description }
             : t,
       ),
   );

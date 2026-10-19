@@ -303,7 +303,15 @@ test("ход под порогом чат не занимает; ход на п�
   const over = session("s-over", 42);
   await over.turn([1_000, LIMIT]);
   assert.deepEqual(compactCalls, [], "до парковки просьбы нет");
-  assert.equal(statusOf(42)?.status, "idle", "ход кончился — чат свободен");
+  assert.equal(
+    statusOf(42)?.status,
+    "running",
+    "до парковки сохраняется резерв свёртки",
+  );
+  assert.equal(
+    await (await import("./lib/deferred-command.ts")).activityBusy(dataDir),
+    true,
+  );
   await over.waiting();
   assert.deepEqual(compactCalls, [
     { sessionId: "s-over", auth: "Bearer idle-compaction-test-bearer" },
@@ -525,14 +533,22 @@ test("запоздалая просьба: eve приняла её после т
   await s.waiting(); // ответа нет: исход неизвестен, чат занят
   compactStatus = "accepted";
   await s.turn([LIMIT, LIMIT]); // eve сначала провела ход по пришедшему сообщению
-  assert.equal(statusOf(62)?.status, "idle");
+  assert.equal(
+    statusOf(62)?.status,
+    "running",
+    "неизвестный исход сохраняет резерв до события свёртки",
+  );
   await s.waiting();
   assert.equal(
     compactCalls.length,
     1,
     "вторую просьбу не шлём: первая может быть у eve",
   );
-  assert.equal(statusOf(62)?.status, "idle");
+  assert.equal(
+    statusOf(62)?.status,
+    "running",
+    "неизвестный исход сохраняет резерв до события свёртки",
+  );
   await s.compacting(); // eve начала отложенный пересказ
   assert.equal(statusOf(62)?.status, "running");
   assert.equal(statusOf(62)?.compacting, true);
@@ -599,6 +615,12 @@ test("упавший ход пересказа не просит", async () => {
 test("сообщение успело занять чат до парковки: пересказа нет, запись сообщения цела", async () => {
   const s = session("s-raced", 49);
   await s.turn([LIMIT]);
+  // An external cancellation can release the reservation before new input claims it.
+  runStatus.setChatStatus("49:", {
+    status: "idle",
+    sessionId: null,
+    compacting: null,
+  });
   assert.equal(await incoming(49, "s-raced"), 1);
   const ingress = statusOf(49);
   assert.equal(typeof ingress?.ingressId, "string");
