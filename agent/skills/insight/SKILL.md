@@ -11,6 +11,9 @@ hands, build it, try it and suggest it — or return `QUIET`. One good Insight a
 beats a weak one every day. Keep the whole turn under 20 minutes: the run is cut
 at 30.
 
+Read current times with `iva proactive show`; an empty `insightTimes` means off.
+For a time change, follow Watch's Settings section and verify with `show` again.
+
 ## 1. Look
 
 Load `watch` and follow its shared procedure when choosing a candidate.

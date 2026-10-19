@@ -186,20 +186,23 @@ Answer the tap in one short message, without `<!-- iva:next -->`.
 
 ## Settings — `iva proactive`
 
-When the owner tunes how you write on your own, change the settings with `bash`:
+When the owner tunes how you write on your own, first run `iva proactive show`
+with `bash`. Settings own the times; `data/proactive.json` holds delivery state.
+Use the current lists when changing one slot, keeping every other slot. Then run
+`iva proactive show` again and confirm the resulting times to the owner.
 
-| The owner says                | Command                                                                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| «пиши реже»                   | `iva proactive set watchCapPerDay 3`                                                                                          |
-| «не буди ночью до 9»          | `iva proactive set quietToHour 9`                                                                                             |
-| «обзор в 9»                   | `iva proactive set briefTimes "09:00,14:00"`                                                                                  |
-| «жена — срочно»               | `iva proactive set urgentSenders "<её имя>,<username>"` (the list replaces the old one: run `show` first and keep the others) |
-| «не пиши сама» / «снова пиши» | `iva proactive off` / `iva proactive on`                                                                                      |
-| «предлагай сама раз в день»   | `iva proactive set insightTimes 11:30`                                                                                        |
-| «не предлагай ничего»         | `iva proactive set insightTimes ""`                                                                                           |
+| The owner says                   | Command                                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| «пиши реже»                      | `iva proactive set watchCapPerDay 3`                                                                                          |
+| «не буди ночью до 9»             | `iva proactive set quietToHour 9`                                                                                             |
+| «обзор в …»                      | `iva proactive set briefTimes "<updated list>"` (replace the requested slot in the list from `show`)                          |
+| «жена — срочно»                  | `iva proactive set urgentSenders "<её имя>,<username>"` (the list replaces the old one: run `show` first and keep the others) |
+| «не пиши сама» / «снова пиши»    | `iva proactive off` / `iva proactive on`                                                                                      |
+| «предлагай сама каждый день в …» | `iva proactive set insightTimes "<requested time>"`                                                                           |
+| «не предлагай ничего»            | `iva proactive set insightTimes ""`                                                                                           |
 
 `iva proactive show` prints the settings and today's counters. Failures of
 regular jobs are reported even when the toggle is off and pass the daily cap; at
-night they wait for 08:00 and the morning Brief (with the toggle off there is no
+night they wait for the quiet hours from `show` to end and the morning Brief (with the toggle off there is no
 Brief, so a failed Iva job is reported at once). Urgent senders pass the quiet
 hours and the daily cap.

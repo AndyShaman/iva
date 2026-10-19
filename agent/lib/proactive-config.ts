@@ -39,6 +39,10 @@ export const PROACTIVE_DEFAULTS: ProactiveConfig = {
   urgentSenders: [],
 };
 
+/** Варианты кнопок Insight и время включения; действующее время — только в settings.json. */
+export const INSIGHT_TIME_PRESETS = ["09:30", "11:30", "17:30"] as const;
+export const INSIGHT_ENABLE_TIME = INSIGHT_TIME_PRESETS[1];
+
 export type ProactiveKey = keyof ProactiveConfig;
 
 const BRIEF_TIME = /^(?:[01]\d|2[0-3]):(?:00|30)$/u;

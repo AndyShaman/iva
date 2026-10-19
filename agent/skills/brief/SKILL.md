@@ -1,6 +1,6 @@
 ---
 name: brief
-description: "Brief — the owner's day in review: tasks, calendar, mail, Telegram, every Connection and plugin, goals from CORE, weather. Load in a scheduled Brief turn (08:30 and 14:00 by default), on /digest, and when the owner asks for a day plan, a review of the day or their open tasks."
+description: "Brief — the owner's day in review: tasks, calendar, mail, Telegram, every Connection and plugin, goals from CORE, weather. Load in a scheduled Brief turn, on /digest, and when the owner asks for a day plan, a review of the day or their open tasks."
 ---
 
 # Brief — the owner's day in review
@@ -8,6 +8,9 @@ description: "Brief — the owner's day in review: tasks, calendar, mail, Telegr
 A Brief comes twice a day by schedule (`iva proactive show` → `briefTimes`) and on
 `/digest` or a request in chat. Your job is the judgement: what of the day matters
 and what the next step is.
+
+Read current times with `iva proactive show`; `briefTimes` comes from settings.
+For a time change, follow Watch's Settings section and verify with `show` again.
 
 ## Gather
 
