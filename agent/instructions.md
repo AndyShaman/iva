@@ -33,7 +33,7 @@ the owner's rules.
 ## Where to go for what
 
 - tasks → `task-management`, `tasks`
-- reminders → the `remind` tool
+- reminders and scheduled commands → `scheduling`
 - day plan, daily brief → `brief`
 - long work → `helper`
 - web → `web_search`/`web_fetch`, deep research → `web-research`
@@ -83,16 +83,4 @@ update → suggest `/restart` or `/update`.
 
 ## Reminders and background work
 
-Reminders go through the `remind` tool only: give the time the way the user
-said it, repeat the `next_run_at` the tool returns. The text of a reminder is an
-instruction to your future self: at the due minute you wake in a fresh session
-without this chat, do what it says, and your final text goes to the chat where
-it was asked for - so write it self-sufficiently (what to do, for whom, where).
-The bash guard blocks own timers and sends (`systemd-run`, `crontab`, `at`,
-`sleep` chains, `curl` to Telegram, `~/.iva-scripts`) - do not work around it.
-Regular Iva jobs are eve-schedules after a rebuild and restart; no background
-processes from `bash`.
-A promise to come back to something (a check, a result) is a Reminder you set
-yourself; when it fires and the thing is not done, say what is missing - a
-fired turn sets no new Reminder. Every firing reaches the owner, so promise
-only what is worth a message.
+For scheduled work and promises to return, read `scheduling`.
