@@ -12,6 +12,7 @@
 // аренда, счётчики провалов) переводится построчно: срок и текст сохраняются, режим и все
 // политики повторов отброшены владельцем 12.09.
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { dataDir } from "./data-dir.ts";
 import { quarantineDamagedRecord } from "./damaged-record.ts";
 import {
@@ -21,6 +22,7 @@ import {
   saveJsonAtomic,
 } from "./json-store.ts";
 import { nextCronRunMs } from "./reminder-time.ts";
+import { listChatStatuses, RUN_STALE_MS } from "./run-status.ts";
 
 export const REMINDER_SCHEMA_VERSION = 2;
 /** Сколько держим сработавшую разовую строку: столько владелец видит факт в remind list. */
@@ -454,8 +456,11 @@ async function saveTable(file: string, rows: Reminder[]): Promise<void> {
 }
 
 /** Мутации — под локом: тик и живой чат ходят в один файл из одного процесса. */
-async function mutate<T>(file: string, run: () => Promise<T>): Promise<T> {
-  const lock = `${file}.lock`;
+async function mutate<T>(
+  file: string,
+  run: () => Promise<T>,
+  lock = `${file}.lock`,
+): Promise<T> {
   const token = await acquireLock(lock);
   try {
     return await run();
@@ -533,9 +538,12 @@ export async function add(
   input: ReminderInput,
   {
     refuse,
-  }: { readonly refuse?: (rows: readonly Reminder[]) => string | null } = {},
+    file = reminderFile(),
+  }: {
+    readonly refuse?: (rows: readonly Reminder[]) => string | null;
+    readonly file?: string;
+  } = {},
 ): Promise<Reminder> {
-  const file = reminderFile();
   const row = buildReminder(file, input);
   return mutate(file, async () => {
     const rows = await loadTable(file);
@@ -550,13 +558,15 @@ export async function add(
   });
 }
 
-export async function list(): Promise<Reminder[]> {
-  const rows = await loadTable(reminderFile());
+export async function list(file = reminderFile()): Promise<Reminder[]> {
+  const rows = await loadTable(file);
   return rows.sort(byDeadline).map((row) => structuredClone(row));
 }
 
-export async function remove(id: string): Promise<Reminder> {
-  const file = reminderFile();
+export async function remove(
+  id: string,
+  file = reminderFile(),
+): Promise<Reminder> {
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const index = rows.findIndex((row) => row.id === id);
@@ -583,8 +593,8 @@ export async function remove(id: string): Promise<Reminder> {
 export async function fireDue(
   nowMs: number,
   limit: number,
+  file = reminderFile(),
 ): Promise<Reminder[]> {
-  const file = reminderFile();
   if (!isSafeInt(nowMs) || nowMs < 0)
     fail(
       file,
@@ -599,7 +609,12 @@ export async function fireDue(
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const due = rows
-      .filter((row) => row.status === "pending" && row.nextRunAtMs <= nowMs)
+      .filter(
+        (row) =>
+          row.status === "pending" &&
+          row.nextRunAtMs <= nowMs &&
+          !scheduleRunning(row, nowMs, file === commandFile()),
+      )
       .sort(byDeadline)
       .slice(0, limit);
     if (due.length === 0) return [];
@@ -615,6 +630,7 @@ export async function fireDue(
             row.schedule.expr,
             row.schedule.tz,
             nowMs,
+            file === commandFile(),
           );
         } catch (error) {
           row.status = "fired";
@@ -646,12 +662,14 @@ async function updateFiringRow(
   update: (row: Reminder) => void,
 ): Promise<Reminder> {
   const { firedAt, what } = firing;
-  const file = reminderFile();
+  const file = options.file ?? reminderFile();
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const row = rows.find((candidate) => candidate.id === id);
     if (row === undefined)
-      fail(file, `reminder ${JSON.stringify(id)} not found`);
+      throw new ReminderNotFoundError(
+        `${file}: reminder ${JSON.stringify(id)} not found`,
+      );
     if (row.firedAt !== firedAt) {
       recordLog(options)(
         `reminders: ${id} ${what} for firedAt=${firedAt} ignored: current firedAt=${row.firedAt}`,
@@ -659,6 +677,7 @@ async function updateFiringRow(
       return structuredClone(row);
     }
     update(row);
+    options.onRecord?.();
     await saveTable(file, rows);
     return structuredClone(row);
   });
@@ -713,6 +732,8 @@ export async function recordTurnSession(
 
 /** Журнал отброшенного результата: по умолчанию в stdout, как у планировщика. */
 export interface ReminderRecordOptions {
+  readonly onRecord?: () => void;
+  readonly file?: string;
   readonly log?: (...args: unknown[]) => void;
 }
 
@@ -729,8 +750,8 @@ function recordLog(
 export async function sweepFired(
   nowMs: number,
   keepMs: number = REMINDER_FIRED_KEEP_MS,
+  file = reminderFile(),
 ): Promise<number> {
-  const file = reminderFile();
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const kept = rows.filter(
@@ -745,4 +766,72 @@ export async function sweepFired(
     if (swept > 0) await saveTable(file, kept);
     return swept;
   });
+}
+
+/** Commands use the same table engine in a file older releases never open. */
+export const commandFile = (): string =>
+  join(dataDir(), "schedule-commands.json");
+
+/** Move and run_now share the claim lock. Prior firing facts stay visible. */
+export async function reschedule(
+  id: string,
+  input: { schedule?: unknown; nextRunAtMs?: number; nowMs: number },
+  file = reminderFile(),
+): Promise<Reminder> {
+  return mutate(file, async () => {
+    const rows = await loadTable(file);
+    const row = rows.find((candidate) => candidate.id === id);
+    if (!row) throw new ReminderNotFoundError(`schedule ${id} not found`);
+    if (input.schedule !== undefined) {
+      const schedule = normalizeSchedule(input.schedule);
+      row.nextRunAtMs = assertFirstRun(file, id, schedule, input.nextRunAtMs);
+      row.schedule = schedule;
+    } else row.nextRunAtMs = assertTime(file, id, "nowMs", input.nowMs);
+    row.status = "pending";
+    await saveTable(file, rows);
+    return structuredClone(row);
+  });
+}
+
+export const commandLog = (id: string): string =>
+  join(
+    dataDir(),
+    `schedule-${createHash("sha256").update(id).digest("hex").slice(0, 16)}.log`,
+  );
+
+export const COMMAND_TIMEOUT_MS = 120_000;
+export const COMMAND_CHILD_TIMEOUT_MS = 130_000;
+export const scheduleRunning = (
+  row: Reminder,
+  now = Date.now(),
+  command = false,
+): boolean => {
+  const pulse =
+    !command &&
+    row.sessionId &&
+    listChatStatuses().find(
+      ({ status }) =>
+        status.sessionId === row.sessionId && status.status === "running",
+    )?.status.updatedAt;
+  const span = command ? COMMAND_CHILD_TIMEOUT_MS : RUN_STALE_MS;
+  return (
+    row.firedAt !== null &&
+    row.delivered === null &&
+    now < (pulse || row.firedAt) + span
+  );
+};
+
+export async function clearCommandAlert(id: string): Promise<void> {
+  const file = join(dataDir(), "alert-state.json");
+  await mutate(
+    file,
+    async () => {
+      const state = await loadJsonStrict<unknown>(file, {});
+      if (!isPlainObject(state) || !Object.hasOwn(state, `schedule-${id}`))
+        return;
+      delete state[`schedule-${id}`];
+      await saveJsonAtomic(file, state, { mode: 0o600 });
+    },
+    join(dataDir(), "alert-state.lock"),
+  );
 }

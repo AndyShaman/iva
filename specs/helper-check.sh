@@ -20,6 +20,7 @@ META=$(mktemp -d "$ROOT/.scratch/helper-tla/check.XXXXXX") || exit 2
 trap 'rm -rf "$META"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+selected=${HELPER_CONFIGS:-all}
 ok=0; failed=0
 wait_load() {
   command -v sysctl >/dev/null 2>&1 || return 0
@@ -33,6 +34,7 @@ wait_load() {
 }
 check() {
   cfg=$1; expect=$2; module=${cfg%%-*}; log="$META/$cfg.log"
+  case " $selected " in ' all '|*" $cfg "*) ;; *) return 0;; esac
   workers=$WORKERS; [ "$expect" = none ] || workers=1
   echo "RUN $cfg: expected=$expect; mode=$CHECK_MODE; workers=$workers; timeout=${TLC_TIMEOUT:-600}s"
   # В переднем плане. timeout ограничивает каждый Java-процесс, TERM -> KILL через 5s.
@@ -111,5 +113,11 @@ check HelperOutcome-early-close ClosedKept || exit 2
 check HelperOutcome-read-write ReadPure || exit 2
 check HelperOutcome-multiple NoTwoReads || exit 2
 check HelperOutcome-restart NoRepeatedRead || exit 2
+[ "$ok" -gt 0 ] || { echo 'helper-check: no configuration selected'; exit 2; }
+if [ "$selected" != all ]; then
+  wanted=0
+  for cfg in $selected; do wanted=$((wanted+1)); done
+  [ "$ok" -eq "$wanted" ] || { echo 'helper-check: unknown or duplicate configuration'; exit 2; }
+fi
 echo "helper-check: ok=$ok failed=$failed"
 [ "$failed" -eq 0 ]

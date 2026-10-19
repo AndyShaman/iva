@@ -115,7 +115,8 @@ Close(h) ==
 
 \* A minute advances only after its finite tick pass. Each HTTP operation returns or times out
 \* within HELPER_CHECK_MS; the atomic row step represents these bounded calls, not a successful RPC.
-\* v7.3: a separate Schedule remains runnable while a reminder turn never returns.
+\* v7.3: the minute dispatcher returns after admission; it remains runnable while
+\* a reminder turn never returns. The shared-schedule mutant waits for that turn.
 TickStart ==
   /\ (Mutant # "shared-schedule" \/ ~s.reminderBusy)
   /\ s.phase = "idle" /\ s.lastTick < s.now
