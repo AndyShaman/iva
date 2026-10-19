@@ -94,6 +94,46 @@ void test("R2C: failed report and missing notification chat leave an outcome for
   await deferred.reconcileDeferred(d, io());
   assert.equal(existsSync(active(d)), false);
 });
+void test("R2C: permanent report failure quarantines one outcome after ten attempts and releases capacity", async (t) => {
+  const d = fx(t);
+  putActive(d, { result: true });
+  const original = value(active(d));
+  const logs: string[] = [];
+  let attempts = 0;
+  const deps = {
+    ...io(),
+    report: () => {
+      attempts++;
+      return Promise.reject(Error("403: bot was removed from the chat"));
+    },
+    log: (...parts: unknown[]) => {
+      logs.push(parts.join(" "));
+    },
+  };
+  for (let i = 0; i < 9; i++) {
+    await assert.doesNotReject(deferred.reconcileDeferred(d, deps));
+    assert.ok(existsSync(active(d)));
+  }
+  assert.equal(await deferred.deferCommand(d, ["reset"]), false);
+  await assert.doesNotReject(deferred.reconcileDeferred(d, deps));
+  assert.equal(attempts, 10);
+  assert.equal(existsSync(active(d)), false);
+  const quarantined = readdirSync(d).filter((name) =>
+    name.includes(".damaged-"),
+  );
+  assert.equal(quarantined.length, 1);
+  const entry = JSON.parse(readFileSync(join(d, quarantined[0]), "utf8")) as {
+    record: { id: string; result: boolean; reportAttempts: number };
+  };
+  assert.equal(entry.record.id, original.id);
+  assert.equal(entry.record.result, true);
+  assert.equal(entry.record.reportAttempts, 10);
+  assert.ok(
+    logs.some((line) => /report failed after 10 attempts.*403/.test(line)),
+  );
+  assert.equal(await deferred.deferCommand(d, ["restart"]), true);
+  assert.notEqual(value(pending(d)).id, original.id);
+});
 void test("R2E: EPERM checking a pid is logged and cannot kill the Bridge", async (t) => {
   const d = fx(t);
   putActive(d, { pid: 1 });

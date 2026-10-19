@@ -11,6 +11,7 @@ const requestSchema = z.object({
   startedAt: z.string().optional(),
   launchedAt: z.number().optional(),
   result: z.boolean().optional(),
+  reportAttempts: z.number().int().nonnegative().optional(),
 });
 const resultText = (ok: boolean) => (ok ? "выполнено" : "ошибка выполнения");
 const pendingPath = (dir: string) => join(dir, "deferred-command.json");
@@ -35,20 +36,27 @@ async function locked<T>(dir: string, work: () => Promise<T>) {
     releaseLock(file, token);
   }
 }
+async function quarantine(
+  file: string,
+  record: unknown,
+  reason: unknown,
+  log = console.error,
+) {
+  const { quarantineDamagedRecord } = await import("#lib/damaged-record.ts");
+  quarantineDamagedRecord(
+    file,
+    { reason: String(reason), record, label: "deferred" },
+    log,
+  );
+  fs.rmSync(file);
+}
 async function read(file: string, log = console.error) {
   if (!fs.existsSync(file)) return null;
   const raw = fs.readFileSync(file, "utf8");
   try {
     return requestSchema.parse(JSON.parse(raw));
   } catch (error) {
-    const { quarantineDamagedRecord: quarantine } =
-      await import("#lib/damaged-record.ts");
-    quarantine(
-      file,
-      { reason: String(error), record: raw, label: "deferred" },
-      log,
-    );
-    fs.rmSync(file);
+    await quarantine(file, raw, error, log);
     return null;
   }
 }
@@ -156,6 +164,27 @@ type DeferredIo = {
 };
 async function activeOutstanding(dir: string, io: DeferredIo) {
   const log = io.log ?? console.error;
+  const report = async (active: z.infer<typeof requestSchema>) => {
+    const outcome =
+      active.result === undefined
+        ? "исполнение не подтверждено; проверь iva status"
+        : resultText(active.result);
+    active.reportAttempts = (active.reportAttempts ?? 0) + 1;
+    await save(activePath(dir), active);
+    try {
+      await io.report(`${active.argv.join(" ")}: ${outcome}.`);
+    } catch (error) {
+      if (active.reportAttempts < 10) throw error;
+      await quarantine(
+        activePath(dir),
+        active,
+        `report failed after ${active.reportAttempts} attempts: ${String(error)}`,
+        log,
+      );
+      return;
+    }
+    fs.rmSync(activePath(dir));
+  };
   return locked(dir, async () => {
     const active = await read(activePath(dir), log);
     if (!active) return false;
@@ -171,12 +200,7 @@ async function activeOutstanding(dir: string, io: DeferredIo) {
     }
     if (!active.pid && Date.now() - (active.launchedAt ?? 0) < 60000)
       return true;
-    const outcome =
-      active.result === undefined
-        ? "исполнение не подтверждено; проверь iva status"
-        : resultText(active.result);
-    await io.report(`${active.argv.join(" ")}: ${outcome}.`);
-    fs.rmSync(activePath(dir));
+    await report(active);
     return false;
   });
 }
