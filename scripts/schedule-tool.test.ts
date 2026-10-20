@@ -157,3 +157,63 @@ for (const action of ["run_now", "move"] as const)
       );
       assert.equal((await fireDue(now + 60_000, 5)).length, 1);
     });
+
+test("command timeouts survive add/move/list and invalid values return text (seed 20261020)", async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 1, max: 60 }), async (minutes) => {
+      const added = await call({
+        action: "add",
+        command: "true",
+        at: "in 1m",
+        timeout_minutes: minutes,
+      });
+      assert.equal(added.ok, true);
+      assert.equal(
+        (await list(commandFile())).find((r) => r.id === added.schedule?.id)
+          ?.timeout_minutes,
+        minutes,
+      );
+      const id = added.schedule!.id;
+      await call({ action: "move", id, at: "in 2m", timeout_minutes: 20 });
+      const result = await schedule.execute({ action: "list" }, ctx);
+      assert.equal(
+        z
+          .object({
+            schedules: z.array(
+              z.object({
+                id: z.string(),
+                timeout_minutes: z.number().optional(),
+              }),
+            ),
+          })
+          .parse(result)
+          .schedules.find((r) => r.id === id)?.timeout_minutes,
+        20,
+      );
+      await call({ action: "remove", id });
+    }),
+    { seed: 20261020, numRuns: 20 },
+  );
+  for (const timeout_minutes of [0, 61, 1.5, NaN, Infinity]) {
+    const result = await call({
+      action: "add",
+      command: "true",
+      at: "in 1m",
+      timeout_minutes,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error!, /timeout_minutes/);
+  }
+  assert.equal(
+    (
+      await call({
+        action: "add",
+        text: "prompt",
+        at: "in 1m",
+        timeout_minutes: 20,
+      })
+    ).ok,
+    false,
+  );
+  assert.equal((await list(commandFile())).length, 0);
+});
