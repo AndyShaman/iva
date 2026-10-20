@@ -335,13 +335,14 @@ Trap удаляет metadir/states; LOG_DIR сохраняет журналы и
 | [HelperRun-v73-stop-needs-snapshot.cfg](HelperRun-v73-stop-needs-snapshot.cfg) | RED: StopCancelSent       |
 | [HelperRun-v73-end-cutoff.cfg](HelperRun-v73-end-cutoff.cfg)                   | RED: SnapshotFolded       |
 
-`HelperOutcome.SlotSpec` описывает полный список и новый запуск. Две старые
+`HelperOutcome.SlotSpec` описывает полный список, новый запуск и проверку Goal. Две старые
 строки представляют заполненный список, `admitted` представляет нового
 помощника. Перебираются ждущие строки, неотданные исходы, сданные строки с разным
-временем доставки и принадлежностью Goal. `ProtectedKept` сохраняет неотданные
-исходы и строки Goal, `OldestEvicted` проверяет выбор самой старой доставки,
+временем доставки, закрытые строки и принадлежность Goal. `ProtectedKept` сохраняет неотданные
+исходы и строки Goal, `OldestEvicted` проверяет выбор самой старой записи по доставке или окончанию,
 `AdmissionAvailable` проверяет доступность запуска при подходящей записи,
-`SlotCapacity` проверяет вместимость. Закрытие сданной строки без Goal сразу
+`GoalAdmissionAvailable` проверяет доступность проверки Goal с резервом места владельцу;
+`ClosedAdmissionAvailable` проверяет вытеснение закрытых строк. `SlotCapacity` проверяет вместимость с резервом. Закрытие сданной строки без Goal сразу
 удаляет её. Работа и завершение хода в `HelperRun` сохраняют прежние переходы.
 
 | Конфигурация HelperOutcome                    | Ожидаемый результат                       |
@@ -351,6 +352,9 @@ Trap удаляет metadir/states; LOG_DIR сохраняет журналы и
 | `-evict-newest`                               | RED: OldestEvicted                        |
 | `-admission`                                  | RED: NoAdmission, свидетель запуска       |
 | `-delivered-close`                            | RED: NoDeliveredClose, свидетель закрытия |
+| `-goal-no-eviction`                           | RED: GoalAdmissionAvailable               |
+| `-goal-evict-unread`                          | RED: ProtectedKept                        |
+| `-evict-closed-blocked`                       | RED: ClosedAdmissionAvailable             |
 
 HelperOutcome: `-safety`, `-bridge-recovery` — PASS; остальные прежние конфиги
 проверяют отрицательные свидетели, перечисленные в `helper-check.sh`.

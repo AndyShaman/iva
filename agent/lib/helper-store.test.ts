@@ -220,7 +220,7 @@ test("delivered close frees its row and directory, foreign chat cannot close it"
   assert.equal((await s.readHelpers()).rows.length, 20);
 });
 
-test("admission preserves pending, unread, closed and Goal rows; seed 20261020", async (t) => {
+test("admission preserves pending, unread and Goal rows and reuses closed rows; seed 20261020", async (t) => {
   const dir = await data(t);
   const template = await added();
   const { changeGoal } = await import("./goal-store.ts");
@@ -280,10 +280,16 @@ test("admission preserves pending, unread, closed and Goal rows; seed 20261020",
         for (const row of rows)
           await mkdir(join(dir, "helpers", row.id), { recursive: true });
         const eligible = rows.filter(
-          (r) => r.deliveredAt !== null && r.goal === null,
+          (r) =>
+            (r.deliveredAt !== null || r.status === "closed") &&
+            r.goal === null,
         );
         const oldest = eligible.reduce<s.HelperRow | null>(
-          (a, b) => (!a || b.deliveredAt! < a.deliveredAt! ? b : a),
+          (a, b) =>
+            !a ||
+            (b.deliveredAt ?? b.finishedAt!) < (a.deliveredAt ?? a.finishedAt!)
+              ? b
+              : a,
           null,
         );
         const canStart =
@@ -325,6 +331,7 @@ test("admission preserves pending, unread, closed and Goal rows; seed 20261020",
       examples: [
         [Array.from({ length: 20 }, () => ({ kind: "pending", at: 1 }))],
         [Array.from({ length: 20 }, () => ({ kind: "goal", at: 1 }))],
+        [Array.from({ length: 20 }, () => ({ kind: "closed", at: 1 }))],
         [
           Array.from({ length: 20 }, (_, i) => ({
             kind: i < 3 ? "pending" : "delivered",
@@ -755,4 +762,22 @@ test("REPAIR3 orphan helper survives a damaged or missing goal without quarantin
     await s.mutateHelpers(() => ({ save: true, value: null }));
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), expected);
   }
+});
+
+test("closed undelivered rows can be evicted after repeated close", async (t) => {
+  const dir = await data(t);
+  const rows = [];
+  for (let i = 0; i < 20; i++) {
+    const row = await ready(1000 + i);
+    assert.ok((await s.closeHelper(row.id, chat, 2000 + i)).ok);
+    rows.push(row);
+  }
+  assert.ok((await s.closeHelper(rows[0].id, chat, 3000)).ok);
+  await mkdir(join(dir, "helpers", rows[0].id), { recursive: true });
+  assert.ok((await s.addHelper({ task: "next", may: "", chat }, 4000)).ok);
+  assert.equal(await s.getHelper(rows[0].id), null);
+  await assert.rejects(stat(join(dir, "helpers", rows[0].id)), {
+    code: "ENOENT",
+  });
+  assert.equal((await s.readHelpers()).rows.length, 20);
 });

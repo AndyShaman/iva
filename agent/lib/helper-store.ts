@@ -219,7 +219,16 @@ async function locked<T>(fn: (s: HelpersState) => Promise<T>): Promise<T> {
   const path = `${file()}.lock`,
     token = await acquireLock(path);
   try {
-    return await fn(await readHelpers());
+    const state = await readHelpers(),
+      before = [...state.rows];
+    const result = await fn(state);
+    for (const row of before.filter(
+      (r) => !state.rows.some((v) => v.id === r.id),
+    ))
+      await rm(join(root(), row.id), { recursive: true, force: true }).catch(
+        (error: unknown) => console.error(`helper cleanup ${row.id}:`, error),
+      );
+    return result;
   } finally {
     releaseLock(path, token);
   }
@@ -242,16 +251,28 @@ export function insertRow(
 ) {
   const reserved = Number(input.goal !== null);
   const pending = s.rows.filter((r) => r.status === "pending");
-  if (s.rows.length >= HELPER_MAX_ROWS - reserved)
-    return refuse(
-      "max-rows",
-      `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. No free helper row. Wait for completion and delivery.`,
-    );
   if (pending.length >= HELPER_MAX_OPEN - reserved)
     return refuse(
       "capacity",
       `${pending.filter((r) => r.run).length} running, ${pending.filter((r) => !r.run).length} waiting, ${s.rows.filter(ready).length} outcomes; pending maximum 3. Wait, read or close.`,
     );
+  const needed = Math.max(0, s.rows.length - HELPER_MAX_ROWS + reserved + 1);
+  const oldest = s.rows
+    .filter(
+      (r) =>
+        r.goal === null && (r.deliveredAt !== null || r.status === "closed"),
+    )
+    .sort(
+      (a, b) =>
+        (a.deliveredAt ?? a.finishedAt!) - (b.deliveredAt ?? b.finishedAt!),
+    )
+    .slice(0, needed);
+  if (oldest.length < needed)
+    return refuse(
+      "max-rows",
+      `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. All helper slots are occupied by running tasks or unread outcomes.`,
+    );
+  s.rows = s.rows.filter((r) => !oldest.includes(r));
   let id: string;
   do id = `h-${randomBytes(3).toString("hex")}`;
   while (s.rows.some((r) => r.id === id));
@@ -302,19 +323,8 @@ export async function addHelper(
     .safeParse(input);
   if (!parsed.success) return refuse("invalid-input", parsed.error.message);
   return locked(async (s) => {
-    const oldest =
-      s.rows.length >= HELPER_MAX_ROWS
-        ? s.rows
-            .filter((r) => r.deliveredAt !== null && r.goal === null)
-            .sort((a, b) => a.deliveredAt! - b.deliveredAt!)[0]
-        : undefined;
-    if (oldest) s.rows = s.rows.filter((r) => r.id !== oldest.id);
     const result = insertRow(s, { ...parsed.data, goal: null }, now);
-    if (result.ok) {
-      await save(s);
-      if (oldest)
-        await rm(join(root(), oldest.id), { recursive: true, force: true });
-    }
+    if (result.ok) await save(s);
     return result;
   });
 }
@@ -438,7 +448,6 @@ export async function closeHelper(
         return refuse("already-delivered", "Outcome already delivered.");
       s.rows = s.rows.filter((r) => r.id !== id);
       await save(s);
-      await rm(join(root(), id), { recursive: true, force: true });
       return { ok: true, row, branch: "finished", rule: null };
     }
     const result = closeRow(s, row, now);
@@ -492,8 +501,6 @@ export async function sweepHelpers(now: number): Promise<string[]> {
       s.rows = s.rows.filter((r) => !removed.includes(r.id));
       await save(s);
     }
-    for (const id of removed)
-      await rm(join(root(), id), { recursive: true, force: true });
     return removed;
   });
 }
