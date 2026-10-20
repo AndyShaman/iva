@@ -985,36 +985,49 @@ for (const change of ["image", "model"] as const)
     assert.equal(fx.model.prompts.length, 1);
   });
 
-for (const edit of ["absent", "description"] as const)
-  void test(`closed summary: ${edit} owner edit survives a late entry and three nights`, async (t) => {
-    const fx = await fixture(t);
-    const raw = day(fx, "## 10:00 [text]\nПросто день\n");
-    fx.model.replies = [A()];
-    const first = await night(fx);
-    assert.equal(first.code, 0, first.stderr);
-    const published = read(summary(fx));
-    const owner =
-      edit === "absent"
-        ? published.replace(/^body_hash:.*\n/mu, "") + "\nПравка владельца\n"
-        : published.replace(
-            /^description:.*$/mu,
-            'description: "Правка владельца"',
-          );
-    assert.notEqual(owner, published);
-    writeFileSync(summary(fx), owner);
-    appendFileSync(raw, "\n## 11:00 [text]\nПоздняя реплика\n");
-    fx.model.replies = [A()];
-    for (let next = 0; next < 3; next++) {
-      const result = await night(fx, null);
-      assert.equal(result.code, 0, result.stderr);
-      assert.equal(read(summary(fx)), owner);
-      assert.match(result.stderr, /день ждёт владельца/u);
-      assert.match(
-        result.stderr,
-        new RegExp(`iva jobs skip memory-night ${DATE}`, "u"),
+for (const cacheFormat of ["current", "0.5.5", "0.5.5-empty"] as const)
+  for (const edit of ["absent", "description"] as const)
+    void test(`closed summary: ${cacheFormat} ${edit} owner edit survives a late entry and three nights`, async (t) => {
+      const fx = await fixture(t);
+      const raw = day(
+        fx,
+        cacheFormat === "0.5.5-empty" ? "" : "## 10:00 [text]\nПросто день\n",
       );
-    }
-  });
+      fx.model.replies = [A()];
+      const first = await night(fx);
+      assert.equal(first.code, 0, first.stderr);
+      if (cacheFormat !== "current") {
+        const file = join(fx.data, "memory/night", `${DATE}.json`);
+        const cache = JSON.parse(read(file)) as Record<string, unknown>;
+        assert.equal(cache.v, 1);
+        assert.equal(cache.through, cacheFormat === "0.5.5-empty" ? 0 : 1);
+        assert.equal(cache.pass, undefined);
+        delete cache.writtenSummaryHash;
+        writeFileSync(file, JSON.stringify(cache));
+      }
+      const published = read(summary(fx));
+      const owner =
+        edit === "absent"
+          ? published.replace(/^body_hash:.*\n/mu, "") + "\nПравка владельца\n"
+          : published.replace(
+              /^description:.*$/mu,
+              'description: "Правка владельца"',
+            );
+      assert.notEqual(owner, published);
+      writeFileSync(summary(fx), owner);
+      appendFileSync(raw, "\n## 11:00 [text]\nПоздняя реплика\n");
+      fx.model.replies = [A()];
+      for (let next = 0; next < 3; next++) {
+        const result = await night(fx, null);
+        assert.equal(result.code, 0, result.stderr);
+        assert.equal(read(summary(fx)), owner);
+        assert.match(result.stderr, /день ждёт владельца/u);
+        assert.match(
+          result.stderr,
+          new RegExp(`iva jobs skip memory-night ${DATE}`, "u"),
+        );
+      }
+    });
 
 void test("summary conflict: iva jobs skip releases an open pass", async (t) => {
   const fx = await fixture(t);

@@ -297,14 +297,17 @@ when an ordinary completion marker already exists. Other days, CORE and periods
 continue to finish. The property test runs 100 cases with seed `20261020`.
 
 `NightWriter.HumanEditWins` covers open passes and edits after day completion, before
-a late entry opens the next pass. `PublishedSummaryResumes` covers publication,
+a late entry opens the next pass, including closed 0.5.5 caches without a publication
+hash. `PublishedSummaryResumes` covers publication,
 interruption and continuation after input changes. Mutants that reread the expected
 hash, omit the published hash or compare with recomputed output produce witnesses.
 The model retains the filesystem stability assumption between the final comparison
 and atomic publication from ADR-0016.
 
 Both `pass.summaryHash` and `writtenSummaryHash` are optional in cache version 1.
-Old caches retain their per-night comparison until their next publication. The
+With a closed old cache, an existing summary and a new pass, the day waits for the
+owner because its last publication hash is unknown. The summary stays intact. The
 0.5.5 reader validates only version, date and integer `through`, so it accepts the
 added fields. Its writer preserves the top-level hash, but ignores it on rollback;
 the absent/matching `body_hash` cases regain the old behavior until upgraded again.
+После отката на 0.5.5 и обратно день с поздней репликой может ждать владельца; освобождается `iva jobs skip`.

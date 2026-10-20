@@ -857,7 +857,7 @@ async function finishDay(
       (cache.writtenSummaryHash ?? expectedSummary) ||
     (cache.writtenSummaryHash === undefined &&
       currentSummary !== null &&
-      input.summaryEdited(currentSummary))
+      (cache.completedAt !== undefined || input.summaryEdited(currentSummary)))
   )
     throw new OwnerEditConflict(
       `выжимка ${date} изменена вручную; день ждёт владельца: верни выжимку или выполни iva jobs skip memory-night ${date}`,
@@ -983,7 +983,9 @@ function dayTodo(date: string): boolean {
     );
   const summary = readIf(summaryFile(date));
   if (summary !== null && input.summaryEdited(summary))
-    return fail(`выжимка ${date} изменена вручную; день не разбирается`);
+    return fail(
+      `выжимка ${date} изменена вручную; день не разбирается: верни body_hash или выполни iva jobs skip memory-night ${date}`,
+    );
   if (cache) return entries.length > cache.through;
   return summary === null && !input.markedDone(raw);
 }
