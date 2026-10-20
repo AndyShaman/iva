@@ -30,7 +30,9 @@ Env:
 import os
 import re
 import shutil
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 SESSION_NAME = "telegram-userbot.session"
@@ -246,34 +248,45 @@ def _seed_session_env() -> Path:
             print(f"telegram-userbot: пропуск файла сессии {extra.name!r}", file=sys.stderr)
             continue
         sessions[label] = extra
-    if len(sessions) == 1:
+    prefixes = ("TELEGRAM_SESSION_NAME_", "TELEGRAM_SESSION_STRING_")
+    external = set()
+    for key in list(os.environ):
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                label = key[len(prefix):].lower()
+                if label in sessions:
+                    del os.environ[key]
+                elif os.environ[key]:
+                    external.add(label)
+    if external:
+        print(f"telegram-userbot: аккаунты из окружения: {', '.join(sorted(external))}", file=sys.stderr)
+    os.environ.pop("TELEGRAM_SESSION_STRING", None)
+    if len(sessions) == 1 and not external:
         os.environ["TELEGRAM_SESSION_NAME"] = str(path).removesuffix(".session")
     else:
         os.environ.pop("TELEGRAM_SESSION_NAME", None)
-        os.environ.pop("TELEGRAM_SESSION_STRING", None)
         for label, session in sessions.items():
             os.environ[f"TELEGRAM_SESSION_NAME_{label.upper()}"] = str(session).removesuffix(".session")
     return path
 
 
 def _configure_media_roots(runtime) -> None:
-    """Cap every upstream file tool at tmp/vault, including client-supplied Roots."""
-    vault = os.getenv("ASSISTANT_VAULT_DIR", "vault")
-    if not vault or vault.strip() != vault:
-        _fail("ASSISTANT_VAULT_DIR must be non-empty without surrounding whitespace")
-    roots = [(_root_dir() / (os.getenv(variable) or fallback)).resolve() for variable, fallback in (
-        ("ASSISTANT_TMP", "/tmp/iva"), ("ASSISTANT_VAULT_DIR", "vault"),
-    )]
-    roots[0].mkdir(parents=True, mode=0o700, exist_ok=True)
+    """Confine file tools to an owned private directory, including client Roots."""
+    directory = _data_dir() / "userbot-files"
+    roots = []
+    try:
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise OSError("expected an owned directory with private permissions")
+        roots.append(directory.resolve())
+    except OSError as exc:
+        print(f"telegram-userbot: файловые инструменты выключены: {exc}", file=sys.stderr)
     runtime.SERVER_ALLOWED_ROOTS[:] = roots
     os.environ["TELEGRAM_ALLOW_SERVER_ROOTS_FALLBACK"] = "1"
     within = runtime._path_is_within_root
-    private_roots = {_data_dir().resolve(), (_root_dir() / "data").resolve()}
-
     def allowed(candidate, root):
         candidate = candidate.resolve()
-        if any(within(candidate, private) for private in private_roots):
-            return False
         if any(part == ".env" or part.startswith(".env.") or
                re.search(r"\.(session|token)(?:-|$)", part, re.IGNORECASE)
                for part in candidate.parts):
@@ -281,6 +294,14 @@ def _configure_media_roots(runtime) -> None:
         return within(candidate, root) and any(within(candidate, item) for item in roots)
 
     runtime._path_is_within_root = allowed
+    if roots:
+        for client in runtime.clients.values():
+            async def download(message, file, _download=client.download_media):
+                # Telethon changes suffixes after upstream's path check. A fresh
+                # private directory has no pre-existing filename or symlink to hit.
+                target = Path(tempfile.mkdtemp(dir=roots[0])) / Path(file).name
+                return await _download(message, file=str(target))
+            client.download_media = download
 
 
 def main() -> None:

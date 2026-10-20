@@ -1,5 +1,6 @@
 """Exercise the pinned upstream with dummy SQLite sessions and no Telegram traffic."""
 import asyncio
+from datetime import datetime, timezone
 import importlib
 import io
 import os
@@ -63,12 +64,54 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(runtime, "clients", clients):
             self.assertIs(runtime.get_client(), clients["default"])
 
+    async def test_saved_sessions_replace_stale_variables_without_duplicate_clients(self):
+        (self.data / "telegram-userbot-second.session").touch()
+        serve._seed_session_env()
+        runtime = importlib.import_module("telegram_mcp.runtime")
+        external = str(self.root / "manual")
+        with patch.dict(os.environ, {
+            "TELEGRAM_SESSION_NAME_default": "stale-default",
+            "TELEGRAM_SESSION_STRING_DEFAULT": "invalid-stale-string",
+            "TELEGRAM_SESSION_NAME_SECOND": "stale-second",
+            "TELEGRAM_SESSION_STRING_second": "invalid-stale-string",
+            "TELEGRAM_SESSION_NAME_MANUAL": external,
+        }), patch.object(runtime, "_build_client", return_value=object()) as build:
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                serve._seed_session_env()
+            accounts = runtime._discover_accounts()
+            self.assertEqual(set(accounts), {"default", "second", "manual"})
+            self.assertEqual(build.call_count, 3)
+            self.assertEqual({args[0] for args, _ in build.call_args_list}, {
+                str(self.data / "telegram-userbot"),
+                str(self.data / "telegram-userbot-second"), external,
+            })
+            self.assertIn("manual", errors.getvalue())
+            self.assertNotIn("invalid-stale-string", errors.getvalue())
+
+    async def test_external_account_is_preserved_with_one_saved_session(self):
+        with patch.dict(os.environ, {
+            "TELEGRAM_SESSION_STRING_DEFAULT": "invalid-stale-string",
+            "TELEGRAM_SESSION_NAME_MANUAL": str(self.root / "manual"),
+        }):
+            _, clients = self.discover()
+            self.assertEqual(set(clients), {"default", "manual"})
+            self.assertNotIn("TELEGRAM_SESSION_NAME", os.environ)
+            self.assertNotIn("TELEGRAM_SESSION_STRING_DEFAULT", os.environ)
+
     async def test_explicit_session_filename_keeps_its_suffix(self):
         with patch.dict(os.environ, {"TELEGRAM_SESSION_FILE": str(self.data / "custom.name")}):
             serve._seed_session_env()
             self.assertEqual(os.environ["TELEGRAM_SESSION_NAME"], str(self.data / "custom.name"))
 
     async def test_proxy_starts_and_lists_both_empty_accounts_over_http(self):
+        await self.check_proxy()
+
+    async def test_proxy_still_serves_accounts_with_an_unsafe_file_root(self):
+        (self.data / "userbot-files").symlink_to(self.vault, target_is_directory=True)
+        await self.check_proxy(disabled_files=True)
+
+    async def check_proxy(self, disabled_files=False):
         for name in ("telegram-userbot.session", "telegram-userbot-second.session"):
             (self.data / name).touch()
         with socket.socket() as listener:
@@ -116,6 +159,8 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
                     child.wait(timeout=5)
             logs.seek(0)
             output = logs.read()
+            if disabled_files:
+                self.assertEqual(output.count("файловые инструменты выключены"), 1)
             self.assertIn("аккаунты: default, second", output)
             for name in ("telegram-userbot.session", "telegram-userbot-second.session"):
                 self.assertIn(f"TEST guarded {name}", output)
@@ -130,11 +175,80 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(clients), {"default"})
         self.assertEqual(errors.getvalue().count("пропуск"), 5)
 
-    async def test_invalid_vault_setting_fails_before_roots_are_opened(self):
-        for value in ("", " ", " vault", "vault "):
-            with self.subTest(value=value), patch.dict(os.environ, {"ASSISTANT_VAULT_DIR": value}), \
-                 redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                serve._configure_media_roots(SimpleNamespace())
+    async def test_unsafe_media_root_disables_files_without_stopping_service(self):
+        root = self.data / "userbot-files"
+        for unsafe in ("symlink", "permissions", "owner", "file"):
+            with self.subTest(unsafe=unsafe):
+                if unsafe == "symlink":
+                    root.symlink_to(self.vault, target_is_directory=True)
+                elif unsafe == "file":
+                    root.touch()
+                else:
+                    root.mkdir(mode=0o755 if unsafe == "permissions" else 0o700)
+                runtime = SimpleNamespace(SERVER_ALLOWED_ROOTS=[self.vault], clients={},
+                                          _path_is_within_root=lambda candidate, base: candidate.is_relative_to(base))
+                errors = io.StringIO()
+                with patch.object(serve.os, "getuid", return_value=-1 if unsafe == "owner" else os.getuid()), \
+                     redirect_stderr(errors):
+                    serve._configure_media_roots(runtime)
+                self.assertEqual(runtime.SERVER_ALLOWED_ROOTS, [])
+                self.assertFalse(runtime._path_is_within_root(self.vault / "file", self.vault))
+                self.assertEqual(len(errors.getvalue().splitlines()), 1)
+                self.assertIn("выключены", errors.getvalue())
+                if root.is_symlink() or root.is_file():
+                    root.unlink()
+                else:
+                    root.rmdir()
+
+    async def test_telethon_suffix_symlink_cannot_overwrite_session(self):
+        await self.check_telethon_download("lecture")
+
+    async def test_telethon_dangling_symlink_cannot_create_session(self):
+        await self.check_telethon_download("voice")
+
+    async def check_telethon_download(self, stem):
+        runtime, clients = self.discover()
+        import telegram_mcp.tools.media as media
+        from telethon.tl import types
+
+        with patch.object(runtime, "clients", clients), \
+             patch.object(runtime, "SERVER_ALLOWED_ROOTS", []), \
+             patch.object(runtime, "_path_is_within_root", runtime._path_is_within_root):
+            serve._configure_media_roots(runtime)
+            root = runtime.SERVER_ALLOWED_ROOTS[0]
+            session = self.data / "telegram-userbot.session"
+            before = session.read_bytes()
+            evil = self.data / "telegram-userbot-evil.session"
+            (root / "lecture").symlink_to(session)
+            (root / "voice.oga").symlink_to(evil)
+            document = types.Document(id=1, access_hash=1, file_reference=b"", date=datetime.now(timezone.utc),
+                                      mime_type="audio/ogg", size=146 * 1024 * 1024,
+                                      dc_id=1, attributes=[])
+            message = types.Message(id=1, peer_id=types.PeerUser(1),
+                                    media=types.MessageMediaDocument(document=document))
+
+            async def transfer(_location, file, **_kwargs):
+                Path(file).write_bytes(b"downloaded audio")
+
+            context = SimpleNamespace(session=SimpleNamespace(list_roots=AsyncMock(
+                return_value=SimpleNamespace(roots=[]))))
+            with patch.object(media, "resolve_entity", AsyncMock(return_value="chat")), \
+                 patch.object(clients["default"], "get_messages", AsyncMock(return_value=message)), \
+                 patch.object(clients["default"], "_download_file", AsyncMock(side_effect=transfer)):
+                saved = []
+                for request in (root / f"{stem}.ogg", root / f"{stem}.ogg"):
+                    with self.subTest(request=request):
+                        result = await media.download_media(1, 1, str(request), context)
+                        self.assertFalse(evil.exists())
+                        self.assertEqual(session.read_bytes(), before)
+                        self.assertIn("Media downloaded to", result)
+                        path = Path(result.removeprefix("Media downloaded to ").removesuffix("."))
+                        self.assertTrue(path.is_relative_to(root))
+                        self.assertNotEqual(path.parent, root)
+                        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+                        self.assertEqual(path.read_bytes(), b"downloaded audio")
+                        saved.append(path.parent)
+                self.assertEqual(len(set(saved)), 2)
 
     async def test_empty_roots_allow_media_and_reject_secrets_and_escapes(self):
         runtime, clients = self.discover()
@@ -145,7 +259,9 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(setattr, runtime, "_path_is_within_root", original_check)
         self.addCleanup(lambda: runtime.SERVER_ALLOWED_ROOTS.__setitem__(slice(None), original_roots))
         serve._configure_media_roots(runtime)
-        self.assertEqual(runtime.SERVER_ALLOWED_ROOTS, [self.downloads, self.vault])
+        self.downloads = self.data / "userbot-files"
+        self.assertEqual(runtime.SERVER_ALLOWED_ROOTS, [self.downloads])
+        self.assertEqual(self.downloads.stat().st_mode & 0o777, 0o700)
         context = SimpleNamespace(session=SimpleNamespace(list_roots=AsyncMock(
             return_value=SimpleNamespace(roots=[]))))
         client = clients["default"]
@@ -161,14 +277,16 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
              patch.object(client, "get_messages", AsyncMock(return_value=message)), \
              patch.object(client, "download_media", AsyncMock(side_effect=download)), \
              patch.object(client, "send_file", AsyncMock()) as send:
-            for directory in (self.downloads, self.vault):
+            for directory in (self.downloads,):
                 result = await media.download_media(1, 1, str(directory / "lecture.ogg"), context)
                 self.assertIn("Media downloaded to", result)
                 self.assertIn("File sent", await media.send_file(1, str(directory / "lecture.ogg"), ctx=context))
             for forbidden in (self.data / "telegram-userbot.session", self.data / "telegram-userbot.token",
                               self.root / ".env", self.downloads / "copy.session",
                               self.vault / "copy.token", self.downloads / ".env",
-                              self.root / "outside.ogg", self.vault / "copy.session-wal"):
+                              self.root / "outside.ogg", self.vault / "copy.session-wal",
+                              self.vault / "outside.ogg", self.root / "tmp/outside.ogg"):
+                forbidden.parent.mkdir(exist_ok=True)
                 forbidden.touch(exist_ok=True)
                 before = send.await_count
                 result = await media.send_file(1, str(forbidden), ctx=context)
@@ -185,7 +303,7 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("File sent", await media.send_file(1, str(self.root / ".env"), ctx=context))
             self.assertNotIn("File sent", await media.send_file(1, str(self.root / "outside.ogg"), ctx=context))
             self.assertNotIn("Album sent", await media.send_album(1, [str(self.vault / "lecture.ogg"), str(link)], ctx=context))
-            self.assertIn("File sent", await media.send_file(1, str(self.vault / "lecture.ogg"), ctx=context))
+            self.assertIn("File sent", await media.send_file(1, str(self.downloads / "lecture.ogg"), ctx=context))
 
 
 if __name__ == "__main__":
