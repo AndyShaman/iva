@@ -374,7 +374,7 @@
           transform 180ms var(--ease-out),
           box-shadow 220ms var(--ease-out);
       }
-      .btn-primary svg {
+      .btn svg {
         width: 16px;
         height: 16px;
         display: block;
@@ -571,7 +571,7 @@
         flex-shrink: 0;
       }
       .btn-agent.done {
-        color: #bfe3b0;
+        color: #2f6b2a;
       }
       @media (max-width: 600px) {
         .hero-cta {
@@ -1015,8 +1015,21 @@
         </p>
         <div class="hero-cta">
           <div class="cta-row">
+            <button
+              id="copy-ai"
+              type="button"
+              class="btn btn-primary btn-agent"
+              aria-describedby="agent-hint"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+              <span class="lbl">Install with AI agent</span>
+            </button>
+            <code id="agent-prompt" hidden
+              >Install Iva for me, instructions:
+              https://iva-agent.com/install.txt</code
+            >
             <a
-              class="btn btn-primary"
+              class="btn btn-glass liquid-glass"
               href="https://github.com/smixs/iva-agent#install"
             >
               <svg
@@ -1033,19 +1046,6 @@
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
               Install in 5 minutes</a
-            >
-            <button
-              id="copy-ai"
-              type="button"
-              class="btn btn-glass liquid-glass btn-agent"
-              aria-describedby="agent-hint"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
-              <span class="lbl">Install with AI agent</span>
-            </button>
-            <code id="agent-prompt" hidden
-              >Install Iva for me, instructions:
-              https://iva-agent.com/install.txt</code
             >
             <a
               class="btn btn-glass liquid-glass btn-star"
