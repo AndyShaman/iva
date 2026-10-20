@@ -72,7 +72,7 @@ type RollupEntry = {
 
 type RollupStatus = Record<string, RollupEntry | null | undefined>;
 
-export interface ScheduleFactsReport {
+interface ScheduleFactsReport {
   readonly lastRuns: readonly string[];
   readonly openFailures: readonly OpenFailure[];
   /** Строки таблицы: пакет diagnose печатает по ним хвосты незакрытых провалов. */

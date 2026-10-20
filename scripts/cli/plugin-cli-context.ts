@@ -33,7 +33,7 @@ const REPLACED_PREFIX = ".replaced-";
 const LEFTOVER_GRACE_MS = 60 * 60 * 1000;
 
 /** Чем кончилась сборка версии, ради которой команду и позвали. */
-export type CodeBuild = {
+type CodeBuild = {
   /** Причина отказа, из-за которой команда обязана отменить сделанное; иначе null. */
   readonly failure: string | null;
   /**
@@ -67,7 +67,7 @@ export function pluginReadProblem(report: PluginReport): string {
   return report.diagnostics.at(-1) ?? "not a usable plugin folder";
 }
 
-export type PluginCliOptions = {
+type PluginCliOptions = {
   readonly runtime: CliRuntime;
   /** Всё из authored tree приходит уже загруженным: команда стартует и без него. */
   readonly core: PluginCore;
