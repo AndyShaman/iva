@@ -4,6 +4,7 @@
 
 - 🔧 **Схемы инструментов подключений**: схема без типа больше не обрывает ход на Claude, Ива дополняет её перед отправкой провайдеру. Connection tools with a missing schema type now reach providers with an object input schema.
 - 🔧 **Долгие команды в напоминаниях**: ожидание инструмента учитывает срок команды с запасом, поэтому команда дольше трёх минут возвращает итог. Reminder turns wait for pending tool deadlines before treating silence as a failure.
+- 🔧 **Помощники продолжают запускаться**: помощник больше не перестаёт запускаться, когда накопилось 20 сданных задач. Новый запуск освобождает место самой старой сданной задачи, а закрытие сданной задачи освобождает его сразу. Helpers can start after 20 delivered tasks by removing the oldest delivered task; closing a delivered task frees its place immediately.
 
 - 🔒 **Токен Telegram Watch защищён при отправке**: раньше токен своего прокси Watch мог попасть в отправленный файл или текст; теперь токен Telegram Watch больше не может уйти наружу в файле или тексте. The Telegram Watch proxy token is now blocked in outgoing files and redacted from outgoing text.
 - ⏰ **Срок работы задачи по расписанию**: у задачи по расписанию можно задать, сколько ей работать: долгий скрипт больше не обрывается через 2 минуты. Scheduled commands accept a runtime of 1–60 minutes, with a two-minute default.

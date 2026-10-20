@@ -96,6 +96,16 @@ check HelperRun-v72-work-output WorkMeasured || exit 2
 check HelperRun-v72-no-ceiling-live NoSilentEnd || exit 2
 check HelperRun-v72-shared-schedule NoSilentEnd || exit 2
 check HelperRun-v72-detached-work NoDetachedWork || exit 2
+check HelperOutcome-slots none || exit 2
+check HelperOutcome-goal-no-eviction GoalAdmissionAvailable || exit 2
+check HelperOutcome-goal-evict-unread ProtectedKept || exit 2
+check HelperOutcome-evict-closed-blocked ClosedAdmissionAvailable || exit 2
+check HelperOutcome-evict-unread ProtectedKept || exit 2
+check HelperOutcome-evict-goal ProtectedKept || exit 2
+check HelperOutcome-evict-newest OldestEvicted || exit 2
+check HelperOutcome-close-goal ProtectedKept || exit 2
+check HelperOutcome-admission NoAdmission || exit 2
+check HelperOutcome-delivered-close NoDeliveredClose || exit 2
 check HelperOutcome-foreign-read AuthorizedReads || exit 2
 check HelperOutcome-offline-event OfflineEvent || exit 2
 check HelperOutcome-bridge-recovery none || exit 2

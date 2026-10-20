@@ -58,11 +58,16 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
     const row = m.rows[this.index % m.rows.length];
     if (this.op === "add") {
       const a = await r.addHelper({ task: "task", may: "opaque", chat }, now);
+      const oldest = m.rows
+        .filter((x) => x.delivered !== null)
+        .sort((a, b) => a.delivered! - b.delivered!)[0];
       const allowed =
-        m.rows.length < 20 &&
+        (m.rows.length < 20 || oldest !== undefined) &&
         m.rows.filter((x) => x.status === "pending").length < 3;
       assert.equal(a.ok, allowed);
-      if (a.ok)
+      if (a.ok) {
+        if (m.rows.length === 20)
+          m.rows = m.rows.filter((x) => x.id !== oldest.id);
         m.rows.push({
           id: a.row.id,
           createdAt: now,
@@ -74,6 +79,7 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
           delivered: null,
           finished: null,
         });
+      }
     } else if (row) {
       switch (this.op) {
         case "claim": {
@@ -140,8 +146,10 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
         }
         case "close": {
           const a = await r.closeHelper(row.id, chat, now);
-          assert.equal(a.ok, row.delivered === null);
-          if (a.ok) {
+          assert.equal(a.ok, true);
+          if (row.delivered !== null)
+            m.rows = m.rows.filter((x) => x.id !== row.id);
+          else if (a.ok) {
             if (row.fired !== null) row.stop ??= "closed";
             else {
               row.status = "closed";
