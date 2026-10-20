@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Google на Ubuntu 22.04**: на Ubuntu 22.04 Gmail, Календарь и Диск больше не отваливаются после обновления: Ива проверяет запуск Google CLI и при ошибке glibc ставит совместимую musl-сборку той же версии. On Ubuntu 22.04, Gmail, Calendar and Drive keep working after updates by using a verified musl build when the Google CLI requires a newer glibc.
+
 - 📲 **Все аккаунты и большие файлы в юзерботе**: раньше второй аккаунт оставался незаметным, а скачивание требовало ручных правок; теперь юзербот видит все ваши аккаунты и умеет скачивать большие файлы (голосовые и аудио больше 20 МБ) в закрытый каталог `data/userbot-files/` без ручных правок. The userbot discovers all saved accounts and downloads large files, including voice messages and audio over 20 MB, into a private file directory without manual patches.
 - 🔧 **Время обзора сохраняет ваши настройки**: при переносе одного обзора Ива сверяет текущее расписание и сохраняет время второго. Moving one Brief uses the current schedule and preserves the other slot.
 - ⏰ **Задачи по расписанию**: Ива ставит, переносит, снимает и сразу запускает задачи по расписанию сама — и текст-напоминание, и скрипт без модели; о сбое скрипта пишет вам. Перенос и повторный запуск ждут завершения идущей задачи и сохраняют её итог. Iva can add, move, remove and run scheduled reminders and commands, with alerts on command failure; edits during execution wait for completion and preserve its result.
