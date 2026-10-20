@@ -57,7 +57,14 @@ void test("userbot session labels preserve names and reject invalid labels (seed
             },
           );
           assert.equal(result.status, 0, result.stderr);
-          const sessions = JSON.parse(result.stdout) as Record<string, string>;
+          const environment = JSON.parse(result.stdout) as Record<
+            string,
+            string
+          >;
+          assert.equal(environment.TELEGRAM_SESSION_STRING, "");
+          const sessions = Object.fromEntries(
+            Object.entries(environment).filter(([, value]) => value !== ""),
+          );
           const expected = new Set([
             "default",
             ...safeLabels.filter(

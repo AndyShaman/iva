@@ -249,22 +249,29 @@ def _seed_session_env() -> Path:
             continue
         sessions[label] = extra
     prefixes = ("TELEGRAM_SESSION_NAME_", "TELEGRAM_SESSION_STRING_")
+    session_files = {session.resolve() for session in sessions.values()}
     external = set()
     for key in list(os.environ):
         for prefix in prefixes:
             if key.startswith(prefix):
                 label = key[len(prefix):].lower()
-                if label in sessions:
-                    del os.environ[key]
+                value = os.environ[key]
+                duplicate = prefix == prefixes[0] and value and Path(
+                    value if value.endswith(".session") else value + ".session"
+                ).resolve() in session_files
+                if label in sessions or duplicate:
+                    os.environ[key] = ""  # Keep dotenv from restoring a stale value.
+                    if duplicate and label not in sessions:
+                        print(f"telegram-userbot: пропуск аккаунта {label}: дубль файла сессии", file=sys.stderr)
                 elif os.environ[key]:
                     external.add(label)
     if external:
         print(f"telegram-userbot: аккаунты из окружения: {', '.join(sorted(external))}", file=sys.stderr)
-    os.environ.pop("TELEGRAM_SESSION_STRING", None)
+    os.environ["TELEGRAM_SESSION_STRING"] = ""
     if len(sessions) == 1 and not external:
         os.environ["TELEGRAM_SESSION_NAME"] = str(path).removesuffix(".session")
     else:
-        os.environ.pop("TELEGRAM_SESSION_NAME", None)
+        os.environ["TELEGRAM_SESSION_NAME"] = ""
         for label, session in sessions.items():
             os.environ[f"TELEGRAM_SESSION_NAME_{label.upper()}"] = str(session).removesuffix(".session")
     return path

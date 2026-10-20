@@ -93,6 +93,9 @@ Use `list_accounts` to get their labels and pass `account` when choosing an acco
 in multi-account mode. With one account, omit `account`.
 
 Saved files take precedence over session environment variables with matching labels.
+The proxy blanks superseded variables so upstream's `.env` reload preserves that choice.
+File sessions use their resolved paths to identify duplicates: another label pointing
+to the same saved session is skipped and logged, including symlink aliases.
 Other `TELEGRAM_SESSION_NAME_<LABEL>` and `TELEGRAM_SESSION_STRING_<LABEL>` accounts
 remain available and their labels appear in the startup journal.
 

@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 import importlib
 import io
+import json
 import os
 import socket
 import subprocess
@@ -52,7 +53,7 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
             (self.data / name).touch()
         runtime, clients = self.discover()
         self.assertEqual(set(clients), {"default", "second"})
-        self.assertNotIn("TELEGRAM_SESSION_NAME", os.environ)
+        self.assertEqual(os.environ["TELEGRAM_SESSION_NAME"], "")
         with patch.object(runtime, "clients", clients):
             self.assertIs(runtime.get_client("second"), clients["second"])
 
@@ -63,6 +64,65 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(os.environ["TELEGRAM_SESSION_NAME"], str(self.data / "telegram-userbot"))
         with patch.object(runtime, "clients", clients):
             self.assertIs(runtime.get_client(), clients["default"])
+
+    def check_dotenv_accounts(self, values, labels):
+        """A clean import reloads the same real .env that supplied the unit's env."""
+        (self.data / "telegram-userbot.session").touch()
+        (self.root / ".env").write_text("\n".join(f"{key}={value}" for key, value in values.items()))
+        script = "\n".join([
+            "import json, os, serve",
+            "from dotenv import load_dotenv",
+            "assert load_dotenv()",  # systemd EnvironmentFile equivalent, no mock
+            "serve._seed_session_env()",
+            "from telegram_mcp import runtime",  # calls real load_dotenv again
+            "print(json.dumps({'sessions': {label: getattr(client.session, 'filename', None) for label, client in runtime.clients.items()}, 'env': {key: os.environ.get(key) for key in json.loads(os.environ['TEST_SESSION_KEYS'])}}))",
+            "for client in runtime.clients.values(): client.session.close()",
+        ])
+        environment = dict(os.environ, PYTHONPATH=str(Path(serve.__file__).parent.resolve()),
+                           TEST_SESSION_KEYS=json.dumps(list(values)))
+        result = subprocess.run([sys.executable, "-c", script], cwd=self.root, env=environment,
+                                text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["sessions"], {
+            label: str(self.data / f"telegram-userbot{'' if label == 'default' else '-' + label}.session")
+            for label in labels
+        })
+        for key in values:
+            self.assertEqual(payload["env"][key], "", key)
+        return result.stderr
+
+    async def test_real_dotenv_cannot_restore_stale_session_variables(self):
+        from telethon.crypto import AuthKey
+        from telethon.sessions import StringSession
+
+        string = StringSession()
+        string.set_dc(2, "149.154.167.50", 443)
+        string.auth_key = AuthKey(bytes(range(256)))
+        for key, multi in (("TELEGRAM_SESSION_NAME_DEFAULT", False),
+                           ("TELEGRAM_SESSION_STRING_DEFAULT", False),
+                           ("TELEGRAM_SESSION_STRING_WORK", True),
+                           ("TELEGRAM_SESSION_STRING", False),
+                           ("TELEGRAM_SESSION_NAME", True)):
+            with self.subTest(key=key):
+                extra = self.data / "telegram-userbot-work.session"
+                if multi:
+                    extra.touch()
+                else:
+                    extra.unlink(missing_ok=True)
+                value = str(self.root / "missing/stale") if "NAME" in key else string.save()
+                self.check_dotenv_accounts({key: value}, {"default", "work"} if multi else {"default"})
+
+    async def test_real_dotenv_file_aliases_do_not_open_a_second_client(self):
+        session = self.data / "telegram-userbot.session"
+        session.touch()
+        (self.root / "session-alias.session").symlink_to(session)
+        for value in (str(session), str(session.with_suffix("")),
+                      str(self.data / "../data/telegram-userbot"), str(self.root / "session-alias")):
+            with self.subTest(value=value):
+                errors = self.check_dotenv_accounts({"TELEGRAM_SESSION_NAME_MAIN": value}, {"default"})
+                self.assertEqual(errors.count("main"), 1)
+                self.assertIn("дубль", errors)
 
     async def test_saved_sessions_replace_stale_variables_without_duplicate_clients(self):
         (self.data / "telegram-userbot-second.session").touch()
@@ -96,8 +156,8 @@ class AccountsMediaTest(unittest.IsolatedAsyncioTestCase):
         }):
             _, clients = self.discover()
             self.assertEqual(set(clients), {"default", "manual"})
-            self.assertNotIn("TELEGRAM_SESSION_NAME", os.environ)
-            self.assertNotIn("TELEGRAM_SESSION_STRING_DEFAULT", os.environ)
+            self.assertEqual(os.environ["TELEGRAM_SESSION_NAME"], "")
+            self.assertEqual(os.environ["TELEGRAM_SESSION_STRING_DEFAULT"], "")
 
     async def test_explicit_session_filename_keeps_its_suffix(self):
         with patch.dict(os.environ, {"TELEGRAM_SESSION_FILE": str(self.data / "custom.name")}):
