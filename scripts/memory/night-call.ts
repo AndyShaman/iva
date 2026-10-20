@@ -18,18 +18,59 @@ export class NightSchemaError extends Error {}
 class NightNetworkError extends Error {}
 export class NightTransientError extends NightNetworkError {}
 
-function transient(error: unknown): boolean {
-  const { statusCode, cause } = (error ?? {}) as {
-    statusCode?: number;
-    cause?: unknown;
+function failureText(error: unknown): string {
+  const { message, code } = (error ?? {}) as {
+    message?: string;
+    code?: string;
   };
-  if (typeof statusCode === "number")
-    return statusCode === 408 || (statusCode >= 500 && statusCode < 600);
-  return cause !== undefined
-    ? transient(cause)
-    : /connection .{0,40}lost|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|UND_ERR|socket hang up|fetch failed|terminated|network request failed/iu.test(
-        String(error),
+  return `${message ?? (typeof error === "string" ? error : "")} ${code ?? ""}`.trim();
+}
+
+function transient(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let temporary = false;
+  while (error != null && !seen.has(error)) {
+    seen.add(error);
+    const row = error as {
+      statusCode?: number;
+      status?: number;
+      isRetryable?: boolean;
+      cause?: unknown;
+    };
+    const text = failureText(error);
+    const statuses = [
+      row.statusCode,
+      row.status,
+      ...Array.from(text.matchAll(/\bHTTP\s+(\d{3})\b/giu), (m) =>
+        Number(m[1]),
+      ),
+    ];
+    if (
+      statuses.some(
+        (status) =>
+          typeof status === "number" &&
+          status >= 400 &&
+          status < 500 &&
+          status !== 408,
+      ) ||
+      /account.{0,40}(?:terminated|suspended|disabled|deactivated|blocked)|(?:invalid|incorrect|expired|revoked).{0,20}(?:api.?key|token|credentials)|insufficient[_ ]quota|exceeded.{0,30}quota|quota.{0,30}(?:exceeded|exhausted)|payment required/iu.test(
+        text,
+      )
+    )
+      return false;
+    temporary ||=
+      row.isRetryable === true ||
+      statuses.some(
+        (status) =>
+          status === 408 ||
+          (typeof status === "number" && status >= 500 && status < 600),
+      ) ||
+      /connection .{0,40}lost|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|UND_ERR|socket hang up|fetch failed|other side closed|^(?:TypeError: )?terminated$|network request failed|(?:connect|body) timeout|model produced no output/iu.test(
+        text,
       );
+    error = row.cause;
+  }
+  return temporary;
 }
 
 export const nightModelName = providerConfig.textModel;

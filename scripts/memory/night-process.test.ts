@@ -187,6 +187,22 @@ function spawnNight(
     ...(env.IVA_TEST_OWNER_TRIGGER
       ? ["--import", join(ROOT, "scripts/fixtures/night-owner-edit.ts")]
       : []),
+    ...(env.IVA_TEST_PAUSES
+      ? [
+          "--import",
+          `data:text/javascript,${encodeURIComponent(`
+      import timers from "node:timers/promises";
+      import { syncBuiltinESMExports } from "node:module";
+      import { appendFileSync } from "node:fs";
+      const original = timers.setTimeout;
+      timers.setTimeout = (ms, ...args) => {
+        appendFileSync(process.env.IVA_TEST_PAUSES, String(ms) + "\\n");
+        return original(ms / 1000, ...args);
+      };
+      syncBuiltinESMExports();
+    `)}`,
+        ]
+      : []),
     NIGHT,
     ...(date ? [date] : []),
   ];
@@ -2843,37 +2859,70 @@ void test("#309: a 503 resumes the same night without repeating earlier portions
     logRows(read(join(fx.vault, "cards/projects/аврора.md"))).length,
     1,
   );
-  assert.equal(
-    (
-      JSON.parse(read(join(fx.data, "rollup-attempts.json"))) as Record<
-        string,
-        unknown
-      >
-    )[DATE],
-    undefined,
-  );
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
 });
 
-void test("#309: three transient failures pause a day across automatic and manual nights", async (t) => {
+void test("#341: transient failures use growing pauses and preserve day attempts", async (t) => {
   const fx = await fixture(t);
   day(fx, "## 10:00 [text]\nФакт\n");
-  fx.model.replies = Array.from({ length: 3 }, () => ({ status: 503 }));
-  const result = await night(fx, null);
-  assert.equal(result.code, 1, result.stderr);
-  assert.equal(fx.model.prompts.length, 3);
-  const attempts = JSON.parse(
-    read(join(fx.data, "rollup-attempts.json")),
-  ) as Record<string, Array<{ reason: string }>>;
-  assert.equal(attempts[DATE].length, 3);
-  assert.ok(
-    attempts[DATE].every(
-      (attempt: { reason: string }) => attempt.reason === "no-report",
-    ),
+  const attemptFile = join(fx.data, "rollup-attempts.json");
+  const before = JSON.stringify({ [DATE]: [{ at: NOW, reason: "no-report" }] });
+  writeFileSync(attemptFile, before);
+  fx.model.replies = [
+    ...Array.from({ length: 3 }, () => ({ status: 503 })),
+    A(),
+  ];
+  const held = fx.model.hold(4);
+  const pauses = join(fx.data, "pauses.log");
+  const run = spawnNight(fx, null, { IVA_TEST_PAUSES: pauses });
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  assert.equal(
+    read(attemptFile),
+    before,
+    "transient failures spend no day attempts",
   );
-  assert.equal(existsSync(summary(fx)), false);
-  await night(fx, null);
-  await night(fx);
-  assert.equal(fx.model.prompts.length, 3, "exhausted day stays paused");
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(fx.model.prompts.length, 4);
+  assert.deepEqual(
+    read(pauses).trim().split("\n").map(Number),
+    [5_000, 30_000, 120_000],
+  );
+  assert.deepEqual(JSON.parse(read(attemptFile)), {});
+  assert.ok(existsSync(summary(fx)));
+});
+
+void test("#341: deadline during backoff keeps progress available to the next night", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [A({ gist: "saved before outage" }), { status: 503 }];
+  const result = await night(fx, null, {
+    IVA_JOB_STOP_AT: String(Date.parse(NOW) + 2_500),
+  });
+  assert.equal(result.code, 1, result.stderr);
+  assert.equal(fx.model.prompts.length, 2);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  fx.model.replies = [
+    A({
+      gist: "finished after outage",
+      points: [{ text: "second", src: "e2" }],
+    }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 3);
+  assert.match(fx.model.prompts[2], /saved before outage/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
 });
 
 void test("#309: saved prefix is reused for every generated interruption point", async (t) => {
@@ -2910,7 +2959,9 @@ void test("#309: saved prefix is reused for every generated interruption point",
         const daily = join(fx.vault, "daily", `${DATE}.md`);
         const original = read(daily);
         writeFileSync(daily, original.replace("0000", "edit"));
-        assert.equal((await night(fx)).code, 1);
+        const edited = await night(fx);
+        assert.equal(edited.code, 0, edited.stderr);
+        assert.match(edited.stderr, /изменён во время разбора/u);
         assert.equal(fx.model.prompts.length, interrupted + 1);
         writeFileSync(daily, original);
         fx.model.replies = answers.slice(interrupted);
@@ -2957,4 +3008,70 @@ void test("#309: night ceiling preserves a completed portion for the next night"
   assert.equal(fx.model.prompts.length, 2);
   assert.match(fx.model.prompts[1], /saved at ceiling/u);
   assert.doesNotMatch(fx.model.prompts[1], /аааа/u);
+});
+
+void test("#341: an edited partial day waits while its neighbour completes", async (t) => {
+  const fx = await fixture(t);
+  const first = "2026-09-25";
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+    first,
+  );
+  day(fx, "## 10:00 [text]\nСоседний день\n");
+  fx.model.replies = [
+    A({ gist: "saved original" }),
+    { status: 503 },
+    A({ gist: "neighbour finished" }),
+  ];
+  const held = fx.model.hold(2);
+  const pauses = join(fx.data, "pauses.log");
+  const run = spawnNight(fx, null, { IVA_TEST_PAUSES: pauses });
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  const daily = join(fx.vault, "daily", `${first}.md`);
+  const edited = read(daily).replace("аааа", "правка");
+  writeFileSync(daily, edited);
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /изменён во время разбора/u);
+  assert.ok(existsSync(summary(fx)));
+  assert.equal(existsSync(summary(fx, first)), false);
+  assert.equal(read(daily), edited);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  const cacheFile = join(fx.data, "memory/night", `${first}.json`);
+  const cache = read(cacheFile);
+  const next = await night(fx, null);
+  assert.equal(next.code, 0, next.stderr);
+  assert.match(next.stderr, /изменён во время разбора/u);
+  assert.equal(read(cacheFile), cache, "waiting preserves saved portions");
+  assert.equal(fx.model.prompts.length, 3);
+});
+
+void test("#341: genuine day failures still exhaust the three day attempts", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nФакт\n");
+  for (let i = 0; i < 3; i++) {
+    fx.model.replies = [{ text: "invalid JSON" }, { text: "invalid JSON" }];
+    const result = await night(fx, null);
+    assert.equal(result.code, 1, result.stderr);
+  }
+  const attempts = JSON.parse(
+    read(join(fx.data, "rollup-attempts.json")),
+  ) as Record<string, unknown[]>;
+  assert.equal(attempts[DATE].length, 3);
+  await night(fx, null);
+  await night(fx);
+  assert.equal(
+    fx.model.prompts.length,
+    6,
+    "exhausted day waits across automatic and manual nights",
+  );
+  assert.equal(existsSync(summary(fx)), false);
 });

@@ -13,5 +13,6 @@ check() {
   echo "OK $cfg: $expected (exit $code)"
 }
 check NightProgress none
-check NightProgress-forget PortionsAppliedOnce
+check NightProgress-forget SavedNeverAsked
 check NightProgress-unbounded AttemptsBounded
+check NightProgress-transient TransientPreservesAttempts

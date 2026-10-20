@@ -406,8 +406,8 @@ async function askDay(
   const inputHash = input.canonicalHash(day);
   pass.progress ??= { inputHash, answers: [] };
   if (pass.progress.inputHash !== inputHash)
-    throw new Error(
-      `день ${date} изменён во время разбора; восстанови вход дня`,
+    throw new OwnerEditConflict(
+      `день ${date} изменён во время разбора; прогресс сохранён, день ждёт восстановления входа`,
     );
   const answers = pass.progress.answers;
   const remaining = input
@@ -1235,18 +1235,18 @@ const attemptDay = (date: string, reason: attempts.AttemptReason) =>
   attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
 
 async function processDayWithAttempts(date: string): Promise<boolean> {
-  for (;;) {
+  for (let reconnect = 0; ; reconnect++) {
     try {
       const complete = await processDay(date);
       if (!complete) attemptDay(date, "day-unfinished");
       return complete;
     } catch (error) {
       if (!(error instanceof call.NightTransientError)) throw error;
-      attemptDay(date, "no-report");
-      if (attempts.isExhausted(attempts.readAttempts(ATTEMPTS)[date]))
-        return false;
-      jobs.push(`${date}: связь с моделью оборвалась; продолжаю через секунду`);
-      await pause(1_000, undefined, { signal });
+      const delay = [5_000, 30_000, 120_000][Math.min(reconnect, 2)];
+      jobs.push(
+        `${date}: связь с моделью оборвалась; продолжаю через ${delay / 1_000} с`,
+      );
+      await pause(delay, undefined, { signal });
     }
   }
 }
