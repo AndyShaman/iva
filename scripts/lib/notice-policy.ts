@@ -109,24 +109,6 @@ export function isGotItData(data: string, tr: Translate): boolean {
   return data.startsWith(prefix) && data.slice(prefix.length).trim() !== "";
 }
 
-/**
- * Хвост ночного промпта — та его часть, что описывает ДОСТАВКУ отчёта: язык, форму и
- * запрет доставить себя самому. Язык называется явно: без этого модель пишет отчёт на
- * языке инструкции, и пользователь получает половину сообщения по-английски.
- */
-export function memoryReportTail(tr: Translate): string {
-  return (
-    `At the end, return a SHORT report, ${writtenInLanguage(tr)}. ` +
-    `Plain text, no markdown tables. Write it in the first person, the way a person tells ` +
-    `what they remembered in this pass: 3-5 short lines. ` +
-    `Use everyday words only: no card operations (ADD/UPDATE/SUPERSEDE/NOOP), no field ` +
-    `names, no file paths, no internal terms. ` +
-    `Return the report as the final text of this turn. Do not send it anywhere yourself: ` +
-    `no rich messages, no digest chat, no Telegram tools. ` +
-    `Only the finished report, with no preamble or reasoning.`
-  );
-}
-
 /** Факты ночи для Report: разобранные дни с выжимкой, Card, провалы. */
 export type NightFacts = {
   readonly days: ReadonlyArray<{
