@@ -38,7 +38,9 @@ function scheduleView(row: Reminder, tz: string, command: boolean) {
     ...describeReminder(row, tz),
     action_kind: command ? "command" : "prompt",
     last_status: scheduleRunning(row, Date.now(), command) ? "running" : status,
-    ...(command ? { log: commandLog(row.id) } : {}),
+    ...(command
+      ? { log: commandLog(row.id), timeout_minutes: row.timeout_minutes ?? 2 }
+      : {}),
   };
 }
 
@@ -62,6 +64,7 @@ export default defineTool({
     action: z.enum(["add", "move", "remove", "list", "run_now"]),
     text: z.string().min(1).max(2000).optional(),
     command: z.string().min(1).max(2000).optional(),
+    timeout_minutes: z.number().optional(),
     at: z
       .string()
       .min(1)
@@ -90,8 +93,11 @@ export default defineTool({
           scheduler: schedulerStatus(nowMs, tz),
         };
       }
-      if (input.action === "add" && input.command === undefined)
+      if (input.action === "add" && input.command === undefined) {
+        if (input.timeout_minutes !== undefined)
+          throw new Error("timeout_minutes requires command");
         return await remind.execute({ ...input, action: "add" }, ctx);
+      }
       if (input.action === "add") {
         if (input.text !== undefined || !input.command?.trim())
           throw new Error("Give text OR command");
@@ -100,6 +106,7 @@ export default defineTool({
           {
             id: `c-${randomBytes(6).toString("hex")}`,
             text: input.command,
+            timeout_minutes: input.timeout_minutes,
             ...planned,
           },
           { file: commandFile() },
@@ -126,7 +133,11 @@ export default defineTool({
         input.action === "move"
           ? plannedSchedule(input, nowMs, tz, command)
           : {};
-      const row = await reschedule(input.id, { ...planned, nowMs }, file);
+      const row = await reschedule(
+        input.id,
+        { ...planned, nowMs, timeout_minutes: input.timeout_minutes },
+        file,
+      );
       return {
         ok: true,
         schedule: scheduleView(row, tz, command),

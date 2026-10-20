@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 🔒 **Токен Telegram Watch защищён при отправке**: раньше токен своего прокси Watch мог попасть в отправленный файл или текст; теперь токен Telegram Watch больше не может уйти наружу в файле или тексте. The Telegram Watch proxy token is now blocked in outgoing files and redacted from outgoing text.
+- ⏰ **Срок работы задачи по расписанию**: у задачи по расписанию можно задать, сколько ей работать: долгий скрипт больше не обрывается через 2 минуты. Scheduled commands accept a runtime of 1–60 minutes, with a two-minute default.
 
 - 🔧 **Фоновые ходы подводят итог на пределе работы**: у напоминаний, обзоров и помощников появился предел шагов и суммарных входных токенов: на последнем шаге Ива подводит итог, а при пустом ответе говорит, на скольких шагах остановилась. Background turns have step and cumulative input-token ceilings, with a partial outcome or a localized notice when the final summary is empty.
 

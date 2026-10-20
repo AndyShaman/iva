@@ -12,6 +12,7 @@
 // аренда, счётчики провалов) переводится построчно: срок и текст сохраняются, режим и все
 // политики повторов отброшены владельцем 12.09.
 import { join } from "node:path";
+import { z } from "zod";
 import { createHash } from "node:crypto";
 import { dataDir } from "./data-dir.ts";
 import { quarantineDamagedRecord } from "./damaged-record.ts";
@@ -65,11 +66,14 @@ export interface Reminder {
    * его не несут вовсе.
    */
   sessionId?: string | null;
+  timeout_minutes?: number;
+  running_timeout_minutes?: number;
 }
 export type ReminderInput = {
   id: string;
   text: string;
   chat?: ReminderChat | null;
+  timeout_minutes?: number;
   schedule: unknown;
   /** Обязателен для kind "cron", запрещён для kind "at". */
   nextRunAtMs?: number;
@@ -87,6 +91,8 @@ const ROW_KEYS = [
   "delivered",
   "error",
   "sessionId",
+  "timeout_minutes",
+  "running_timeout_minutes",
 ] as const;
 
 function fail(file: string, message: string): never {
@@ -288,6 +294,11 @@ function assertSessionId(
   return value ?? null;
 }
 
+const minutes = z.number().int().min(1).max(60).optional();
+const commandTimes = z.object({
+  timeout_minutes: minutes,
+  running_timeout_minutes: minutes,
+});
 function assertReminder(file: string, value: unknown): Reminder {
   if (!isPlainObject(value))
     fail(file, `reminder row must be an object, got ${JSON.stringify(value)}`);
@@ -297,10 +308,16 @@ function assertReminder(file: string, value: unknown): Reminder {
   // Чужой ключ — строка чужой версии: читать её наугад значит молча испортить данные
   // следующей записью.
   for (const key of Object.keys(value)) {
-    if (!(ROW_KEYS as readonly string[]).includes(key))
+    if (
+      !(ROW_KEYS as readonly string[]).includes(key) ||
+      (file !== commandFile() && key.endsWith("_minutes"))
+    )
       badReminder(file, idLabel, `unknown key ${JSON.stringify(key)}`);
   }
 
+  const times = commandTimes.safeParse(value);
+  if (!times.success)
+    badReminder(file, idLabel, "timeout_minutes: integer 1–60");
   const id = assertId(file, value.id);
   if (typeof value.text !== "string" || value.text.trim().length === 0)
     badReminder(file, idLabel, "text must be a non-empty string");
@@ -335,6 +352,7 @@ function assertReminder(file: string, value: unknown): Reminder {
     delivered,
     error,
     sessionId: assertSessionId(file, idLabel, value.sessionId),
+    ...times.data,
   };
 }
 
@@ -508,7 +526,8 @@ function buildReminder(
       key !== "text" &&
       key !== "chat" &&
       key !== "schedule" &&
-      key !== "nextRunAtMs"
+      key !== "nextRunAtMs" &&
+      key !== "timeout_minutes"
     )
       badReminder(file, idLabel, `unknown input key ${JSON.stringify(key)}`);
   }
@@ -526,6 +545,9 @@ function buildReminder(
     delivered: null,
     error: null,
     sessionId: null,
+    ...(input.timeout_minutes === undefined
+      ? {}
+      : { timeout_minutes: input.timeout_minutes }),
   };
 }
 
@@ -620,6 +642,8 @@ export async function fireDue(
     if (due.length === 0) return [];
 
     for (const row of due) {
+      if (file === commandFile())
+        row.running_timeout_minutes = row.timeout_minutes ?? 2;
       row.firedAt = nowMs;
       row.delivered = null;
       row.error = null;
@@ -775,7 +799,7 @@ export const commandFile = (): string =>
 /** Move and run_now share the claim lock. Prior firing facts stay visible. */
 export async function reschedule(
   id: string,
-  input: { schedule?: unknown; nextRunAtMs?: number; nowMs: number },
+  input: Partial<ReminderInput> & { nowMs: number },
   file = reminderFile(),
 ): Promise<Reminder> {
   return mutate(file, async () => {
@@ -787,6 +811,9 @@ export async function reschedule(
       row.nextRunAtMs = assertFirstRun(file, id, schedule, input.nextRunAtMs);
       row.schedule = schedule;
     } else row.nextRunAtMs = assertTime(file, id, "nowMs", input.nowMs);
+    if (input.timeout_minutes !== undefined)
+      row.timeout_minutes = input.timeout_minutes;
+    assertReminder(file, row);
     row.status = "pending";
     await saveTable(file, rows);
     return structuredClone(row);
@@ -800,7 +827,8 @@ export const commandLog = (id: string): string =>
   );
 
 export const COMMAND_TIMEOUT_MS = 120_000;
-export const COMMAND_CHILD_TIMEOUT_MS = 130_000;
+export const commandTimeoutMs = (row: Reminder) =>
+  (row.running_timeout_minutes ?? row.timeout_minutes ?? 2) * 60_000;
 export const scheduleRunning = (
   row: Reminder,
   now = Date.now(),
@@ -813,7 +841,7 @@ export const scheduleRunning = (
       ({ status }) =>
         status.sessionId === row.sessionId && status.status === "running",
     )?.status.updatedAt;
-  const span = command ? COMMAND_CHILD_TIMEOUT_MS : RUN_STALE_MS;
+  const span = command ? commandTimeoutMs(row) + 10_000 : RUN_STALE_MS;
   return (
     row.firedAt !== null &&
     row.delivered === null &&

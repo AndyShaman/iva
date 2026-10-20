@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -95,7 +96,7 @@ test("timeout kills the shell and its descendant process group and alerts once",
     },
   });
   assert.equal(messages.length, 1);
-  assert.match(messages[0], /не уложилась в 2 минуты/);
+  assert.match(messages[0], /не уложилась в 2 мин/);
   const pid = readFileSync(pidFile, "utf8").trim();
   let state = "";
   try {
@@ -168,4 +169,111 @@ test("a delayed child cannot execute a later firing of the same row", async () =
   await row("printf current");
   assert.equal(await runCommandFire("c-test", { root: dir, firedAt: 1 }), 2);
   assert.equal((await list(commandFile()))[0]?.delivered, null);
+});
+
+for (const minutes of [undefined, 20])
+  test(`command deadline and recurring admission use ${minutes ?? 2} minutes`, async (t) => {
+    const now = Date.UTC(2026, 9, 20);
+    t.mock.timers.enable({ apis: ["Date"], now });
+    await add(
+      {
+        id: "c-test",
+        text: "true",
+        schedule: { kind: "cron", expr: "* * * * *", tz: "UTC" },
+        nextRunAtMs: now,
+        ...(minutes === undefined ? {} : { timeout_minutes: minutes }),
+      },
+      { file: commandFile() },
+    );
+    let parentTimeout: number | null | undefined;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const tick = runReminderTick({
+      command: true,
+      nowMs: now,
+      runJob: async (o) => {
+        parentTimeout = o.timeoutMs;
+        release();
+        await held;
+        return { ok: false, skipped: false, code: 1 };
+      },
+      log: () => {},
+    });
+    await started;
+    try {
+      assert.equal(parentTimeout, (minutes ?? 2) * 60_000 + 10_000);
+      t.mock.timers.setTime(now + 3 * 60_000);
+      if (minutes === 20) {
+        await reschedule(
+          "c-test",
+          { nowMs: now, timeout_minutes: 1 },
+          commandFile(),
+        );
+        assert.equal((await fireDue(Date.now(), 5, commandFile())).length, 0);
+        assert.equal(
+          await runCommandFire("c-test", { root: dir, firedAt: now }),
+          0,
+        );
+        assert.equal((await list(commandFile()))[0].delivered, true);
+      } else {
+        await runCommandFire("c-test", {
+          root: dir,
+          firedAt: now,
+          send: () => Promise.resolve({ ok: true, fellBack: false, error: "" }),
+        });
+        assert.equal((await list(commandFile()))[0].error, "timeout");
+      }
+    } finally {
+      finish();
+      await tick;
+    }
+  });
+
+test("a 20-minute command survives minute 3 and is killed by minute 21", async (t) => {
+  const now = Date.UTC(2026, 9, 20);
+  await add(
+    {
+      id: "c-test",
+      text: `echo started > "${join(dir, "started")}"; sleep 300`,
+      schedule: { kind: "at", atMs: now },
+      timeout_minutes: 20,
+    },
+    { file: commandFile() },
+  );
+  await fireDue(now, 5, commandFile());
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
+  let settled = false;
+  const messages: string[] = [];
+  const work = runCommandFire("c-test", {
+    root: dir,
+    firedAt: now,
+    send: (_bot, _chat, text) => {
+      messages.push(String(text));
+      return Promise.resolve({ ok: true, fellBack: false, error: "" });
+    },
+  }).then(() => {
+    settled = true;
+  });
+  // A real shell starts, while only its deadline clock is virtual.
+  const { setImmediate: immediate } = await import("node:timers/promises");
+  try {
+    for (let i = 0; i < 10000 && !existsSync(join(dir, "started")); i++)
+      await immediate();
+    assert.ok(existsSync(join(dir, "started")));
+    t.mock.timers.tick(3 * 60_000);
+    assert.equal(settled, false);
+    t.mock.timers.tick(18 * 60_000);
+    await work;
+  } finally {
+    t.mock.timers.tick(21 * 60_000);
+    await work;
+  }
+  assert.equal((await list(commandFile()))[0].error, "timeout");
+  assert.match(messages[0], /20 мин/);
 });

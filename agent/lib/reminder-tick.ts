@@ -17,7 +17,7 @@ import { dataDir } from "./data-dir.ts";
 import {
   ReminderStoreError,
   commandFile,
-  COMMAND_CHILD_TIMEOUT_MS,
+  commandTimeoutMs,
   reminderFile,
   fireDue,
   list,
@@ -197,7 +197,7 @@ async function fireRow(
       root,
       nodeBin,
       // Commands have a deadline; prompt turns keep their inactivity watchdog.
-      timeoutMs: command ? COMMAND_CHILD_TIMEOUT_MS : null,
+      timeoutMs: command ? commandTimeoutMs(row) + 10_000 : null,
       killGraceMs: command ? 0 : undefined,
       log,
     },
@@ -227,7 +227,7 @@ async function fireRow(
   }
   // Ребёнок не сказал факта: причина — по коду выхода. Больше за эту строку не берёмся.
   const failure =
-    command && Date.now() >= (row.firedAt ?? 0) + COMMAND_CHILD_TIMEOUT_MS
+    command && Date.now() >= (row.firedAt ?? 0) + commandTimeoutMs(row) + 10_000
       ? "timeout"
       : fireFailure(result);
   const recorded = await recordOutcome(

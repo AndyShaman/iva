@@ -7,6 +7,7 @@ import {
   recordDelivery,
   ReminderNotFoundError,
   COMMAND_TIMEOUT_MS,
+  commandTimeoutMs,
   clearCommandAlert,
 } from "#lib/reminder-store.ts";
 import { dataDir } from "#lib/data-dir.ts";
@@ -82,8 +83,8 @@ export async function runCommandFire(
     options.root ?? process.cwd(),
     options.timeoutMs ??
       (options.firedAt === undefined
-        ? COMMAND_TIMEOUT_MS
-        : row.firedAt + COMMAND_TIMEOUT_MS - Date.now()),
+        ? commandTimeoutMs(row)
+        : row.firedAt + commandTimeoutMs(row) - Date.now()),
   );
   const log = commandLog(id);
   let previous = "";
@@ -126,7 +127,7 @@ export async function runCommandFire(
           process.env.TELEGRAM_BOT_TOKEN ?? "",
           chat,
           await redactNotice(
-            `Задача «${(await redactNotice(row.text)).replace(/\s+/gu, " ").slice(0, 60)}» не выполнилась: ${result.error?.startsWith("timeout") ? "не уложилась в 2 минуты" : "завершилась с ошибкой"}. Журнал: list`,
+            `Задача «${(await redactNotice(row.text)).replace(/\s+/gu, " ").slice(0, 60)}» не выполнилась: ${result.error?.startsWith("timeout") ? `не уложилась в ${commandTimeoutMs(row) / 60_000} мин` : "завершилась с ошибкой"}. Журнал: list`,
           ),
         )
       ).ok;
