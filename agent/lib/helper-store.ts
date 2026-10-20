@@ -111,7 +111,6 @@ const stateSchema = documentSchema
 export type HelperRow = z.infer<typeof rowSchema>;
 export type HelpersState = z.infer<typeof stateSchema>;
 export type HelperChat = HelperRow["chat"];
-export type HelperRun = z.infer<typeof runSchema>;
 export type HelperStatus = HelperRow["status"];
 export type HelperStop = NonNullable<HelperRow["stop"]>;
 export type HelperOutcome = NonNullable<HelperRow["outcome"]>;
