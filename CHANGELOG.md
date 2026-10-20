@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
+
 - 📲 **Все аккаунты и большие файлы в юзерботе**: раньше второй аккаунт оставался незаметным, а скачивание требовало ручных правок; теперь юзербот видит все ваши аккаунты и умеет скачивать большие файлы (голосовые и аудио больше 20 МБ) в закрытый каталог `data/userbot-files/` без ручных правок. The userbot discovers all saved accounts and downloads large files, including voice messages and audio over 20 MB, into a private file directory without manual patches.
 - 🔧 **Время обзора сохраняет ваши настройки**: при переносе одного обзора Ива сверяет текущее расписание и сохраняет время второго. Moving one Brief uses the current schedule and preserves the other slot.
 - ⏰ **Задачи по расписанию**: Ива ставит, переносит, снимает и сразу запускает задачи по расписанию сама — и текст-напоминание, и скрипт без модели; о сбое скрипта пишет вам. Перенос и повторный запуск ждут завершения идущей задачи и сохраняют её итог. Iva can add, move, remove and run scheduled reminders and commands, with alerts on command failure; edits during execution wait for completion and preserve its result.
