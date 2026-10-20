@@ -281,17 +281,30 @@ Startup recovery uses the same chat-status lock with a two-second stale threshol
 
 ## 19. Daily-summary conflicts across nights
 
-Closed by storing the summary hash in the open day pass before the model call.
-Subsequent nights compare the file with that saved hash, preserving owner edits
-with absent, matching or mismatching `body_hash` values. Three-night process tests
-in `scripts/memory/night-process.test.ts` assert both the preserved bytes and the
-message "день ждёт владельца" on repeated nights. Other days, CORE and periods
-continue to finish. A summary identical to the saved model output
-can finish its interrupted git commit. `NightWriter.HumanEditWins` covers the open summary pass
-across nights; rereading the expected hash each night produces a counterexample.
+Closed by storing the original summary hash in the open day pass before the model
+call and the last published hash in `cache.writtenSummaryHash` before writing the
+summary. The published hash survives day completion. Subsequent passes compare
+against that publication, so a late entry preserves owner edits with absent,
+matching or mismatching `body_hash`, including description-only edits. Interrupted
+publication can finish its git commit after the raw day, model or instruction
+changes. The comparison uses the saved publication hash throughout recovery.
 
-The optional `pass.summaryHash` field keeps cache version 1. An old cache without
-that field retains the previous per-night comparison. The 0.5.5 reader validates
-only version, date and integer `through`, so it accepts and preserves the added
-field while the pass stays open. On rollback its writer ignores the saved hash;
+Three-night process tests in `scripts/memory/night-process.test.ts` assert the
+preserved bytes and "день ждёт владельца" on repeated nights. The message and the
+old-queue reminder name `iva jobs skip memory-night <date>` or restoring the summary.
+An explicit owner skip takes precedence over an open pass; the CLI writes it even
+when an ordinary completion marker already exists. Other days, CORE and periods
+continue to finish. The property test runs 100 cases with seed `20261020`.
+
+`NightWriter.HumanEditWins` covers open passes and edits after day completion, before
+a late entry opens the next pass. `PublishedSummaryResumes` covers publication,
+interruption and continuation after input changes. Mutants that reread the expected
+hash, omit the published hash or compare with recomputed output produce witnesses.
+The model retains the filesystem stability assumption between the final comparison
+and atomic publication from ADR-0016.
+
+Both `pass.summaryHash` and `writtenSummaryHash` are optional in cache version 1.
+Old caches retain their per-night comparison until their next publication. The
+0.5.5 reader validates only version, date and integer `through`, so it accepts the
+added fields. Its writer preserves the top-level hash, but ignores it on rollback;
 the absent/matching `body_hash` cases regain the old behavior until upgraded again.

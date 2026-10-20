@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- 🧠 **Ночь сохраняет вашу правку выжимки дня**: если вы поправили выжимку дня, ночь больше не перетирает правку и ждёт вас. Night preserves owner edits to daily summaries across subsequent nights and waits for the owner.
+- 🧠 **Ночь сохраняет вашу правку выжимки дня**: если вы поправили выжимку дня, ночь больше не перетирает правку и ждёт вас, в том числе при поздней реплике за уже закрытый день. Освободить день можно командой `iva jobs skip memory-night <дата>` или возвратом выжимки. Night preserves owner edits across subsequent nights and late entries into completed days. Restore the summary or use `iva jobs skip memory-night <date>` to release the day.
 
 - 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
 

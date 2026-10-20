@@ -121,6 +121,8 @@ interface DayCache {
   /** Факты неписуемых Card: дописываются, когда Card поправили. */
   pending?: Record<string, string[]>;
   pass?: Pass;
+  /** Хеш последней выжимки, записанной ночью; сохраняется и после закрытия дня. */
+  writtenSummaryHash?: string;
   completedAt?: string;
 }
 
@@ -849,15 +851,19 @@ async function finishDay(
   mkdirSync(dirname(summary), { recursive: true });
   const nextSummary = summaryOf(cache, entries, raw);
   const currentSummary = readIf(summary);
-  // Уже опубликованный ответ можно докоммитить после обрыва или отказа git.
+  // Сверяем с опубликованной выжимкой, даже если вход или модель ночи сменились.
   if (
-    currentSummary !== nextSummary &&
-    (summaryHashOf(currentSummary) !== expectedSummary ||
-      (currentSummary !== null && input.summaryEdited(currentSummary)))
+    summaryHashOf(currentSummary) !==
+      (cache.writtenSummaryHash ?? expectedSummary) ||
+    (cache.writtenSummaryHash === undefined &&
+      currentSummary !== null &&
+      input.summaryEdited(currentSummary))
   )
     throw new OwnerEditConflict(
-      `выжимка ${date} изменена вручную; день ждёт владельца`,
+      `выжимка ${date} изменена вручную; день ждёт владельца: верни выжимку или выполни iva jobs skip memory-night ${date}`,
     );
+  cache.writtenSummaryHash = textHash(nextSummary);
+  writeCache(cache);
   writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
@@ -968,6 +974,8 @@ function dayTodo(date: string): boolean {
   const raw = readFileSync(dailyFile(date), "utf8");
   const cache = readCache(date);
   const entries = input.parseDay(raw);
+  if (/<!-- processed: skipped by owner\b[^\r\n]*-->\s*$/u.test(raw))
+    return false;
   if (cache?.pass) return true;
   if (cache && input.prefixHash(entries, cache.through) !== cache.prefixHash)
     return fail(
@@ -1176,8 +1184,8 @@ async function alertsAtEnd(today: string, left: string[], fallbacks: string[]) {
     [
       "night-tail",
       old.length,
-      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs.`,
-      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs.`,
+      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs. To release a day, run iva jobs skip memory-night <date> or restore its summary.`,
+      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs. Чтобы освободить день, выполни iva jobs skip memory-night <дата> или верни выжимку.`,
     ],
     [
       "night-transcript",

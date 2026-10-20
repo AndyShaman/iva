@@ -6,14 +6,14 @@
 \* только после коммита. Обрыв (kill -9) возможен на любом шаге применения.
 EXTENDS Naturals
 
-CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash
+CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash, RememberWrittenSummaryHash, CompareRecomputedSummary
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
-VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight
+VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput
 
 cardVars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
-summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight>>
+summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput>>
 vars == <<cardVars, summaryVars>>
 
 Init ==
@@ -30,6 +30,7 @@ Init ==
   /\ summaryFile \in {"absent", "old"}
   /\ summarySeen = summaryFile /\ summaryExpected = summaryFile
   /\ summaryPhase = "idle" /\ summaryHuman = FALSE /\ summaryNight = 1
+  /\ summaryWritten = "absent" /\ summaryOutput = "new"
 
 Keep(v) == UNCHANGED <<v, summaryVars>>
 
@@ -38,27 +39,39 @@ OpenSummaryPass ==
   /\ summaryPhase = "idle"
   /\ summaryPhase' = "open"
   /\ summarySeen' = summaryFile /\ summaryExpected' = summaryFile
-  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight>>
+  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight, summaryWritten, summaryOutput>>
 
 EditSummary ==
-  /\ summaryPhase = "open" /\ summaryNight = 1 /\ ~summaryHuman
+  /\ summaryPhase \in {"idle", "open", "done"} /\ ~summaryHuman
+  /\ (summaryPhase # "idle" \/ summaryNight > 1)
   /\ summaryFile' = "human" /\ summaryHuman' = TRUE
-  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight>>
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight, summaryWritten, summaryOutput>>
 
 PublishSummary ==
   /\ summaryPhase = "open"
-  /\ LET expected == IF RememberSummaryHash THEN summarySeen ELSE summaryExpected
+  /\ LET seen == IF RememberSummaryHash THEN summarySeen ELSE summaryExpected
+         expected == IF RememberWrittenSummaryHash /\ summaryWritten # "absent"
+                        /\ ~CompareRecomputedSummary THEN summaryWritten ELSE seen
          conflict == summaryFile # expected
-     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "done"
-        /\ summaryFile' = IF conflict THEN summaryFile ELSE "new"
-  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight>>
+                      /\ ~(CompareRecomputedSummary /\ summaryFile = summaryOutput)
+     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "published"
+        /\ summaryFile' = IF conflict THEN summaryFile ELSE summaryOutput
+        /\ summaryWritten' = IF conflict \/ ~RememberWrittenSummaryHash
+                                THEN summaryWritten ELSE summaryOutput
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput>>
 
-\* Second and third nights reopen the same pass, retaining its original snapshot.
+CommitSummary ==
+  /\ summaryPhase = "published" /\ summaryPhase' = "done"
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryWritten, summaryOutput>>
+
+\* Publication followed by interruption or refused commit; the input may change.
+\* A closed day may also acquire a late entry, opening another pass after an owner edit.
 NextSummaryNight ==
-  /\ summaryPhase = "waiting" /\ summaryNight < 3
-  /\ summaryNight' = summaryNight + 1 /\ summaryPhase' = "open"
-  /\ summaryExpected' = summaryFile
-  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryHuman>>
+  /\ summaryPhase \in {"waiting", "published", "done"} /\ summaryNight < 3
+  /\ summaryNight' = summaryNight + 1
+  /\ summaryPhase' = IF summaryPhase = "done" THEN "idle" ELSE "open"
+  /\ summaryOutput' = "changed" /\ summaryExpected' = summaryFile
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryHuman, summaryWritten>>
 
 \* Платный вызов модели: только когда ответа в кэше нет.
 Call ==
@@ -146,7 +159,7 @@ Done == queue = 0 /\ UNCHANGED vars
 
 Next ==
   \/ Call \/ SaveAnswer \/ HumanEdit \/ Check \/ SavePost \/ Recheck \/ Replace \/ Conflict \/ Resume
-  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ NextSummaryNight
+  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ CommitSummary \/ NextSummaryNight
   \/ Commit \/ Ready \/ NextDay \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -156,10 +169,11 @@ Spec == Init /\ [][Next]_vars
   /\ WF_vars(Restart)
 
 TypeOK ==
-  /\ summaryFile \in {"absent", "old", "human", "new"}
-  /\ summarySeen \in {"absent", "old"}
-  /\ summaryExpected \in {"absent", "old", "human"}
-  /\ summaryPhase \in {"idle", "open", "waiting", "done"}
+  /\ summaryFile \in {"absent", "old", "human", "new", "changed"}
+  /\ summarySeen \in {"absent", "old", "human", "new", "changed"}
+  /\ summaryExpected \in {"absent", "old", "human", "new", "changed"}
+  /\ summaryPhase \in {"idle", "open", "waiting", "published", "done"}
+  /\ summaryWritten \in {"absent", "new", "changed"} /\ summaryOutput \in {"new", "changed"}
   /\ summaryHuman \in BOOLEAN /\ summaryNight \in 1..3
   /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
   /\ file \in {"old", "new", "human"}
@@ -173,6 +187,7 @@ FileNeverPartial == file \in {"old", "new", "human"}
 ReadyOnlyAfterCommit == phase = "done" => committed
 \* (3) Правка человека не перетирается.
 HumanEditWins == (human => file = "human") /\ (summaryHuman => summaryFile = "human")
+PublishedSummaryResumes == summaryPhase = "waiting" => summaryFile # summaryWritten
 \* (2), (4) Повтор ночи не зовёт модель второй раз: лишний вызов — только если обрыв
 \* случился во время самого вызова, до сохранения ответа.
 NoSecondCall == calls <= 1 + lost

@@ -945,6 +945,118 @@ void test("summary commit failure: the next night finishes its published summary
   assert.equal(git(fx.vault, "status", "--porcelain"), "");
 });
 
+for (const change of ["image", "model"] as const)
+  void test(`summary recovery: ${change} changes after publication before commit`, async (t) => {
+    const fx = await fixture(t);
+    const raw = day(fx, "## 10:00 [text]\nПросто день\n");
+    fx.model.replies = [A()];
+    const held = fx.model.hold(1);
+    const run = spawnNight(fx);
+    await held.reached;
+    const hook = join(fx.vault, ".git/hooks/pre-commit");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+    held.release();
+    assert.equal((await run.result).code, 1);
+    const published = read(summary(fx));
+    rmSync(hook);
+    if (change === "image")
+      appendFileSync(raw, "\n![[attachments/2026-09-26/late.jpg]]\n");
+    const env: Record<string, string> =
+      change === "model" ? { CUSTOM_MODEL: "changed-model" } : {};
+    for (let next = 0; next < 2; next++) {
+      const result = await night(fx, null, env);
+      assert.equal(result.code, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /день ждёт владельца/u);
+    }
+    const cache = JSON.parse(
+      read(join(fx.data, "memory/night", `${DATE}.json`)),
+    ) as { pass?: unknown; through: number };
+    assert.equal(cache.pass, undefined);
+    assert.equal(cache.through, 1);
+    assert.notEqual(read(summary(fx)), published);
+    if (change === "image")
+      assert.match(read(summary(fx)), /attachments\/2026-09-26\/late\.jpg/u);
+    else
+      assert.equal(
+        parseFrontmatter(read(summary(fx))).body,
+        parseFrontmatter(published).body,
+      );
+    assert.equal(fx.model.prompts.length, 1);
+  });
+
+for (const edit of ["absent", "description"] as const)
+  void test(`closed summary: ${edit} owner edit survives a late entry and three nights`, async (t) => {
+    const fx = await fixture(t);
+    const raw = day(fx, "## 10:00 [text]\nПросто день\n");
+    fx.model.replies = [A()];
+    const first = await night(fx);
+    assert.equal(first.code, 0, first.stderr);
+    const published = read(summary(fx));
+    const owner =
+      edit === "absent"
+        ? published.replace(/^body_hash:.*\n/mu, "") + "\nПравка владельца\n"
+        : published.replace(
+            /^description:.*$/mu,
+            'description: "Правка владельца"',
+          );
+    assert.notEqual(owner, published);
+    writeFileSync(summary(fx), owner);
+    appendFileSync(raw, "\n## 11:00 [text]\nПоздняя реплика\n");
+    fx.model.replies = [A()];
+    for (let next = 0; next < 3; next++) {
+      const result = await night(fx, null);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(read(summary(fx)), owner);
+      assert.match(result.stderr, /день ждёт владельца/u);
+      assert.match(
+        result.stderr,
+        new RegExp(`iva jobs skip memory-night ${DATE}`, "u"),
+      );
+    }
+  });
+
+void test("summary conflict: iva jobs skip releases an open pass", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nПросто день\n");
+  fx.model.replies = [A()];
+  const held = fx.model.hold(1);
+  const run = spawnNight(fx);
+  await held.reached;
+  mkdirSync(join(summary(fx), ".."), { recursive: true });
+  const owner = "---\ntype: daily-summary\n---\n# Правка владельца\n";
+  writeFileSync(summary(fx), owner);
+  held.release();
+  assert.match((await run.result).stderr, /день ждёт владельца/u);
+  const { createJobsCommand } = await import("../cli/jobs.ts");
+  const skip = createJobsCommand(
+    {
+      ROOT: ROOT,
+      ENV_PATH: "unused",
+      dataDirAbs: () => fx.data,
+      ok: () => {},
+      bad: (message: string) => assert.fail(message),
+    } as never,
+    {
+      lock: () => null,
+      readEnv: () =>
+        Promise.resolve({
+          ASSISTANT_VAULT_DIR: fx.vault,
+          ASSISTANT_TIMEZONE: "UTC",
+        }),
+      now: () => new Date(NOW),
+    },
+  );
+  await skip(["skip", "memory-night", DATE]);
+  for (let next = 0; next < 2; next++) {
+    const result = await night(fx, null);
+    assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /день ждёт владельца/u);
+    assert.equal(read(summary(fx)), owner);
+  }
+  assert.equal(fx.model.prompts.length, 1);
+});
+
 for (const origin of ["iva", "forwarded"] as const)
   void test(`CORE owner-only: ${origin} candidate is discarded`, async (t) => {
     const fx = await fixture(t);
@@ -2436,7 +2548,7 @@ void test("owner edit window: cached summary hashes preserve arbitrary owner tex
       }
       assert.equal(fx.model.prompts.length, 1);
     }),
-    { seed, numRuns: 4 },
+    { seed, numRuns: 100 },
   );
 });
 
