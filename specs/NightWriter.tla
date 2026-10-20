@@ -6,11 +6,15 @@
 \* только после коммита. Обрыв (kill -9) возможен на любом шаге применения.
 EXTENDS Naturals
 
-CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable
+CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash, RememberWrittenSummaryHash, CompareRecomputedSummary
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
-vars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
+VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass
+
+cardVars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
+summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+vars == <<cardVars, summaryVars>>
 
 Init ==
   /\ phase = "idle"
@@ -23,8 +27,57 @@ Init ==
   /\ human = FALSE
   /\ pending = FALSE
   /\ crashedOnce = FALSE
+  /\ summaryFile \in {"absent", "old"}
+  /\ summarySeen = summaryFile /\ summaryExpected = summaryFile
+  \* Night 2 also starts from a closed 0.5.5 cache with no publication hash.
+  /\ summaryNight \in {1, 2}
+  /\ summaryPhase = IF summaryNight = 2 THEN "done" ELSE "idle"
+  /\ summaryHuman = FALSE /\ summaryLatePass = (summaryNight = 2)
+  /\ summaryWritten = "absent" /\ summaryOutput = "new"
 
-Keep(v) == UNCHANGED v
+Keep(v) == UNCHANGED <<v, summaryVars>>
+
+\* A day pass stores the summary snapshot before asking the model.
+OpenSummaryPass ==
+  /\ summaryPhase = "idle"
+  /\ summaryPhase' = "open"
+  /\ summarySeen' = summaryFile /\ summaryExpected' = summaryFile
+  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+
+EditSummary ==
+  /\ summaryPhase \in {"idle", "open", "done"} /\ ~summaryHuman
+  /\ (summaryPhase # "idle" \/ summaryNight > 1)
+  /\ summaryFile' = "human" /\ summaryHuman' = TRUE
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+
+PublishSummary ==
+  /\ summaryPhase = "open"
+  /\ LET seen == IF RememberSummaryHash THEN summarySeen ELSE summaryExpected
+         expected == IF RememberWrittenSummaryHash /\ summaryWritten # "absent"
+                        /\ ~CompareRecomputedSummary THEN summaryWritten ELSE seen
+         conflict == (RememberWrittenSummaryHash /\ summaryWritten = "absent"
+                       /\ summaryLatePass /\ summaryFile # "absent")
+                      \/ (summaryFile # expected
+                           /\ ~(CompareRecomputedSummary /\ summaryFile = summaryOutput))
+     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "published"
+        /\ summaryFile' = IF conflict THEN summaryFile ELSE summaryOutput
+        /\ summaryWritten' = IF conflict \/ ~RememberWrittenSummaryHash
+                                THEN summaryWritten ELSE summaryOutput
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryLatePass>>
+
+CommitSummary ==
+  /\ summaryPhase = "published" /\ summaryPhase' = "done"
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+
+\* Publication followed by interruption or refused commit; the input may change.
+\* A closed day may also acquire a late entry, opening another pass after an owner edit.
+NextSummaryNight ==
+  /\ summaryPhase \in {"waiting", "published", "done"} /\ summaryNight < 3
+  /\ summaryLatePass' = (summaryLatePass \/ (summaryPhase = "done"))
+  /\ summaryNight' = summaryNight + 1
+  /\ summaryPhase' = IF summaryPhase = "done" THEN "idle" ELSE "open"
+  /\ summaryOutput' = "changed" /\ summaryExpected' = summaryFile
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryHuman, summaryWritten>>
 
 \* Платный вызов модели: только когда ответа в кэше нет.
 Call ==
@@ -112,6 +165,7 @@ Done == queue = 0 /\ UNCHANGED vars
 
 Next ==
   \/ Call \/ SaveAnswer \/ HumanEdit \/ Check \/ SavePost \/ Recheck \/ Replace \/ Conflict \/ Resume
+  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ CommitSummary \/ NextSummaryNight
   \/ Commit \/ Ready \/ NextDay \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -121,6 +175,13 @@ Spec == Init /\ [][Next]_vars
   /\ WF_vars(Restart)
 
 TypeOK ==
+  /\ summaryFile \in {"absent", "old", "human", "new", "changed"}
+  /\ summarySeen \in {"absent", "old", "human", "new", "changed"}
+  /\ summaryExpected \in {"absent", "old", "human", "new", "changed"}
+  /\ summaryPhase \in {"idle", "open", "waiting", "published", "done"}
+  /\ summaryWritten \in {"absent", "new", "changed"} /\ summaryOutput \in {"new", "changed"}
+  /\ summaryHuman \in BOOLEAN /\ summaryNight \in 1..3
+  /\ summaryLatePass \in BOOLEAN
   /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
   /\ file \in {"old", "new", "human"}
   /\ answer \in BOOLEAN /\ committed \in BOOLEAN /\ human \in BOOLEAN
@@ -132,7 +193,8 @@ FileNeverPartial == file \in {"old", "new", "human"}
 \* Готовность дня — только после коммита.
 ReadyOnlyAfterCommit == phase = "done" => committed
 \* (3) Правка человека не перетирается.
-HumanEditWins == human => file = "human"
+HumanEditWins == (human => file = "human") /\ (summaryHuman => summaryFile = "human")
+PublishedSummaryResumes == summaryPhase = "waiting" => summaryFile # summaryWritten
 \* (2), (4) Повтор ночи не зовёт модель второй раз: лишний вызов — только если обрыв
 \* случился во время самого вызова, до сохранения ответа.
 NoSecondCall == calls <= 1 + lost

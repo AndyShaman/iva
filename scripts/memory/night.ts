@@ -100,6 +100,8 @@ type Truth = { pre: string; answer?: TruthCard; post?: string; done?: boolean };
 interface Pass {
   readonly from: number;
   readonly upto: number;
+  /** Хеш выжимки при открытии прохода; null — файла ещё нет. */
+  readonly summaryHash?: string | null;
   /** Ответы A по частям дня; выжимка — из последнего. */
   a?: DayAnswer[];
   /** Имя новой Card → путь: пишется до создания файла, повтор берёт ту же Card. */
@@ -119,6 +121,8 @@ interface DayCache {
   /** Факты неписуемых Card: дописываются, когда Card поправили. */
   pending?: Record<string, string[]>;
   pass?: Pass;
+  /** Хеш последней выжимки, записанной ночью; сохраняется и после закрытия дня. */
+  writtenSummaryHash?: string;
   completedAt?: string;
 }
 
@@ -847,13 +851,19 @@ async function finishDay(
   mkdirSync(dirname(summary), { recursive: true });
   const nextSummary = summaryOf(cache, entries, raw);
   const currentSummary = readIf(summary);
+  // Сверяем с опубликованной выжимкой, даже если вход или модель ночи сменились.
   if (
-    currentSummary !== expectedSummary ||
-    (currentSummary !== null && input.summaryEdited(currentSummary))
+    summaryHashOf(currentSummary) !==
+      (cache.writtenSummaryHash ?? expectedSummary) ||
+    (cache.writtenSummaryHash === undefined &&
+      currentSummary !== null &&
+      (cache.completedAt !== undefined || input.summaryEdited(currentSummary)))
   )
     throw new OwnerEditConflict(
-      `выжимка ${date} изменена вручную; день ждёт владельца`,
+      `выжимка ${date} изменена вручную; день ждёт владельца: верни выжимку или выполни iva jobs skip memory-night ${date}`,
     );
+  cache.writtenSummaryHash = textHash(nextSummary);
+  writeCache(cache);
   writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
@@ -880,7 +890,11 @@ async function finishDay(
 }
 
 // ── День целиком ─────────────────────────────────────────────────────────────────────
-function openPass(date: string, entries: DayEntry[]): DayCache | null {
+function openPass(
+  date: string,
+  entries: DayEntry[],
+  summaryHash: string | null,
+): DayCache | null {
   const cache = readCache(date);
   if (cache?.pass) return cache;
   if (cache && entries.length <= cache.through) return null;
@@ -889,7 +903,7 @@ function openPass(date: string, entries: DayEntry[]): DayCache | null {
     prefixHash: input.prefixHash(entries, 0),
   };
   const from = base.through;
-  const pass = { from, upto: entries.length, created: {}, b: {} };
+  const pass = { from, upto: entries.length, summaryHash, created: {}, b: {} };
   const core = base.coreDone ? [] : base.core;
   const next: DayCache = { ...base, core, coreDone: undefined, pass };
   // Кэш пишется до вызова: не пишется — вызова нет (иначе обрыв дал бы второй вызов).
@@ -904,6 +918,9 @@ function fail(row: string): false {
 
 const readIf = (file: string) =>
   existsSync(file) ? readFileSync(file, "utf8") : null;
+
+const summaryHashOf = (summary: string | null) =>
+  summary === null ? null : textHash(summary);
 
 function gistOf(date: string): string {
   const text = readIf(summaryFile(date));
@@ -931,9 +948,9 @@ async function askPass(cache: DayCache, entries: DayEntry[]) {
 async function processDay(date: string): Promise<boolean> {
   const raw = readIf(dailyFile(date));
   if (raw === null) return !fail(`${date}: нет данных`);
-  const expectedSummary = readIf(summaryFile(date));
+  const summaryHash = summaryHashOf(readIf(summaryFile(date)));
   const entries = input.parseDay(raw);
-  const cache = openPass(date, entries);
+  const cache = openPass(date, entries, summaryHash);
   if (!cache?.pass) return true;
   cache.pass.a ??= await askPass(cache, entries);
   writeCache(cache);
@@ -945,6 +962,8 @@ async function processDay(date: string): Promise<boolean> {
   const save = () => writeCache(cache);
   if (!(await applyTruth({ date, pass: cache.pass, save })))
     return fail(`${date}: правда не закоммичена`);
+  const expectedSummary =
+    cache.pass.summaryHash === undefined ? summaryHash : cache.pass.summaryHash;
   if (await finishDay(cache, entries, raw, expectedSummary)) return true;
   return fail(`${date}: выжимка не закоммичена`);
 }
@@ -955,6 +974,8 @@ function dayTodo(date: string): boolean {
   const raw = readFileSync(dailyFile(date), "utf8");
   const cache = readCache(date);
   const entries = input.parseDay(raw);
+  if (/<!-- processed: skipped by owner\b[^\r\n]*-->\s*$/u.test(raw))
+    return false;
   if (cache?.pass) return true;
   if (cache && input.prefixHash(entries, cache.through) !== cache.prefixHash)
     return fail(
@@ -962,7 +983,9 @@ function dayTodo(date: string): boolean {
     );
   const summary = readIf(summaryFile(date));
   if (summary !== null && input.summaryEdited(summary))
-    return fail(`выжимка ${date} изменена вручную; день не разбирается`);
+    return fail(
+      `выжимка ${date} изменена вручную; день не разбирается: верни body_hash или выполни iva jobs skip memory-night ${date}`,
+    );
   if (cache) return entries.length > cache.through;
   return summary === null && !input.markedDone(raw);
 }
@@ -1163,8 +1186,8 @@ async function alertsAtEnd(today: string, left: string[], fallbacks: string[]) {
     [
       "night-tail",
       old.length,
-      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs.`,
-      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs.`,
+      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs. To release a day, run iva jobs skip memory-night <date> or restore its summary.`,
+      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs. Чтобы освободить день, выполни iva jobs skip memory-night <дата> или верни выжимку.`,
     ],
     [
       "night-transcript",

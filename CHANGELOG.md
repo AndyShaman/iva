@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 🔧 **Пустой ответ модели**: после нескольких пустых ответов Brief и Insight сообщают, что обзор не собран; напоминание приходит исходным текстом с записью ошибки, а Ива получает понятную причину неудачи помощника и предлагает повторить. After bounded empty responses, Brief and Insight report a missing review, reminders retain their text and error, and helper failures reach Iva with a readable reason to offer a retry.
+- 🧠 **Ночь сохраняет вашу правку выжимки дня**: если вы поправили выжимку дня, ночь больше не перетирает правку и ждёт вас, в том числе при поздней реплике за уже закрытый день. Освободить день можно командой `iva jobs skip memory-night <дата>` или возвратом выжимки. Night preserves owner edits across subsequent nights and late entries into completed days. Restore the summary or use `iva jobs skip memory-night <date>` to release the day.
 
 - 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
 - 🔧 **Google на Ubuntu 22.04**: на Ubuntu 22.04 Gmail, Календарь и Диск больше не отваливаются после обновления: Ива проверяет запуск Google CLI и при ошибке glibc ставит совместимую musl-сборку той же версии. On Ubuntu 22.04, Gmail, Calendar and Drive keep working after updates by using a verified musl build when the Google CLI requires a newer glibc.
