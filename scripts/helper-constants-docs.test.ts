@@ -7,7 +7,7 @@ test("English and Russian helper limit tables match every exported constant", as
   const expected = Object.entries(constants).filter(([name]) =>
     name.startsWith("HELPER_"),
   );
-  assert.equal(expected.length, 10);
+  assert.equal(expected.length, 9);
   for (const file of ["../docs/helpers.md", "../docs/ru/helpers.md"]) {
     const text = await readFile(new URL(file, import.meta.url), "utf8");
     const found = [

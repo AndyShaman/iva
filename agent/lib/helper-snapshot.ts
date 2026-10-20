@@ -76,7 +76,7 @@ export function foldHelperSnapshot(
         reason = "помощник ждал авторизации";
       if (outcome === "done" && d.reason === "step-limit") {
         outcome = "ceiling";
-        reason = "предел шагов";
+        reason = "предел работы";
       }
     }
   }

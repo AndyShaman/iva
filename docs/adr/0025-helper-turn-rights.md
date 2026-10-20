@@ -19,7 +19,11 @@ untrusted. These rules are instructions for the model.
 Our eve copy owns the turn step limit and the selected model's compaction
 threshold. Iva owns the lifecycle across turns and restarts: the helper row,
 Schedule and Bridge wake. A service helper request needs
-a valid helper id; its step limit is 80. The effective limit is the minimum of
+a valid helper id; its step ceiling is `TURN_MAX_STEPS.helper` (80). Background
+turns also carry a 4,000,000 cumulative input-token ceiling, preserved across
+compaction. At either ceiling eve removes tools and asks for a partial outcome
+that explains the stop in the owner's language. Input is checked between calls;
+the crossing call and final summary can exceed the ceiling. The effective ceiling is the minimum of
 the initiating session's and current request's specified limits.
 
 ## Accepted risks

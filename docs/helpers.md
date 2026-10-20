@@ -28,11 +28,18 @@ Iva starts one helper at a time. Pending work and retained rows have separate li
 | `HELPER_MAX_ROWS`       |       20 |
 | `HELPER_DEADLINE_MS`    |  2700000 |
 | `HELPER_GRACE_MS`       |   120000 |
-| `HELPER_MAX_STEPS`      |       80 |
 | `HELPER_CEILING_TOKENS` |  1000000 |
 | `HELPER_CHECK_MS`       |    15000 |
 | `HELPER_SUMMARY_MAX`    |     1500 |
 | `HELPER_KEEP_MS`        | 86400000 |
+
+The core step ceiling comes from `TURN_MAX_STEPS.helper` in `agent/lib/eve-auth.ts` (80).
+Every background turn also has a core ceiling of 4,000,000 cumulative input tokens,
+including cached input. After reaching either ceiling, the next call has no tools
+and returns a partial outcome explaining the stop in the owner's language.
+The 80th call is already the final call. The input ceiling is checked between calls,
+so the crossing call and the final summary can exceed it. Compaction preserves the counter.
+The helper Schedule's separate work counter and deadline remain in force.
 
 HELPER_CHECK_MS bounds each core HTTP call; the helper Schedule runs every minute.
 Work ceilings, questions and authorization waits are observed on that next tick.

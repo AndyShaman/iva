@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 🔧 **Фоновые ходы подводят итог на пределе работы**: напоминание или обзор больше не могут работать часами и тратить миллионы токенов: на пределе Ива подводит итог. Background turns now have step and cumulative input-token ceilings and return a useful partial outcome when reached.
 - 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
 - 🔧 **Google на Ubuntu 22.04**: на Ubuntu 22.04 Gmail, Календарь и Диск больше не отваливаются после обновления: Ива проверяет запуск Google CLI и при ошибке glibc ставит совместимую musl-сборку той же версии. On Ubuntu 22.04, Gmail, Calendar and Drive keep working after updates by using a verified musl build when the Google CLI requires a newer glibc.
 
