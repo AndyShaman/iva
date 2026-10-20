@@ -100,8 +100,11 @@ for (const lang of ["en", "ru"] as const) {
       )?.[1];
       assert.ok(promptText);
       const source = { textContent: promptText, hidden: true };
+      const label = { textContent: "Install" };
       const button = {
         textContent: "Install",
+        querySelector: (selector: string) =>
+          selector === ".lbl" ? label : null,
         classList: { add: () => {}, remove: () => {} },
         addEventListener: (_event: string, listener: () => void) => {
           click = listener;
@@ -144,6 +147,7 @@ for (const lang of ["en", "ru"] as const) {
       assert.ok(click);
       click();
       await new Promise((done) => setImmediate(done));
+      assert.notEqual(label.textContent, "Install");
       if (clipboard === "available") assert.equal(copied, phrases[lang]);
       else {
         assert.equal(selected, true);
