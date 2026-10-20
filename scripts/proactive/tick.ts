@@ -11,6 +11,7 @@
 // «нового нет»), 1 — ошибка (факт в jobs.json, агент видит открытый провал).
 import { join } from "node:path";
 import { dataDir } from "#lib/data-dir.ts";
+import { isEmptyModelResponse } from "#lib/model-response.ts";
 import { acquireFileLock, releaseFileLock } from "#lib/fs-atomic.ts";
 import { pluginTreeDigest } from "#lib/plugin-reader.ts";
 import { findPlugin, readPluginsStateSafe } from "#lib/plugin-store.ts";
@@ -507,6 +508,16 @@ function afterDelivery(
     : next;
 }
 
+function emptyReview(turn: ReminderTurn, what: string): boolean {
+  return (
+    what !== "watch" &&
+    turn.status === "failed" &&
+    !turn.sessionLimit &&
+    !turn.cancelled &&
+    isEmptyModelResponse(turn.message)
+  );
+}
+
 /** Ход модели; провал, лимит сессии или отмена — null и строка в журнал. */
 async function turnText(
   deps: TickDeps,
@@ -526,6 +537,19 @@ async function turnText(
   }
   if (turn.status === "failed" || turn.sessionLimit || turn.cancelled) {
     log(`proactive: ${what} turn failed: ${turn.message ?? turn.status}`);
+    if (emptyReview(turn, what)) {
+      const tr = await deps.translate();
+      await deliver(
+        [
+          tr(
+            "The model gave no response. The review was not prepared; I'll try next time.",
+            "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
+          ),
+        ],
+        (part) => deps.send(part, what),
+        log,
+      );
+    }
     return null;
   }
   return turn.message ?? "";

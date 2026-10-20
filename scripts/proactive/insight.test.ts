@@ -40,6 +40,30 @@ const MIDNIGHT = Date.UTC(2026, 9, 4, 19, 0);
 const at = (hh: number, mm = 0, days = 0) =>
   MIDNIGHT + days * DAY_MS + hh * HOUR + mm * MIN;
 const DAY = "2026-10-05";
+
+for (const english of [false, true])
+  test(`empty-response turn.failed gives a readable Insight failure, English=${english}`, async () => {
+    const { reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness();
+    h.english = english;
+    await seed(h);
+    h.reply = await reminderFromEvents([
+      { type: "turn.failed", data: { message: "EmptyModelResponseError" } },
+      { type: "session.waiting" },
+    ]);
+    assert.equal(await runProactiveTick(at(11, 30), h.deps), 0);
+    assert.deepEqual(h.sent, [
+      {
+        source: "insight",
+        part: english
+          ? "The model gave no response. The review was not prepared; I'll try next time."
+          : "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
+      },
+    ]);
+    assert.equal(readState(h).insight?.draft, "");
+    assert.ok(h.logs.some((l) => l.includes("insight turn failed:")));
+  });
 /** Brief выключен: окно утреннего слота (3 часа) иначе накрыло бы 11:30. */
 const INSIGHT: ProactiveConfig = {
   ...PROACTIVE_DEFAULTS,

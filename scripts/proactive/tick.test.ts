@@ -45,6 +45,28 @@ const HOUR = 60 * MIN;
 const NOON = Date.UTC(2026, 9, 5, 12, 0);
 const DAY = "2026-10-05";
 
+test("empty-response turn.failed stays quiet in Watch and logs the cause", async () => {
+  const { reminderFromEvents } =
+    await import("../fixtures/reminder-events.test-fixture.ts");
+  const h = harness();
+  writeState(h, staleSeen(chat(1, 1)));
+  h.tg = { items: [chat(1, 1)], error: null };
+  h.reply = await reminderFromEvents([
+    {
+      type: "turn.failed",
+      data: { message: "The model did not return a response" },
+    },
+    { type: "session.waiting" },
+  ]);
+  assert.equal(await runProactiveTick(NOON, h.deps), 1);
+  assert.deepEqual(h.sent, []);
+  assert.ok(
+    h.logs.includes(
+      "proactive: watch turn failed: The model did not return a response",
+    ),
+  );
+});
+
 type Harness = {
   readonly deps: TickDeps;
   readonly statePath: string;
