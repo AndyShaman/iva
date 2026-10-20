@@ -187,6 +187,22 @@ function spawnNight(
     ...(env.IVA_TEST_OWNER_TRIGGER
       ? ["--import", join(ROOT, "scripts/fixtures/night-owner-edit.ts")]
       : []),
+    ...(env.IVA_TEST_PAUSES
+      ? [
+          "--import",
+          `data:text/javascript,${encodeURIComponent(`
+      import timers from "node:timers/promises";
+      import { syncBuiltinESMExports } from "node:module";
+      import { appendFileSync } from "node:fs";
+      const original = timers.setTimeout;
+      timers.setTimeout = (ms, ...args) => {
+        appendFileSync(process.env.IVA_TEST_PAUSES, String(ms) + "\\n");
+        return original(ms / 1000, ...args);
+      };
+      syncBuiltinESMExports();
+    `)}`,
+        ]
+      : []),
     NIGHT,
     ...(date ? [date] : []),
   ];
@@ -2762,4 +2778,300 @@ void test("owner edit window: period summary saved while the model runs wins", a
   assert.equal(result.code, 0, result.stderr);
   assert.match(read(weekly), /OWNER_EDIT/u);
   assert.doesNotMatch(read(weekly), /Ночная неделя/u);
+});
+
+void test("#309: kill during a later portion resumes from the saved answer", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [A({ gist: "saved first portion" })];
+  const held = fx.model.hold(2);
+  const run = spawnNight(fx);
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  run.child.kill("SIGKILL");
+  await run.result;
+  const cache = JSON.parse(
+    read(join(fx.data, "memory/night", `${DATE}.json`)),
+  ) as {
+    pass: {
+      a?: unknown;
+      summaryHash: string | null;
+      progress: { answers: Array<{ gist: string }> };
+    };
+  };
+  assert.equal(cache.pass.a, undefined, "0.5.5 must see an unfinished A");
+  assert.equal(cache.pass.progress.answers.length, 1);
+  assert.equal(cache.pass.progress.answers[0].gist, "saved first portion");
+  assert.equal(
+    cache.pass.summaryHash,
+    null,
+    "#337 snapshot survives checkpoints",
+  );
+  // Release the dead request before giving the next process its response.
+  held.release();
+  await new Promise<void>((accept) => setImmediate(accept));
+  fx.model.replies = [
+    A({ gist: "finished", points: [{ text: "second", src: "e2" }] }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 3);
+  assert.match(fx.model.prompts[2], /saved first portion/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
+  const finished = JSON.parse(
+    read(join(fx.data, "memory/night", `${DATE}.json`)),
+  ) as { pass?: unknown; writtenSummaryHash?: string };
+  assert.equal(finished.pass, undefined);
+  assert.equal(typeof finished.writtenSummaryHash, "string");
+  assert.match(read(summary(fx)), /description: "finished"/u);
+});
+
+void test("#309: a 503 resumes the same night without repeating earlier portions or facts", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\nАврора ${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [
+    A({
+      gist: "first saved",
+      new_cards: [newAurora],
+      facts: [{ card: "Аврора", text: "Аврора", quote: "Аврора", src: "e1" }],
+    }),
+    { status: 503 },
+    A({ gist: "all done", points: [{ text: "second", src: "e2" }] }),
+    B({ card: "cards/projects/аврора" }),
+  ];
+  const result = await night(fx, null);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(fx.model.prompts.length, 4);
+  assert.match(fx.model.prompts[2], /first saved/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
+  assert.equal(
+    logRows(read(join(fx.vault, "cards/projects/аврора.md"))).length,
+    1,
+  );
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+});
+
+void test("#341: transient failures use growing pauses and preserve day attempts", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nФакт\n");
+  const attemptFile = join(fx.data, "rollup-attempts.json");
+  const before = JSON.stringify({ [DATE]: [{ at: NOW, reason: "no-report" }] });
+  writeFileSync(attemptFile, before);
+  fx.model.replies = [
+    ...Array.from({ length: 3 }, () => ({ status: 503 })),
+    A(),
+  ];
+  const held = fx.model.hold(4);
+  const pauses = join(fx.data, "pauses.log");
+  const run = spawnNight(fx, null, { IVA_TEST_PAUSES: pauses });
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  assert.equal(
+    read(attemptFile),
+    before,
+    "transient failures spend no day attempts",
+  );
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(fx.model.prompts.length, 4);
+  assert.deepEqual(
+    read(pauses).trim().split("\n").map(Number),
+    [5_000, 30_000, 120_000],
+  );
+  assert.deepEqual(JSON.parse(read(attemptFile)), {});
+  assert.ok(existsSync(summary(fx)));
+});
+
+void test("#341: deadline during backoff keeps progress available to the next night", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [A({ gist: "saved before outage" }), { status: 503 }];
+  const result = await night(fx, null, {
+    IVA_JOB_STOP_AT: String(Date.parse(NOW) + 2_500),
+  });
+  assert.equal(result.code, 1, result.stderr);
+  assert.equal(fx.model.prompts.length, 2);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  fx.model.replies = [
+    A({
+      gist: "finished after outage",
+      points: [{ text: "second", src: "e2" }],
+    }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 3);
+  assert.match(fx.model.prompts[2], /saved before outage/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
+});
+
+void test("#309: saved prefix is reused for every generated interruption point", async (t) => {
+  const seed = 20261020;
+  t.diagnostic(`fast-check seed=${seed}`);
+  await fc.assert(
+    fc.asyncProperty(
+      fc.integer({ min: 2, max: 5 }),
+      fc.nat(),
+      async (parts, point) => {
+        const fx = await fixture(t);
+        const interrupted = 1 + (point % (parts - 1));
+        day(
+          fx,
+          Array.from(
+            { length: parts },
+            (_, i) => `## 1${i}:00 [text]\n${String(i).repeat(30_000)}\n`,
+          ).join("\n"),
+        );
+        const answers = Array.from({ length: parts }, (_, i) =>
+          A({
+            gist: `portion ${i}`,
+            points: [{ text: `point ${i}`, src: `e${i + 1}` }],
+          }),
+        );
+        fx.model.replies = [...answers.slice(0, interrupted), { status: 401 }];
+        assert.equal((await night(fx)).code, 1);
+        const cachePath = join(fx.data, "memory/night", `${DATE}.json`);
+        const cache = JSON.parse(read(cachePath)) as {
+          pass: { progress: { answers: unknown[] } };
+        };
+        assert.equal(cache.pass.progress.answers.length, interrupted);
+        // Saved input identity protects the correspondence between portion and answer.
+        const daily = join(fx.vault, "daily", `${DATE}.md`);
+        const original = read(daily);
+        writeFileSync(daily, original.replace("0000", "edit"));
+        const edited = await night(fx);
+        assert.equal(edited.code, 0, edited.stderr);
+        assert.match(edited.stderr, /изменён во время разбора/u);
+        assert.equal(fx.model.prompts.length, interrupted + 1);
+        writeFileSync(daily, original);
+        fx.model.replies = answers.slice(interrupted);
+        const resumed = await night(fx);
+        assert.equal(resumed.code, 0, resumed.stderr);
+        assert.equal(fx.model.prompts.length, parts + 1);
+        assert.match(fx.model.prompts[interrupted + 1], /portion 0/u);
+        const reference = await fixture(t);
+        day(reference, original.slice(original.indexOf("## ")));
+        reference.model.replies = answers;
+        assert.equal((await night(reference)).code, 0);
+        assert.equal(
+          read(summary(fx)),
+          read(summary(reference)),
+          "same result as an uninterrupted day",
+        );
+      },
+    ),
+    { seed, numRuns: 8 },
+  );
+});
+
+void test("#309: night ceiling preserves a completed portion for the next night", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [
+    { usage: 300_000, value: A({ gist: "saved at ceiling" }) },
+  ];
+  const cut = await night(fx);
+  assert.equal(cut.code, 1, cut.stderr);
+  assert.match(read(join(fx.data, "rollup-attempts.json")), /"cut"/u);
+  assert.equal(fx.model.prompts.length, 1);
+  fx.model.replies = [
+    A({
+      gist: "finished after ceiling",
+      points: [{ text: "second", src: "e2" }],
+    }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 2);
+  assert.match(fx.model.prompts[1], /saved at ceiling/u);
+  assert.doesNotMatch(fx.model.prompts[1], /аааа/u);
+});
+
+void test("#341: an edited partial day waits while its neighbour completes", async (t) => {
+  const fx = await fixture(t);
+  const first = "2026-09-25";
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+    first,
+  );
+  day(fx, "## 10:00 [text]\nСоседний день\n");
+  fx.model.replies = [
+    A({ gist: "saved original" }),
+    { status: 503 },
+    A({ gist: "neighbour finished" }),
+  ];
+  const held = fx.model.hold(2);
+  const pauses = join(fx.data, "pauses.log");
+  const run = spawnNight(fx, null, { IVA_TEST_PAUSES: pauses });
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  const daily = join(fx.vault, "daily", `${first}.md`);
+  const edited = read(daily).replace("аааа", "правка");
+  writeFileSync(daily, edited);
+  held.release();
+  const result = await run.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /изменён во время разбора/u);
+  assert.ok(existsSync(summary(fx)));
+  assert.equal(existsSync(summary(fx, first)), false);
+  assert.equal(read(daily), edited);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
+  const cacheFile = join(fx.data, "memory/night", `${first}.json`);
+  const cache = read(cacheFile);
+  const next = await night(fx, null);
+  assert.equal(next.code, 0, next.stderr);
+  assert.match(next.stderr, /изменён во время разбора/u);
+  assert.equal(read(cacheFile), cache, "waiting preserves saved portions");
+  assert.equal(fx.model.prompts.length, 3);
+});
+
+void test("#341: genuine day failures still exhaust the three day attempts", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nФакт\n");
+  for (let i = 0; i < 3; i++) {
+    fx.model.replies = [{ text: "invalid JSON" }, { text: "invalid JSON" }];
+    const result = await night(fx, null);
+    assert.equal(result.code, 1, result.stderr);
+  }
+  const attempts = JSON.parse(
+    read(join(fx.data, "rollup-attempts.json")),
+  ) as Record<string, unknown[]>;
+  assert.equal(attempts[DATE].length, 3);
+  await night(fx, null);
+  await night(fx);
+  assert.equal(
+    fx.model.prompts.length,
+    6,
+    "exhausted day waits across automatic and manual nights",
+  );
+  assert.equal(existsSync(summary(fx)), false);
 });
