@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Долгие команды в напоминаниях**: ожидание инструмента учитывает срок команды с запасом, поэтому команда дольше трёх минут возвращает итог. Reminder turns wait for pending tool deadlines before treating silence as a failure.
+
 - 🔒 **Токен Telegram Watch защищён при отправке**: раньше токен своего прокси Watch мог попасть в отправленный файл или текст; теперь токен Telegram Watch больше не может уйти наружу в файле или тексте. The Telegram Watch proxy token is now blocked in outgoing files and redacted from outgoing text.
 - ⏰ **Срок работы задачи по расписанию**: у задачи по расписанию можно задать, сколько ей работать: долгий скрипт больше не обрывается через 2 минуты. Scheduled commands accept a runtime of 1–60 minutes, with a two-minute default.
 

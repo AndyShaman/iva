@@ -6,6 +6,7 @@
 // не загрузился бы на установке без agent/.
 import assert from "node:assert/strict";
 import test from "node:test";
+import fc from "fast-check";
 import type {
   CreateClient,
   ReminderClient,
@@ -1029,4 +1030,155 @@ void test("waiting for late sessions ends at its cap even when create never come
   t.mock.timers.tick(1);
   await settling;
   assert.deepEqual(spy.calls, ["client", "create"]);
+});
+
+const requestedTool = (
+  callId: string,
+  timeoutMs = 240_000,
+): TurnStreamEvent => ({
+  type: "actions.requested",
+  data: {
+    actions: [
+      { kind: "tool-call", callId, toolName: "bash", input: { timeoutMs } },
+    ],
+  },
+});
+const toolResult = (callId: string): TurnStreamEvent => ({
+  type: "action.result",
+  data: { result: { callId } },
+});
+const drainEvents = async () => {
+  for (let i = 0; i < 12; i += 1) await flush();
+};
+
+void test("a four-minute command returns the reminder result after the ordinary silence window", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  let finish = () => {};
+  const command = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const spy = spyTurn(async function* () {
+    yield requestedTool("long");
+    await command;
+    yield toolResult("long");
+    yield {
+      type: "message.completed",
+      data: { message: "command result delivered" },
+    };
+    yield { type: "session.waiting" };
+  });
+  const running = runReminderTurn("four minutes", OPTIONS, {
+    createClient: spy.createClient,
+  });
+  const outcome = running.catch((error: unknown) => error);
+  await drainEvents();
+  t.mock.timers.tick(240_000);
+  await drainEvents();
+  assert.deepEqual(spy.sessionCalls, [], "the command still owns its timeout");
+  finish();
+  const turn = await outcome;
+  assert.ok(!(turn instanceof Error));
+  assert.equal(
+    (turn as { message: string }).message,
+    "command result delivered",
+  );
+  assert.deepEqual(spy.sessionCalls, ["reset"]);
+});
+
+void test("a tool that never returns is cancelled at its timeout plus the silence grace", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const spy = spyTurn(async function* (cancelled) {
+    yield requestedTool("hung");
+    await cancelled;
+  });
+  const outcome = runReminderTurn("hung", OPTIONS, {
+    createClient: spy.createClient,
+  }).catch((error: unknown) => error);
+  await drainEvents();
+  t.mock.timers.tick(419_999);
+  await drainEvents();
+  assert.deepEqual(spy.sessionCalls, []);
+  t.mock.timers.tick(1);
+  assert.ok((await outcome) instanceof ReminderTurnError);
+  assert.deepEqual(spy.sessionCalls, ["cancel tasks=true", "reset"]);
+});
+
+void test("a result removes only its callId; after all results the ordinary silence window applies", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  let finish = () => {};
+  const command = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const spy = spyTurn(async function* (cancelled) {
+    yield requestedTool("long");
+    yield requestedTool("short", 100);
+    yield toolResult("short");
+    yield toolResult("unknown");
+    await command;
+    yield toolResult("long");
+    await cancelled;
+  });
+  const outcome = runReminderTurn("parallel", OPTIONS, {
+    createClient: spy.createClient,
+  }).catch((error: unknown) => error);
+  await drainEvents();
+  t.mock.timers.tick(240_000);
+  await drainEvents();
+  assert.deepEqual(spy.sessionCalls, []);
+  finish();
+  await drainEvents();
+  t.mock.timers.tick(179_999);
+  await drainEvents();
+  assert.deepEqual(spy.sessionCalls, []);
+  t.mock.timers.tick(1);
+  assert.ok((await outcome) instanceof ReminderTurnError);
+});
+
+void test("the job deadline cancels a tool even while its command timeout is running", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const controller = new AbortController();
+  const spy = spyTurn(async function* (cancelled) {
+    yield requestedTool("long");
+    await cancelled;
+  });
+  const running = runReminderTurn("deadline", OPTIONS, {
+    createClient: spy.createClient,
+    signal: controller.signal,
+  });
+  await drainEvents();
+  controller.abort();
+  assert.equal((await running).message, DEADLINE);
+  assert.deepEqual(spy.sessionCalls, ["cancel tasks=true", "reset"]);
+});
+
+void test("tool deadlines preserve random timeouts, duplicate calls and timer overflow (seed=20261020)", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  await fc.assert(
+    fc.asyncProperty(
+      fc.oneof(
+        fc.integer({ min: 100, max: 500_000 }),
+        fc.constant(2_147_483_647),
+      ),
+      async (timeout) => {
+        const spy = spyTurn(async function* (cancelled) {
+          yield requestedTool("same", timeout);
+          yield requestedTool("same", timeout * 2);
+          await cancelled;
+        });
+        const outcome = runReminderTurn("property", OPTIONS, {
+          createClient: spy.createClient,
+        }).catch((error: unknown) => error);
+        await drainEvents();
+        t.mock.timers.tick(timeout);
+        await drainEvents();
+        assert.deepEqual(spy.sessionCalls, []);
+        t.mock.timers.tick(179_999);
+        await drainEvents();
+        assert.deepEqual(spy.sessionCalls, []);
+        t.mock.timers.tick(1);
+        assert.ok((await outcome) instanceof ReminderTurnError);
+      },
+    ),
+    { seed: 20261020, numRuns: 50 },
+  );
 });
