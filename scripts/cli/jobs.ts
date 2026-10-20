@@ -24,7 +24,7 @@ type CliRuntime = ReturnType<typeof createCliRuntime>;
 
 type ReadEnv = typeof readEnvFresh;
 
-export type JobsDependencies = {
+type JobsDependencies = {
   readonly ack?: typeof ackFacts;
   readonly commit?: typeof commitVaultWrite;
   readonly readEnv?: ReadEnv;
