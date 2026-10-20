@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🧠 **Ночь сохраняет вашу правку выжимки дня**: если вы поправили выжимку дня, ночь больше не перетирает правку и ждёт вас. Night preserves owner edits to daily summaries across subsequent nights and waits for the owner.
+
 - 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
 
 - 📲 **Все аккаунты и большие файлы в юзерботе**: раньше второй аккаунт оставался незаметным, а скачивание требовало ручных правок; теперь юзербот видит все ваши аккаунты и умеет скачивать большие файлы (голосовые и аудио больше 20 МБ) в закрытый каталог `data/userbot-files/` без ручных правок. The userbot discovers all saved accounts and downloads large files, including voice messages and audio over 20 MB, into a private file directory without manual patches.

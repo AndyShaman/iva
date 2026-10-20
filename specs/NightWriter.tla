@@ -6,11 +6,15 @@
 \* только после коммита. Обрыв (kill -9) возможен на любом шаге применения.
 EXTENDS Naturals
 
-CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable
+CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
-vars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
+VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight
+
+cardVars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
+summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight>>
+vars == <<cardVars, summaryVars>>
 
 Init ==
   /\ phase = "idle"
@@ -23,8 +27,38 @@ Init ==
   /\ human = FALSE
   /\ pending = FALSE
   /\ crashedOnce = FALSE
+  /\ summaryFile \in {"absent", "old"}
+  /\ summarySeen = summaryFile /\ summaryExpected = summaryFile
+  /\ summaryPhase = "idle" /\ summaryHuman = FALSE /\ summaryNight = 1
 
-Keep(v) == UNCHANGED v
+Keep(v) == UNCHANGED <<v, summaryVars>>
+
+\* A day pass stores the summary snapshot before asking the model.
+OpenSummaryPass ==
+  /\ summaryPhase = "idle"
+  /\ summaryPhase' = "open"
+  /\ summarySeen' = summaryFile /\ summaryExpected' = summaryFile
+  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight>>
+
+EditSummary ==
+  /\ summaryPhase = "open" /\ summaryNight = 1 /\ ~summaryHuman
+  /\ summaryFile' = "human" /\ summaryHuman' = TRUE
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight>>
+
+PublishSummary ==
+  /\ summaryPhase = "open"
+  /\ LET expected == IF RememberSummaryHash THEN summarySeen ELSE summaryExpected
+         conflict == summaryFile # expected
+     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "done"
+        /\ summaryFile' = IF conflict THEN summaryFile ELSE "new"
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight>>
+
+\* Second and third nights reopen the same pass, retaining its original snapshot.
+NextSummaryNight ==
+  /\ summaryPhase = "waiting" /\ summaryNight < 3
+  /\ summaryNight' = summaryNight + 1 /\ summaryPhase' = "open"
+  /\ summaryExpected' = summaryFile
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryHuman>>
 
 \* Платный вызов модели: только когда ответа в кэше нет.
 Call ==
@@ -112,6 +146,7 @@ Done == queue = 0 /\ UNCHANGED vars
 
 Next ==
   \/ Call \/ SaveAnswer \/ HumanEdit \/ Check \/ SavePost \/ Recheck \/ Replace \/ Conflict \/ Resume
+  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ NextSummaryNight
   \/ Commit \/ Ready \/ NextDay \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -121,6 +156,11 @@ Spec == Init /\ [][Next]_vars
   /\ WF_vars(Restart)
 
 TypeOK ==
+  /\ summaryFile \in {"absent", "old", "human", "new"}
+  /\ summarySeen \in {"absent", "old"}
+  /\ summaryExpected \in {"absent", "old", "human"}
+  /\ summaryPhase \in {"idle", "open", "waiting", "done"}
+  /\ summaryHuman \in BOOLEAN /\ summaryNight \in 1..3
   /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
   /\ file \in {"old", "new", "human"}
   /\ answer \in BOOLEAN /\ committed \in BOOLEAN /\ human \in BOOLEAN
@@ -132,7 +172,7 @@ FileNeverPartial == file \in {"old", "new", "human"}
 \* Готовность дня — только после коммита.
 ReadyOnlyAfterCommit == phase = "done" => committed
 \* (3) Правка человека не перетирается.
-HumanEditWins == human => file = "human"
+HumanEditWins == (human => file = "human") /\ (summaryHuman => summaryFile = "human")
 \* (2), (4) Повтор ночи не зовёт модель второй раз: лишний вызов — только если обрыв
 \* случился во время самого вызова, до сохранения ответа.
 NoSecondCall == calls <= 1 + lost

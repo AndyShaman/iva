@@ -279,23 +279,19 @@ The `ai` pin is gone: Iva used to override `ai` to 7.0.39 against eve 0.51.1's p
 
 Startup recovery uses the same chat-status lock with a two-second stale threshold; ordinary chat writers retain their usual thirty-second threshold. A killed writer's fresh lock becomes reclaimable within two seconds. A live synchronous writer stalled beyond this recovery threshold can lose its lock (`FileLock-sync-slow.cfg`); normal writes must finish well within the threshold.
 
-## 19. Daily-summary conflicts with absent or matching body hashes
+## 19. Daily-summary conflicts across nights
 
-A direct edit during the model's day response is kept by that night. A mismatching
-`body_hash` also keeps the edited summary on subsequent automatic and manual nights,
-including a cached open pass. This N1 case is closed and covered by the single
-three-night process test in `scripts/memory/night-process.test.ts` ("mismatch summary
-survives three nights"). The two N1 cases with an absent or matching `body_hash`
-remain open: the next night can overwrite the edited summary. The day cache retains
-the model answer and open pass, while the expected summary snapshot and detected conflict live only
-in the first process. This is existing behavior in baseline `91dd9bb6` and release
-`0.4.17`. QA round 3 reproduced both open cases across three nights with a separate
-probe in `.scratch/work/fixes-1013/fixes2-qa3-probes`; the report is
-`.scratch/work/fixes-1013/fixes2-qa3-opus.md`. The repeated-night message
-"день ждёт владельца" has no test assertion. The two open data-loss cases remain
-release blockers under ADR-0002.
+Closed by storing the summary hash in the open day pass before the model call.
+Subsequent nights compare the file with that saved hash, preserving owner edits
+with absent, matching or mismatching `body_hash` values. Three-night process tests
+in `scripts/memory/night-process.test.ts` assert both the preserved bytes and the
+message "день ждёт владельца" on repeated nights. Other days, CORE and periods
+continue to finish. A summary identical to the saved model output
+can finish its interrupted git commit. `NightWriter.HumanEditWins` covers the open summary pass
+across nights; rereading the expected hash each night produces a counterexample.
 
-Persisting a summary-conflict flag in the existing day pass would carry the decision
-across processes. That changes the stored cache format and needs a separate decision;
-the narrow repair leaves this proposal for review. Existing Card-conflict deferrals
-continue to preserve pending facts while other days, CORE, periods and Report finish.
+The optional `pass.summaryHash` field keeps cache version 1. An old cache without
+that field retains the previous per-night comparison. The 0.5.5 reader validates
+only version, date and integer `through`, so it accepts and preserves the added
+field while the pass stays open. On rollback its writer ignores the saved hash;
+the absent/matching `body_hash` cases regain the old behavior until upgraded again.
