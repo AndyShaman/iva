@@ -299,6 +299,35 @@ for (const mark of ["cancel", "limit", "cancel-and-limit"] as const) {
   });
 }
 
+for (const kind of [
+  "reminder",
+  "signal",
+  "watch",
+  "brief",
+  "insight",
+  "alert",
+] as const) {
+  void test(`${kind} delivers the final ceiling outcome as a successful turn`, async () => {
+    const message = "Остановилась на 40 шагах. Вот что успела: нашла документ.";
+    const spy = spyTurn(async function* () {
+      yield { type: "message.completed", data: { message } };
+      yield { type: "turn.completed", data: { reason: "step-limit" } };
+      yield { type: "session.waiting" };
+    });
+    const turn = await runReminderTurn(
+      "fixture",
+      { ...OPTIONS, headers: { "x-iva-turn": kind } },
+      {
+        createClient: spy.createClient,
+      },
+    );
+    assert.equal(turn.message, message);
+    assert.equal(turn.status, "waiting");
+    assert.equal(turn.cancelled, false);
+    assert.deepEqual(spy.resets, ["Reminder finished"]);
+  });
+}
+
 void test("the last message.completed text is returned and the session is reset", async () => {
   const spy = spyTurn(async function* () {
     // Each gap stays under the idle window while the whole turn runs past it: a window that

@@ -56,7 +56,7 @@ const turnRequest = (token: string, turn: string) =>
     headers: { authorization: `Bearer ${token}`, "x-iva-turn": turn },
   });
 
-test("a turn names its kind: the bearer puts each of the six kinds into the iva_turn attribute", async () => {
+test("every background kind carries its step and cumulative input ceilings", async () => {
   const auth = assistantBearerAuth(TOKEN);
   for (const turn of [
     "watch",
@@ -67,7 +67,11 @@ test("a turn names its kind: the bearer puts each of the six kinds into the iva_
     "alert",
   ]) {
     assert.deepEqual(await auth(turnRequest(TOKEN, turn)), {
-      attributes: { iva_turn: turn },
+      attributes: {
+        iva_turn: turn,
+        iva_max_steps: turn === "brief" ? "60" : "40",
+        iva_max_input_tokens: "4000000",
+      },
       authenticator: "iva-bearer",
       principalId: "iva-internal-client",
       principalType: "service",
@@ -109,7 +113,11 @@ test(`a kind outside the list gets no attribute (PBT, seed ${SEED})`, async () =
       const result = await auth(request);
       assert.ok(result);
       if (TURN_KINDS.has(sent))
-        assert.deepEqual(result.attributes, { iva_turn: sent });
+        assert.deepEqual(result.attributes, {
+          iva_turn: sent,
+          iva_max_steps: sent === "brief" ? "60" : "40",
+          iva_max_input_tokens: "4000000",
+        });
       else assert.deepEqual(result.attributes, {});
     }),
     { seed: SEED, numRuns: 300 },
@@ -204,6 +212,7 @@ test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`
               iva_turn: "helper",
               iva_helper: good,
               iva_max_steps: "80",
+              iva_max_input_tokens: "4000000",
             });
           } else {
             assert.ok(result instanceof Response);

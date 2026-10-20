@@ -1,3 +1,4 @@
+import type { ModelFailure } from "#lib/model-response.ts";
 // One Reminder turn against the eve client: create a session, read its event stream up to a
 // turn boundary, and always reset the session. While the turn runs its owner may hand it a
 // chat to watch (TurnWatch), so the /stop path that cancels a channel turn cancels this one
@@ -83,6 +84,7 @@ export type CreateClient = (
 ) => Promise<ReminderClient>;
 
 export type ReminderTurn = {
+  readonly failureInfo?: ModelFailure;
   readonly status: "completed" | "failed" | "waiting";
   /** Ход погашен снаружи (/stop): текста от него не ждут. */
   readonly cancelled?: boolean;
@@ -175,6 +177,7 @@ export function reminderPrompt(
 }
 
 type TurnState = {
+  readonly failureInfo?: ModelFailure;
   readonly status: "completed" | "failed" | "waiting" | undefined;
   readonly message: string | undefined;
   readonly failure: string | undefined;
@@ -227,9 +230,15 @@ function applyTurnMark(state: TurnState, event: TurnStreamEvent): TurnState {
     // для вызывающего это не «ход поработал и припарковался», а отмена.
     case "turn.cancelled":
       return { ...state, cancelled: true };
+    case "step.failed":
+      return { ...state, failureInfo: event.data as ModelFailure };
     case "turn.failed": {
       const failure = eventText(event) ?? state.failure ?? "";
-      return { ...state, failure };
+      return {
+        ...state,
+        failure,
+        failureInfo: { ...state.failureInfo, ...(event.data as ModelFailure) },
+      };
     }
     default:
       return state;
@@ -553,6 +562,7 @@ async function settleTurn(
       status: "failed",
       cancelled: false,
       message: state.failure || "ход упал",
+      failureInfo: state.failureInfo,
       feedback,
     };
   const { status, cancelled } = turnBoundary(state);

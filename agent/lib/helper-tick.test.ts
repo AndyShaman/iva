@@ -17,14 +17,21 @@ import * as s from "./helper-store.ts";
 const chat = { id: "42", threadId: null };
 
 for (const cause of [
-  "EmptyModelResponseError",
+  "localized upstream failure",
   "The model did not return a response",
 ])
   test(`empty-response turn.failed becomes an ordinary failed helper: ${cause}`, async (t) => {
     const f = await setup(t),
       a = await f.running();
     f.state.events = [
-      { type: "turn.failed", data: { sequence: 1, message: cause } },
+      {
+        type: "turn.failed",
+        data: {
+          sequence: 1,
+          message: cause,
+          details: { semanticErrorId: "empty-model-response" },
+        },
+      },
     ];
     await f.tick();
     await f.flush();
@@ -480,3 +487,22 @@ for (const snapshot of ["error", "garbage"])
     assert.deepEqual(await s.getHelper(a.id), before);
     assert.equal(f.state.calls.filter((x) => x === "cancel").length, 2);
   });
+
+test("r339 helper step ceiling records a localized failure outcome", async (t) => {
+  const { failedModelEvents } =
+    await import("../../scripts/fixtures/reminder-events.test-fixture.ts");
+  const f = await setup(t),
+    row = await f.running();
+  f.state.events = failedModelEvents();
+  await f.tick();
+  await f.flush();
+  const result = await s.getHelper(row.id);
+  assert.equal(result?.outcome, "failed");
+  assert.equal(
+    result?.reason,
+    process.env.AGENT_LANGUAGE === "en"
+      ? "Stopped after 40 steps without a final summary."
+      : "Остановилась на 40 шагах и не успела подвести итог.",
+  );
+  assert.equal(result?.deliveredAt, null);
+});

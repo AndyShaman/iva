@@ -11,7 +11,7 @@
 // «нового нет»), 1 — ошибка (факт в jobs.json, агент видит открытый провал).
 import { join } from "node:path";
 import { dataDir } from "#lib/data-dir.ts";
-import { isEmptyModelResponse } from "#lib/model-response.ts";
+import { isEmptyModelResponse, stepLimitNotice } from "#lib/model-response.ts";
 import { acquireFileLock, releaseFileLock } from "#lib/fs-atomic.ts";
 import { pluginTreeDigest } from "#lib/plugin-reader.ts";
 import { findPlugin, readPluginsStateSafe } from "#lib/plugin-store.ts";
@@ -510,11 +510,12 @@ function afterDelivery(
 
 function emptyReview(turn: ReminderTurn, what: string): boolean {
   return (
-    what !== "watch" &&
+    (what !== "watch" || turn.failureInfo?.code === "STEP_LIMIT_REACHED") &&
     turn.status === "failed" &&
     !turn.sessionLimit &&
     !turn.cancelled &&
-    isEmptyModelResponse(turn.message)
+    (isEmptyModelResponse(turn.failureInfo) ||
+      turn.failureInfo?.code === "STEP_LIMIT_REACHED")
   );
 }
 
@@ -539,12 +540,19 @@ async function turnText(
     log(`proactive: ${what} turn failed: ${turn.message ?? turn.status}`);
     if (emptyReview(turn, what)) {
       const tr = await deps.translate();
+      const notice = stepLimitNotice(turn.failureInfo, tr);
+      const prefix =
+        what === "insight"
+          ? ""
+          : tr("The review was not prepared. ", "Обзор не собран. ");
       await deliver(
         [
-          tr(
-            "The model gave no response. The review was not prepared; I'll try next time.",
-            "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
-          ),
+          notice
+            ? `${prefix}${notice}`
+            : tr(
+                "The model gave no response. The review was not prepared; I'll try next time.",
+                "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
+              ),
         ],
         (part) => deps.send(part, what),
         log,

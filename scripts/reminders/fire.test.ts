@@ -660,3 +660,35 @@ void test("вызов без id и с чужим id — отказ без зап
   const [row] = await list();
   assert.equal(row?.delivered, null, "чужой вызов не тронул строку");
 });
+
+for (const id of ["r1", "signal-r339"])
+  for (const english of [false, true])
+    void test(`r339 ${id} step ceiling reaches the owner, English=${english}`, async () => {
+      const { failedModelEvents } =
+        await import("../fixtures/reminder-events.test-fixture.ts");
+      await add({
+        id,
+        text: "исходный текст",
+        schedule: { kind: "at", atMs: NOW },
+      });
+      await fireDue(NOW, 10);
+      const { calls, send } = makeSend();
+      const runTurn = realTurn(failedModelEvents(), { sessionId: "ceiling" });
+      const translator = () =>
+        Promise.resolve((en: string, ru: string) => (english ? en : ru));
+      assert.equal(
+        await runReminderFire(id, deps({ send, runTurn, translator })),
+        0,
+      );
+      assert.deepEqual(
+        calls.map((c) => c.text),
+        [
+          english
+            ? "исходный текст\nStopped after 40 steps without a final summary."
+            : "исходный текст\nОстановилась на 40 шагах и не успела подвести итог.",
+        ],
+      );
+      const [row] = await list();
+      assert.equal(row?.delivered, true);
+      assert.equal(row?.error, "agent turn failed: upstream failure");
+    });

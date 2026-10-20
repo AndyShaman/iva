@@ -32,3 +32,16 @@ export function reminderFromEvents(events: readonly TurnStreamEvent[]) {
     },
   );
 }
+
+export function failedModelEvents(code = "STEP_LIMIT_REACHED", stepIndex = 39) {
+  const data = {
+    code,
+    message: "upstream failure",
+    details: { semanticErrorId: "empty-model-response" },
+  };
+  return [
+    { type: "step.failed", data: { ...data, stepIndex } },
+    { type: "turn.failed", data: { ...data, sequence: 1 } },
+    { type: "session.waiting" },
+  ];
+}
