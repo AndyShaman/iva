@@ -1,7 +1,21 @@
-/** Public failure messages emitted after eve exhausts empty-response attempts. */
-export function isEmptyModelResponse(message: string | undefined): boolean {
-  return (
-    message?.includes("EmptyModelResponseError") === true ||
-    message?.includes("The model did not return a response") === true
-  );
+export type ModelFailure = {
+  code?: string;
+  details?: { semanticErrorId?: string };
+  stepIndex?: number;
+  message?: string;
+};
+export function isEmptyModelResponse(failure?: ModelFailure): boolean {
+  return failure?.details?.semanticErrorId === "empty-model-response";
+}
+export function stepLimitNotice(
+  failure: ModelFailure | undefined,
+  tr: (en: string, ru: string) => string,
+): string | null {
+  const n = (failure?.stepIndex ?? 0) + 1;
+  return failure?.code === "STEP_LIMIT_REACHED"
+    ? tr(
+        `Stopped after ${n} steps without a final summary.`,
+        `Остановилась на ${n} шагах и не успела подвести итог.`,
+      )
+    : null;
 }

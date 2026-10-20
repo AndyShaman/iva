@@ -54,7 +54,10 @@ test("empty-response turn.failed stays quiet in Watch and logs the cause", async
   h.reply = await reminderFromEvents([
     {
       type: "turn.failed",
-      data: { message: "The model did not return a response" },
+      data: {
+        message: "The model did not return a response",
+        details: { semanticErrorId: "empty-model-response" },
+      },
     },
     { type: "session.waiting" },
   ]);
@@ -1320,3 +1323,22 @@ test(`spentToday equals a hand filter: today in the owner's zone and a kind of w
     { seed: SEED, numRuns: 300 },
   );
 });
+
+for (const english of [false, true])
+  test(`r339 watch step ceiling reaches the owner, English=${english}`, async () => {
+    const { failedModelEvents, reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness({
+      translate: () =>
+        Promise.resolve((en: string, ru: string) => (english ? en : ru)),
+    });
+    writeState(h, staleSeen(chat(1, 1)));
+    h.tg = { items: [chat(1, 1)], error: null };
+    h.reply = await reminderFromEvents(failedModelEvents());
+    assert.equal(await runProactiveTick(NOON, h.deps), 1);
+    assert.deepEqual(h.sent, [
+      english
+        ? "Stopped after 40 steps without a final summary."
+        : "Остановилась на 40 шагах и не успела подвести итог.",
+    ]);
+  });

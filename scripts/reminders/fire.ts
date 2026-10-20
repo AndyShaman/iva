@@ -1,3 +1,4 @@
+import { stepLimitNotice } from "#lib/model-response.ts";
 // Срабатывание одного напоминания:
 //   node --env-file-if-exists=.env scripts/reminders/fire.ts <id>
 // Запускает её минутный тик (agent/lib/reminder-tick.ts) на строке, которую уже перевёл в
@@ -308,7 +309,11 @@ async function agentOutcome(
       // Пока ход идёт, чат и тема строки видят его сессию: по ней /stop гасит её.
       watch: chatWatch(row, target, deps),
     });
-    return replyOf(turn, row.text, sessionLimitText(row.text, tr));
+    return replyOf(
+      turn,
+      stepLimitNotice(turn.failureInfo, tr) ?? row.text,
+      sessionLimitText(row.text, tr),
+    );
   } catch (error) {
     return { text: row.text, error: `agent turn failed: ${message(error)}` };
   }

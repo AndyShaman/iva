@@ -44,7 +44,10 @@ for (const english of [false, true])
     h.reply = await reminderFromEvents([
       {
         type: "turn.failed",
-        data: { message: "The model did not return a response" },
+        data: {
+          message: "The model did not return a response",
+          details: { semanticErrorId: "empty-model-response" },
+        },
       },
       { type: "session.waiting" },
     ]);
@@ -563,3 +566,21 @@ test(`Brief: one per slot on any sequence of late, skipped and failing ticks (se
     { seed: SEED, numRuns: 60 },
   );
 });
+
+for (const english of [false, true])
+  test(`r339 brief step ceiling reaches the owner, English=${english}`, async () => {
+    const { failedModelEvents, reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness();
+    h.english = english;
+    h.reply = await reminderFromEvents(failedModelEvents());
+    assert.equal(await runProactiveTick(at(8, 30), h.deps), 1);
+    assert.deepEqual(
+      h.sent.map((s) => s.part),
+      [
+        english
+          ? "Stopped after 40 steps without a final summary."
+          : "Остановилась на 40 шагах и не успела подвести итог.",
+      ],
+    );
+  });

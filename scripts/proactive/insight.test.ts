@@ -49,7 +49,13 @@ for (const english of [false, true])
     h.english = english;
     await seed(h);
     h.reply = await reminderFromEvents([
-      { type: "turn.failed", data: { message: "EmptyModelResponseError" } },
+      {
+        type: "turn.failed",
+        data: {
+          message: "localized upstream failure",
+          details: { semanticErrorId: "empty-model-response" },
+        },
+      },
       { type: "session.waiting" },
     ]);
     assert.equal(await runProactiveTick(at(11, 30), h.deps), 0);
@@ -800,3 +806,22 @@ test(`(10) any button data: every delivered Insight gets a non-empty draft, a na
     { seed: SEED, numRuns: 100 },
   );
 });
+
+for (const english of [false, true])
+  test(`r339 insight step ceiling reaches the owner, English=${english}`, async () => {
+    const { failedModelEvents, reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness();
+    h.english = english;
+    await seed(h);
+    h.reply = await reminderFromEvents(failedModelEvents());
+    assert.equal(await runProactiveTick(at(11, 30), h.deps), 0);
+    assert.deepEqual(
+      h.sent.map((s) => s.part),
+      [
+        english
+          ? "Stopped after 40 steps without a final summary."
+          : "Остановилась на 40 шагах и не успела подвести итог.",
+      ],
+    );
+  });
