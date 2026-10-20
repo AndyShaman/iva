@@ -191,6 +191,7 @@ import {
   createAuthorizationRequiredEvent,
   createMessageCompletedEvent,
   createStepStartedEvent,
+  createStepCompletedEvent,
 } from "#protocol/message.js";
 import {
   classifyModelCallError,
@@ -1762,6 +1763,31 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         const emptyStepFailure = lastIvaStep && finalError instanceof EmptyModelResponseError
           ? session.outputSchema === undefined ? STEP_LIMIT_REACHED : OUTPUT_SCHEMA_NOT_FULFILLED : undefined;
         if (emptyStepFailure) session = { ...session, outputSchema: undefined };
+
+        // A plain task cannot park. After bounded empty reissues, deliver a
+        // normal outcome through the same message events its caller consumes.
+        if (
+          config.mode === "task" && finalError instanceof EmptyModelResponseError &&
+          !emptyStepFailure && session.outputSchema === undefined
+        ) {
+          const output = "Модель не дала ответа после нескольких попыток. Попробуйте ещё раз.";
+          session = {
+            ...session,
+            history: [...session.history, { role: "assistant", content: output }],
+          };
+          if (emit) {
+            const coordinates = {
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+            };
+            await emit(createMessageCompletedEvent({ ...coordinates, message: output }));
+            await emit(createStepCompletedEvent({ ...coordinates, finishReason: "stop" }));
+            emissionState = await emitTurnEpilogue(emit, emissionState, "task");
+            session = setHarnessEmissionState(session, emissionState);
+          }
+          return { next: { done: true, output }, session };
+        }
 
         if (!emit) {
           if (emptyStepFailure) {

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Пустой ответ модели**: если модель несколько раз подряд не ответила, напоминание или обзор больше не падают с ошибкой — Ива говорит, что модель не дала ответа. Reminders and reviews now report a missing model response after bounded retries instead of failing.
+
 - 🔧 **Понятный срок ожидания внешних сервисов**: если сервис распознавания голоса, описания картинок или Telegram не отвечает, Ива больше не зависает молча — через понятное время говорит, что сервис не ответил. Voice transcription, image descriptions, Telegram downloads and Codex login requests now time out with a readable error.
 - 🔧 **Google на Ubuntu 22.04**: на Ubuntu 22.04 Gmail, Календарь и Диск больше не отваливаются после обновления: Ива проверяет запуск Google CLI и при ошибке glibc ставит совместимую musl-сборку той же версии. On Ubuntu 22.04, Gmail, Calendar and Drive keep working after updates by using a verified musl build when the Google CLI requires a newer glibc.
 

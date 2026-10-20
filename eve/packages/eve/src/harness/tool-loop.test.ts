@@ -5302,8 +5302,13 @@ describe("createToolLoopHarness", () => {
     for (const mode of ["conversation", "task"] as const) {
       for (const empties of [2, 3]) {
         it(`recovers after ${empties} empty responses in ${mode}`, async () => {
-          const implementations = [...Array.from({ length: empties }, () => emptyResult), successResult]
-            .map(result => { setupMockAgent(result); return vi.mocked(ToolLoopAgent).getMockImplementation()!; });
+          const implementations = [
+            ...Array.from({ length: empties }, () => emptyResult),
+            successResult,
+          ].map((result) => {
+            setupMockAgent(result);
+            return vi.mocked(ToolLoopAgent).getMockImplementation()!;
+          });
           for (const implementation of implementations.slice(0, -1)) {
             vi.mocked(ToolLoopAgent).mockImplementationOnce(implementation);
           }
@@ -5311,8 +5316,10 @@ describe("createToolLoopHarness", () => {
           const runStep = createToolLoopHarness(createTestConfig(mode, emit));
           const result = await runStep(createTestSession(), { message: "Hi" });
           expect(vi.mocked(ToolLoopAgent).mock.calls).toHaveLength(empties + 1);
-          expect(events.filter(e => e.type === "step.started")).toHaveLength(1);
-          expect(events.some(e => e.type === "step.failed" || e.type === "turn.failed")).toBe(false);
+          expect(events.filter((e) => e.type === "step.started")).toHaveLength(1);
+          expect(events.some((e) => e.type === "step.failed" || e.type === "turn.failed")).toBe(
+            false,
+          );
           expect(JSON.stringify(result.session.history)).toContain("Here is your answer.");
           expect(result.session.state?.["eve.harness.modelCalls"]).toBe(1);
         });
@@ -5618,35 +5625,38 @@ describe("createToolLoopHarness", () => {
       }
     });
 
-    it("fails a task run terminally when the reissue also comes back empty", async () => {
-      setupMockAgent(emptyResult);
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const { emit, events } = createEventCollector();
-      const runStep = createToolLoopHarness(createTestConfig("task", emit));
-
-      try {
-        const result = await runStep(createTestSession(), { message: "Hi" });
-
-        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(4);
-        // A task cannot park for a user retry; the failure is the task's
-        // terminal result instead of a `next: null` park that turnWorkflow
-        // would reject.
-        expect(result.next).toEqual({
-          done: true,
-          isError: true,
-          output: expect.stringContaining("did not return a response"),
+    for (const empty of [emptyResult, emptyStopResult, noOutputStreamResult]) {
+      for (const withEvents of empty === noOutputStreamResult ? [true] : [true, false]) {
+        it(`settles an always-empty task with a notice (${empty === emptyResult ? "other" : empty === emptyStopResult ? "stop" : "stream rejection"}, events=${withEvents})`, async () => {
+          setupMockAgent(empty);
+          const { emit, events } = createEventCollector();
+          const config = createTestConfig("task", withEvents ? emit : undefined);
+          const result = await createToolLoopHarness(config)(createTestSession(), {
+            message: "Hi",
+          });
+          expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(4);
+          expect(result.next).toEqual({
+            done: true,
+            output: "Модель не дала ответа после нескольких попыток. Попробуйте ещё раз.",
+          });
+          expect(result.session.history.at(-1)).toEqual({
+            role: "assistant",
+            content: result.next && "output" in result.next ? result.next.output : undefined,
+          });
+          const types = events.map((event) => event.type);
+          expect(types.filter((type) => type.endsWith(".failed"))).toEqual([]);
+          if (withEvents) {
+            expect(types).toContain("turn.completed");
+            expect(types).toContain("session.completed");
+            expect(events.find((event) => event.type === "message.completed")?.data).toMatchObject({
+              message: result.next && "output" in result.next ? result.next.output : undefined,
+            });
+            expect(types.filter((type) => type === "step.started")).toHaveLength(1);
+            expect(types.filter((type) => type === "step.completed")).toHaveLength(1);
+          }
         });
-
-        const types = events.map((event) => event.type);
-        expect(types).not.toContain("session.waiting");
-        expect(types).toContain("step.failed");
-        expect(types).toContain("session.failed");
-      } finally {
-        warnSpy.mockRestore();
-        errorSpy.mockRestore();
       }
-    });
+    }
   });
 
   it("does not pin gateway routing when web_search is enabled", async () => {
