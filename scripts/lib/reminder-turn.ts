@@ -1,3 +1,4 @@
+import type { MessageStreamEvent } from "eve/client";
 import type { ModelFailure } from "#lib/model-response.ts";
 // One Reminder turn against the eve client: create a session, read its event stream up to a
 // turn boundary, and always reset the session. While the turn runs its owner may hand it a
@@ -121,7 +122,7 @@ export type TurnWatch = {
   release(sessionId: string): void;
 };
 
-// Three minutes without a single stream event means the turn is stuck. A turn that keeps
+// Three minutes without stream events or a pending tool means the turn is stuck. A turn that keeps
 // sending events is working: it runs as long as the work takes, and only the owner's stop
 // or that silence ends it (решение владельца 21.09.2026 — потолков длительности нет).
 export const REMINDER_TURN_INACTIVITY_MS = 180_000;
@@ -284,7 +285,16 @@ function stallAfter(ms: number, reason: string): Stall {
   let timer: NodeJS.Timeout | undefined;
   return {
     stalled: new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new ReminderTurnError(reason)), ms);
+      const arm = (left: number) => {
+        timer = setTimeout(
+          () =>
+            left > 2_147_483_647
+              ? arm(left - 2_147_483_647)
+              : reject(new ReminderTurnError(reason)),
+          Math.min(left, 2_147_483_647),
+        );
+      };
+      arm(ms);
     }),
     stop: () => {
       clearTimeout(timer);
@@ -297,6 +307,25 @@ async function defaultCreateClient(
 ): Promise<ReminderClient> {
   const { Client } = await import("eve/client");
   return new Client(options);
+}
+
+function toolTimeout(input?: Record<string, unknown>) {
+  const ms = Number(input?.timeoutMs);
+  const valid = Number.isSafeInteger(ms) && ms > 0 && ms <= 2_147_483_647;
+  return valid ? ms : 120_000;
+}
+
+function trackTool(event: TurnStreamEvent, pending: Map<string, number>) {
+  const value = event as MessageStreamEvent;
+  if (value.type === "action.result" && value.data?.result)
+    pending.delete(value.data.result.callId);
+  if (value.type !== "actions.requested") return;
+  const actions = value.data?.actions;
+  if (!Array.isArray(actions)) return;
+  for (const action of value.data.actions) {
+    if (action.kind !== "tool-call" || pending.has(action.callId)) continue;
+    pending.set(action.callId, Date.now() + toolTimeout(action.input));
+  }
 }
 
 /**
@@ -319,8 +348,13 @@ async function readTurnStream(
 ): Promise<TurnState> {
   const stream = response[Symbol.asyncIterator]();
   let state = EMPTY_TURN;
+  const pending = new Map<string, number>();
   for (;;) {
-    const idle = stallAfter(inactivityMs, `no activity for ${inactivityMs}ms`);
+    const waitMs = Math.max(
+      inactivityMs,
+      ...[...pending.values()].map((end) => end - Date.now() + inactivityMs),
+    );
+    const idle = stallAfter(waitMs, `no activity for ${inactivityMs}ms`);
     let step: IteratorResult<TurnStreamEvent>;
     try {
       step = await Promise.race([stream.next(), idle.stalled]);
@@ -335,6 +369,7 @@ async function readTurnStream(
       idle.stop();
     }
     if (step.done) return state;
+    trackTool(step.value, pending);
     state = applyTurnEvent(state, step.value);
     if (onEvent) onEvent();
     // Вопрос лимита в фоне некому показать: дальше читать нечего, ход останавливает
