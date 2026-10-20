@@ -28,6 +28,27 @@ process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
 const NOW = 1_800_000_000_000;
 
+void test("turn.failed after empty responses delivers the reminder and records failure", async () => {
+  await firedRow();
+  const { calls, send } = makeSend();
+  const cause = "The model did not return a response";
+  const runTurn = realTurn(
+    [
+      { type: "turn.failed", data: { message: cause } },
+      { type: "session.waiting" },
+    ],
+    { sessionId: "empty-response" },
+  );
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.deepEqual(
+    calls.map((c) => c.text),
+    ["позвонить в клинику"],
+  );
+  const [row] = await list();
+  assert.equal(row?.delivered, true);
+  assert.equal(row?.error, `agent turn failed: ${cause}`);
+});
+
 /**
  * Свой чат на тест: записи run-status общие на весь файл (DATA_DIR фиксируется на загрузке),
  * и остаток от прошлого теста не должен решать, возьмёт ли напоминание чат.

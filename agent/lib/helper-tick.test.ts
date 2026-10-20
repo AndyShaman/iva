@@ -15,6 +15,46 @@ import { runHelperTick } from "./helper-tick.ts";
 import { OWNER_STARTED_AT } from "./schedule-runner.ts";
 import * as s from "./helper-store.ts";
 const chat = { id: "42", threadId: null };
+
+for (const cause of [
+  "EmptyModelResponseError",
+  "The model did not return a response",
+])
+  test(`empty-response turn.failed becomes an ordinary failed helper: ${cause}`, async (t) => {
+    const f = await setup(t),
+      a = await f.running();
+    f.state.events = [
+      { type: "turn.failed", data: { sequence: 1, message: cause } },
+    ];
+    await f.tick();
+    await f.flush();
+    const row = await s.getHelper(a.id);
+    assert.equal(row?.outcome, "failed");
+    assert.equal(row?.reason, "модель не дала ответа");
+    assert.equal(row?.deliveredAt, null);
+    const { readHelperOutcome, helperOutcomesMarkdown, discardHelperOutcomes } =
+      await import("./helper-outcome.ts");
+    const key = { sessionId: "owner", turnId: "turn" };
+    const body = JSON.parse(await readHelperOutcome(a.id, chat, key)) as {
+      outcome: unknown;
+      reason: unknown;
+    };
+    assert.equal(body.outcome, "failed");
+    assert.equal(body.reason, "модель не дала ответа");
+    assert.match(
+      await helperOutcomesMarkdown(chat),
+      /прочитай helper outcome и расскажи/,
+    );
+    const skill = await readFile(
+      new URL("../skills/helper/SKILL.md", import.meta.url),
+      "utf8",
+    );
+    assert.match(
+      skill,
+      /For failed, interrupted, deadline or ceiling outcomes, say what was completed and ask whether to repeat\./,
+    );
+    discardHelperOutcomes(key.sessionId);
+  });
 type Event = { type: string; data?: unknown };
 async function setup(t: test.TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "iva-helper-v7-")),
