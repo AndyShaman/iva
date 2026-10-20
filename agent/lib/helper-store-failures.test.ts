@@ -74,3 +74,46 @@ test("lock timeout refuses a transition with existing bytes intact", async (t) =
     releaseLock(path, token);
   }
 });
+
+test("failed save preserves delivered rows and directories on eviction and close", async (t) => {
+  const dir = await setup(t);
+  const s = await import("./helper-store.ts");
+  for (let i = 0; i < 20; i++) {
+    const added = await s.addHelper({ task: "task", may: "", chat }, 1000 + i);
+    assert.ok(added.ok);
+    await s.finalizeHelper(
+      added.row.id,
+      { kind: "pending", createdAt: 1000 + i },
+      {
+        outcome: "done",
+        summary: "result",
+        reason: null,
+        model: null,
+        steps: 1,
+        tokens: 1,
+      },
+      2000 + i,
+    );
+    await s.markHelperDelivered(added.row.id, chat, 3000 + i);
+  }
+  const row = (await s.readHelpers()).rows[0];
+  await fs.mkdir(join(dir, "helpers", row.id), { recursive: true });
+  const path = join(dir, "helpers", row.id, "result");
+  await fs.writeFile(path, "delivered result");
+  const before = await fs.readFile(join(dir, "helpers.json"), "utf8");
+  const original = fs.rename;
+  t.mock.method(fs, "rename", (a: PathLike, b: PathLike) =>
+    String(b).endsWith("helpers.json")
+      ? Promise.reject(Error("disk rename failed"))
+      : original(a, b),
+  );
+  syncBuiltinESMExports();
+  for (const action of [
+    () => s.addHelper({ task: "next", may: "", chat }, 4000),
+    () => s.closeHelper(row.id, chat, 4000),
+  ]) {
+    await assert.rejects(action, /disk rename failed/);
+    assert.equal(await fs.readFile(join(dir, "helpers.json"), "utf8"), before);
+    assert.equal(await fs.readFile(path, "utf8"), "delivered result");
+  }
+});

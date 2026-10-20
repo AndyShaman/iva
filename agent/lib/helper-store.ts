@@ -245,7 +245,7 @@ export function insertRow(
   if (s.rows.length >= HELPER_MAX_ROWS - reserved)
     return refuse(
       "max-rows",
-      `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. Read or close outcomes.`,
+      `20 helper rows: ${s.rows.map((r) => r.id).join(", ")}. No free helper row. Wait for completion and delivery.`,
     );
   if (pending.length >= HELPER_MAX_OPEN - reserved)
     return refuse(
@@ -302,8 +302,19 @@ export async function addHelper(
     .safeParse(input);
   if (!parsed.success) return refuse("invalid-input", parsed.error.message);
   return locked(async (s) => {
+    const oldest =
+      s.rows.length >= HELPER_MAX_ROWS
+        ? s.rows
+            .filter((r) => r.deliveredAt !== null && r.goal === null)
+            .sort((a, b) => a.deliveredAt! - b.deliveredAt!)[0]
+        : undefined;
+    if (oldest) s.rows = s.rows.filter((r) => r.id !== oldest.id);
     const result = insertRow(s, { ...parsed.data, goal: null }, now);
-    if (result.ok) await save(s);
+    if (result.ok) {
+      await save(s);
+      if (oldest)
+        await rm(join(root(), oldest.id), { recursive: true, force: true });
+    }
     return result;
   });
 }
@@ -422,8 +433,14 @@ export async function closeHelper(
     if (!row) return refuse("not-found", "Helper not found.");
     if (!sameChat(row.chat, chat))
       return refuse("foreign-chat", "Helper belongs to another chat.");
-    if (row.deliveredAt !== null)
-      return refuse("already-delivered", "Outcome already delivered.");
+    if (row.deliveredAt !== null) {
+      if (row.goal !== null)
+        return refuse("already-delivered", "Outcome already delivered.");
+      s.rows = s.rows.filter((r) => r.id !== id);
+      await save(s);
+      await rm(join(root(), id), { recursive: true, force: true });
+      return { ok: true, row, branch: "finished", rule: null };
+    }
     const result = closeRow(s, row, now);
     await save(s);
     return { ok: true, row, ...result };

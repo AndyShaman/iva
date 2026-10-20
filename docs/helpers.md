@@ -45,7 +45,11 @@ HELPER_CHECK_MS bounds each core HTTP call; the helper Schedule runs every minut
 Work ceilings, questions and authorization waits are observed on that next tick.
 
 Unread outcomes stay until delivery or closing. Closed rows are kept from their
-finish time, delivered rows from delivery time. One system event announces
+finish time, delivered rows from delivery time. At 20 retained rows, a new owner
+helper removes the oldest delivered row without a Goal and its result directory.
+Closing a delivered row without a Goal removes it immediately. Pending work,
+unreported outcomes and Goal rows stay intact during this removal.
+One system event announces
 completion when the chat is idle. Unreported outcomes appear in the next chat
 instruction; Iva chooses when and how many to tell. Read outcomes are marked
 delivered after a confirmed nonempty answer and completion of the reading turn.
