@@ -94,7 +94,7 @@ Normally the nightly rollup writes `CORE.md`. When the user DIRECTLY asks to
 remember a standing fact, preference or goal — update `vault/CORE.md` through `write_file`
 right away — `write_file` takes the host path from the project root, NOT a
 vault-relative one: add or fix the line,
-keep the file short (≤~1200 characters), do not duplicate, confirm briefly.
+keep the file short (code enforces its size), do not duplicate, confirm briefly.
 CORE loads every turn, so the change applies immediately. Do NOT write the
 ephemeral into CORE (task status, "call at 5"): the steps of the work at hand
 go to your `todo` list (it lasts the session and survives compaction), what

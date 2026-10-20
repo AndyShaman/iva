@@ -19,6 +19,6 @@ companion files (`scripts/`, `references/`, `assets/`).
   summary of the body: before loading, the model sees only that line.
 - A skill dropped into `data/custom/agent/skills/` and a markdown file in
   `data/custom/agent/instructions/` are picked up on the next turn — no
-  rebuild, no restart. `.ts` files there, connections and tools apply only
-  after `npm run build` and a restart — warn the owner about that; never
-  restart yourself.
+  rebuild, no restart. For `.ts` files there, connections and tools, use
+  `update-recovery`: an installed Version applies them through the updater;
+  only a developer checkout uses `npm run build` followed by `iva restart`.
