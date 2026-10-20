@@ -476,7 +476,7 @@
         gap: 12px;
         padding: 10px 12px 10px 20px;
         border-radius: 9999px;
-        max-width: min(92vw, 640px);
+        max-width: min(92vw, 760px);
       }
       .hero-install code {
         font-size: 12.5px;
@@ -555,6 +555,66 @@
         .hero-bottom {
           justify-content: center;
           padding-bottom: 0;
+        }
+      }
+
+      .btn-agent {
+        border: 0;
+        cursor: pointer;
+        font-family: inherit;
+        line-height: inherit;
+      }
+      .btn-agent svg {
+        width: 16px;
+        height: 16px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .btn-agent.done {
+        color: #bfe3b0;
+      }
+      @media (max-width: 600px) {
+        .hero-cta {
+          width: 100%;
+          max-width: 360px;
+          align-items: stretch;
+          gap: 14px;
+        }
+        .cta-row {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+        }
+        .cta-row .btn {
+          justify-content: center;
+          padding-block: 14px;
+        }
+        .hero-agent-hint {
+          white-space: normal;
+          text-align: center;
+          margin-top: -6px;
+        }
+        .hero-install {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+          max-width: none;
+          padding: 14px;
+          border-radius: 20px;
+        }
+        .hero-install code {
+          white-space: normal;
+          overflow-wrap: anywhere;
+          line-height: 1.55;
+          font-size: 12px;
+        }
+        .hero-install button {
+          padding: 10px 14px;
+        }
+        .hero-meta {
+          text-align: center;
+          letter-spacing: 0.12em;
+          line-height: 1.8;
         }
       }
 
@@ -974,6 +1034,19 @@
               </svg>
               Install in 5 minutes</a
             >
+            <button
+              id="copy-ai"
+              type="button"
+              class="btn btn-glass liquid-glass btn-agent"
+              aria-describedby="agent-hint"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+              <span class="lbl">Install with AI agent</span>
+            </button>
+            <code id="agent-prompt" hidden
+              >Install Iva for me, instructions:
+              https://iva-agent.com/install.txt</code
+            >
             <a
               class="btn btn-glass liquid-glass btn-star"
               href="https://github.com/smixs/iva-agent"
@@ -1013,17 +1086,8 @@
               Star on GitHub
             </a>
           </div>
-          <div class="liquid-glass hero-install hero-agent">
-            <button id="copy-ai" type="button" aria-describedby="agent-hint">
-              Install with AI agent
-            </button>
-            <code id="agent-prompt" hidden
-              >Install Iva for me, instructions:
-              https://iva-agent.com/install.txt</code
-            >
-          </div>
           <p id="agent-hint" class="hero-agent-hint">
-            Paste into Claude Code, Codex or Claude Desktop
+            AI agent: paste the copied text into Claude Code, Codex or Claude Desktop
           </p>
           <div class="liquid-glass hero-install">
             <code id="cmd"
@@ -1502,7 +1566,8 @@
         var btn = document.getElementById(btnId);
         var source = document.getElementById(cmdId);
         if (!btn || !source) return;
-        var label = btn.textContent;
+        var target = btn.querySelector(".lbl") || btn;
+        var label = target.textContent;
         btn.addEventListener("click", function () {
           var cmd = source.textContent.replace(/\s+/g, " ").trim();
           function selectText() {
@@ -1512,13 +1577,13 @@
             var selection = window.getSelection();
             selection.removeAllRanges();
             selection.addRange(range);
-            btn.textContent = "Prompt selected. Copy it";
+            target.textContent = "Prompt selected. Copy it";
           }
           function copied() {
-            btn.textContent = "Copied";
+            target.textContent = "Copied";
             btn.classList.add("done");
             setTimeout(function () {
-              btn.textContent = label;
+              target.textContent = label;
               btn.classList.remove("done");
             }, 1600);
           }
