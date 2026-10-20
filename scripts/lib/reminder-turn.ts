@@ -309,16 +309,22 @@ async function defaultCreateClient(
   return new Client(options);
 }
 
+function toolTimeout(input?: Record<string, unknown>) {
+  const ms = Number(input?.timeoutMs);
+  const valid = Number.isSafeInteger(ms) && ms > 0 && ms <= 2_147_483_647;
+  return valid ? ms : 120_000;
+}
+
 function trackTool(event: TurnStreamEvent, pending: Map<string, number>) {
   const value = event as MessageStreamEvent;
   if (value.type === "action.result" && value.data?.result)
     pending.delete(value.data.result.callId);
   if (value.type !== "actions.requested") return;
+  const actions = value.data?.actions;
+  if (!Array.isArray(actions)) return;
   for (const action of value.data.actions) {
     if (action.kind !== "tool-call" || pending.has(action.callId)) continue;
-    const ms = Number(action.input.timeoutMs);
-    const timeout = Number.isSafeInteger(ms) && ms > 0 ? ms : 120_000;
-    pending.set(action.callId, Date.now() + timeout);
+    pending.set(action.callId, Date.now() + toolTimeout(action.input));
   }
 }
 

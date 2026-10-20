@@ -1051,6 +1051,79 @@ const drainEvents = async () => {
   for (let i = 0; i < 12; i += 1) await flush();
 };
 
+void test("tool timeouts above the bash maximum use 120 seconds (seed=20261021)", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  await fc.assert(
+    fc.asyncProperty(
+      fc.oneof(
+        fc.constant(9e15),
+        fc.integer({ min: 2_147_483_648, max: Number.MAX_SAFE_INTEGER }),
+      ),
+      async (timeout) => {
+        const controller = new AbortController();
+        const spy = spyTurn(async function* (cancelled) {
+          yield requestedTool("oversized", timeout);
+          await cancelled;
+        });
+        const outcome = runReminderTurn("oversized", OPTIONS, {
+          createClient: spy.createClient,
+          signal: controller.signal,
+        }).catch((error: unknown) => error);
+        try {
+          await drainEvents();
+          t.mock.timers.tick(299_999);
+          await drainEvents();
+          assert.deepEqual(spy.sessionCalls, []);
+          t.mock.timers.tick(1);
+          await drainEvents();
+          assert.deepEqual(spy.sessionCalls, ["cancel tasks=true", "reset"]);
+          assert.ok((await outcome) instanceof ReminderTurnError);
+        } finally {
+          controller.abort();
+          await outcome;
+        }
+      },
+    ),
+    { seed: 20261021, numRuns: 50, examples: [[2_147_483_648], [9e15]] },
+  );
+});
+
+for (const { name, event, waitMs } of [
+  {
+    name: "missing actions",
+    event: { type: "actions.requested", data: {} },
+    waitMs: 180_000,
+  },
+  {
+    name: "missing tool input",
+    event: {
+      type: "actions.requested",
+      data: {
+        actions: [{ kind: "tool-call", callId: "no-input", toolName: "bash" }],
+      },
+    },
+    waitMs: 300_000,
+  },
+]) {
+  void test(`tool events with ${name} retain the default silence deadline`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    const spy = spyTurn(async function* (cancelled) {
+      yield event;
+      await cancelled;
+    });
+    const outcome = runReminderTurn(name, OPTIONS, {
+      createClient: spy.createClient,
+    }).catch((error: unknown) => error);
+    await drainEvents();
+    t.mock.timers.tick(waitMs - 1);
+    await drainEvents();
+    assert.deepEqual(spy.sessionCalls, []);
+    t.mock.timers.tick(1);
+    assert.ok((await outcome) instanceof ReminderTurnError);
+    assert.deepEqual(spy.sessionCalls, ["cancel tasks=true", "reset"]);
+  });
+}
+
 void test("a four-minute command returns the reminder result after the ordinary silence window", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   let finish = () => {};
