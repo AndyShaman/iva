@@ -5,6 +5,9 @@
   const ui = document.createElement('div');
   ui.innerHTML = `<button type="button" data-consent-settings hidden class="iva-privacy-settings">${ru ? 'Приватность' : 'Privacy settings'}</button><aside class="iva-consent" data-consent-banner aria-labelledby="iva-consent-title" hidden><h2 id="iva-consent-title">${ru ? 'Статистика посещений' : 'Visit statistics'}</h2><p>${ru ? 'Разрешить Google Analytics для статистики посещений? Счётчик загружается только после согласия.' : 'Allow Google Analytics to measure visits? The tracker loads only after you agree.'} <a href="/privacy/">${ru ? 'Подробнее' : 'Details'}</a></p><div><button type="button" data-consent="denied">${ru ? 'Отказаться' : 'Decline'}</button><button type="button" data-consent="granted">${ru ? 'Разрешить' : 'Allow analytics'}</button></div></aside>`;
   document.body.append(ui);
+  const footer = document.querySelector('footer');
+  const settings = ui.querySelector('[data-consent-settings]');
+  if (footer && settings) { settings.classList.add('in-footer'); footer.append(settings); }
   const banner = ui.querySelector('[data-consent-banner]');
   if (!banner) return;
   let choice = null;
