@@ -311,3 +311,7 @@ owner because its last publication hash is unknown. The summary stays intact. Th
 added fields. Its writer preserves the top-level hash, but ignores it on rollback;
 the absent/matching `body_hash` cases regain the old behavior until upgraded again.
 После отката на 0.5.5 и обратно день с поздней репликой может ждать владельца; освобождается `iva jobs skip`.
+
+## 20. Accepted empty-response limit
+
+After three recoverable empty responses, a fourth ends the eve turn with `turn.failed`; background turns retain their owner-facing outcome (#338), and the owner can start another attempt from the parked chat turn. See [ADR-0023](adr/0023-eve-is-ours-to-change.md).

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔒 **Токен Telegram Watch защищён при отправке**: раньше токен своего прокси Watch мог попасть в отправленный файл или текст; теперь токен Telegram Watch больше не может уйти наружу в файле или тексте. The Telegram Watch proxy token is now blocked in outgoing files and redacted from outgoing text.
+
 - 🔧 **Фоновые ходы подводят итог на пределе работы**: у напоминаний, обзоров и помощников появился предел шагов и суммарных входных токенов: на последнем шаге Ива подводит итог, а при пустом ответе говорит, на скольких шагах остановилась. Background turns have step and cumulative input-token ceilings, with a partial outcome or a localized notice when the final summary is empty.
 
 - 🔧 **Пустой ответ модели**: после нескольких пустых ответов Brief и Insight сообщают, что обзор не собран; напоминание приходит исходным текстом с записью ошибки, а Ива получает понятную причину неудачи помощника и предлагает повторить. After bounded empty responses, Brief and Insight report a missing review, reminders retain their text and error, and helper failures reach Iva with a readable reason to offer a retry.
