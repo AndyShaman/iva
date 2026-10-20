@@ -1338,7 +1338,7 @@ for (const english of [false, true])
     assert.equal(await runProactiveTick(NOON, h.deps), 1);
     assert.deepEqual(h.sent, [
       english
-        ? "Stopped after 40 steps without a final summary."
-        : "Остановилась на 40 шагах и не успела подвести итог.",
+        ? "The review was not prepared. Stopped after 40 steps without a final summary."
+        : "Обзор не собран. Остановилась на 40 шагах и не успела подвести итог.",
     ]);
   });

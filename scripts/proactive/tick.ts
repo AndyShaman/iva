@@ -540,13 +540,19 @@ async function turnText(
     log(`proactive: ${what} turn failed: ${turn.message ?? turn.status}`);
     if (emptyReview(turn, what)) {
       const tr = await deps.translate();
+      const notice = stepLimitNotice(turn.failureInfo, tr);
+      const prefix =
+        what === "insight"
+          ? ""
+          : tr("The review was not prepared. ", "Обзор не собран. ");
       await deliver(
         [
-          stepLimitNotice(turn.failureInfo, tr) ??
-            tr(
-              "The model gave no response. The review was not prepared; I'll try next time.",
-              "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
-            ),
+          notice
+            ? `${prefix}${notice}`
+            : tr(
+                "The model gave no response. The review was not prepared; I'll try next time.",
+                "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
+              ),
         ],
         (part) => deps.send(part, what),
         log,

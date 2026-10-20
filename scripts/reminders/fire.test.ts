@@ -684,8 +684,8 @@ for (const id of ["r1", "signal-r339"])
         calls.map((c) => c.text),
         [
           english
-            ? "Stopped after 40 steps without a final summary."
-            : "Остановилась на 40 шагах и не успела подвести итог.",
+            ? "исходный текст\nStopped after 40 steps without a final summary."
+            : "исходный текст\nОстановилась на 40 шагах и не успела подвести итог.",
         ],
       );
       const [row] = await list();

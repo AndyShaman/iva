@@ -309,9 +309,10 @@ async function agentOutcome(
       // Пока ход идёт, чат и тема строки видят его сессию: по ней /stop гасит её.
       watch: chatWatch(row, target, deps),
     });
+    const notice = stepLimitNotice(turn.failureInfo, tr);
     return replyOf(
       turn,
-      stepLimitNotice(turn.failureInfo, tr) ?? row.text,
+      notice ? `${row.text}\n${notice}` : row.text,
       sessionLimitText(row.text, tr),
     );
   } catch (error) {

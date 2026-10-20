@@ -579,8 +579,8 @@ for (const english of [false, true])
       h.sent.map((s) => s.part),
       [
         english
-          ? "Stopped after 40 steps without a final summary."
-          : "Остановилась на 40 шагах и не успела подвести итог.",
+          ? "The review was not prepared. Stopped after 40 steps without a final summary."
+          : "Обзор не собран. Остановилась на 40 шагах и не успела подвести итог.",
       ],
     );
   });

@@ -14,8 +14,8 @@ export function stepLimitNotice(
   const n = (failure?.stepIndex ?? 0) + 1;
   return failure?.code === "STEP_LIMIT_REACHED"
     ? tr(
-        `Stopped after ${n} steps without a final summary.`,
-        `Остановилась на ${n} шагах и не успела подвести итог.`,
+        `Stopped after ${n} ${n === 1 ? "step" : "steps"} without a final summary.`,
+        `Остановилась на ${n} ${n % 10 === 1 && n % 100 !== 11 ? "шаге" : "шагах"} и не успела подвести итог.`,
       )
     : null;
 }
