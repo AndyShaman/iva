@@ -201,6 +201,8 @@ What becomes of your work — for the owner's questions about you.
 
 ## Spend, schedule, services
 
+`CLAUDE_CONTEXT_WINDOW=200000` — дешевле на подписке Claude, раньше сворачивает историю.
+
 ### Why the cache warmed again
 
 Read only the relevant steps from `data/usage.jsonl`, matching `sessionId` and `turnId`.
