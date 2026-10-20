@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statfsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { homedir } from "node:os";
 // CLI обязан грузиться без authored tree и без "#lib"-маппинга
 // (scripts/cli/entrypoints.test.ts), поэтому run-status и telegram-queue
 // подгружаются динамически в самой проверке, а здесь — только типы.
@@ -339,6 +340,18 @@ export function createDoctorCommand(
     if (bearerChanged) ctx.fix();
 
     checkNode(ctx);
+    const localGws = join(homedir(), ".local/bin/gws");
+    const gws = ctx.cap(
+      existsSync(localGws) ? localGws : "gws",
+      ["--version"],
+      {
+        timeout: 5000,
+      },
+    );
+    if (gws.code !== 0 && `${gws.out}${gws.err}`.includes("GLIBC_"))
+      ctx.warn(
+        'Google CLI requires a newer glibc; repair from the Iva version directory: bash install.sh --update-gws "$HOME/.local"',
+      );
     if (await checkEnvFile(ctx)) checkEnvOptions(ctx);
     checkBuild(ctx);
     ctx.install = checkVersionState(ctx);

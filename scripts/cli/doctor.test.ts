@@ -113,6 +113,35 @@ async function doctorOutput(root: string): Promise<{
   return { events, summaryLogs };
 }
 
+test("doctor explains a Google CLI GLIBC failure and prints the pinned repair command", async (t) => {
+  const root = await sandbox(t);
+  const warnings: string[] = [];
+  const runtime = createCliRuntime(root);
+  await createDoctorCommand(
+    {
+      ...runtime,
+      readEnv: completeEnv,
+      hasSystemd: () => false,
+      ok: () => undefined,
+      bad: () => undefined,
+      warn: (message) => warnings.push(message),
+      cap: (command, args, options) =>
+        command.endsWith("gws")
+          ? { code: 1, out: "", err: "version GLIBC_2.39 not found" }
+          : runtime.cap(command, args, options),
+    },
+    lifecycle(),
+    { nodeVersion: "24.21.0", log: () => undefined, exit: () => undefined },
+  )();
+  assert.ok(
+    warnings.some(
+      (line) =>
+        line.includes("Google CLI requires a newer glibc") &&
+        line.includes('bash install.sh --update-gws "$HOME/.local"'),
+    ),
+  );
+});
+
 /** Доктор с подменённым каталогом данных: правила владельца читаются из своего sandbox. */
 async function ownerRulesEvents(
   root: string,
@@ -911,6 +940,8 @@ test("doctor keeps the initial env snapshot but reads the migrated listener port
       return join(root, "data-initial");
     },
     cap: (command, args) => {
+      if (command.endsWith("gws"))
+        return { code: 0, out: "gws 0.22.5", err: "" };
       if (command === "ss") {
         calls.push("inspect-listener");
         listenerArgs.push(args);
