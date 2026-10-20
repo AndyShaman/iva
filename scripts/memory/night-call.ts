@@ -9,12 +9,28 @@ import { parseJson } from "./night-input.ts";
 
 // Один способ вызова модели для всей ночи у всех провайдеров: формат ответа словами и
 // примером в инструкции шага, ответ — JSON в тексте, разбор мягкий. Инструментов нет. Не
-// прошёл схему — один повтор с текстом ошибки, потом NightSchemaError. Своих сетевых
-// повторов нет. Ceiling проверяется до вызова; неизвестный usage закрывает следующие.
+// прошёл схему — один повтор с текстом ошибки, потом NightSchemaError. Сетевой
+// отказ классифицируется для следующей попытки дня. Ceiling проверяется до вызова; неизвестный usage
+// закрывает следующие вызовы.
 
 export class NightCeilingError extends Error {}
 export class NightSchemaError extends Error {}
 class NightNetworkError extends Error {}
+export class NightTransientError extends NightNetworkError {}
+
+function transient(error: unknown): boolean {
+  const { statusCode, cause } = (error ?? {}) as {
+    statusCode?: number;
+    cause?: unknown;
+  };
+  if (typeof statusCode === "number")
+    return statusCode === 408 || (statusCode >= 500 && statusCode < 600);
+  return cause !== undefined
+    ? transient(cause)
+    : /connection .{0,40}lost|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|UND_ERR|socket hang up|fetch failed|terminated|network request failed/iu.test(
+        String(error),
+      );
+}
 
 export const nightModelName = providerConfig.textModel;
 const model = makeTextModel({
@@ -70,9 +86,7 @@ function recordUsage(
   }
 }
 
-async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
-  const prompt = `${call.skill}${hint ? `\nОшибка прошлого ответа: ${hint}` : ""}\nВход:\n${JSON.stringify(call.input)}`;
-  const estimate = Math.ceil(prompt.length / 3);
+function checkCeiling(estimate: number): void {
   if (
     ceiling.unknownUsage ||
     ceiling.calls + 1 > NIGHT_CEILING.calls ||
@@ -80,7 +94,14 @@ async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
   )
     throw new NightCeilingError("memory night ceiling reached");
   ceiling.calls++;
+}
+
+async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
+  const prompt = `${call.skill}${hint ? `\nОшибка прошлого ответа: ${hint}` : ""}\nВход:\n${JSON.stringify(call.input)}`;
+  const estimate = Math.ceil(prompt.length / 3);
+  checkCeiling(estimate);
   let result;
+  let streamError: unknown;
   try {
     const response = streamText({
       model,
@@ -90,15 +111,21 @@ async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
       prompt,
       ...low,
       // Ошибка идёт вызывающему коду через text/usage, без побочной печати промпта.
-      onError: () => {},
+      onError: ({ error }) => {
+        streamError = error;
+      },
     });
     const [text, usage] = await Promise.all([response.text, response.usage]);
     call.signal.throwIfAborted();
+    if (streamError !== undefined)
+      throw new Error("model stream failed", { cause: streamError });
     result = { text, usage };
   } catch (error) {
     ceiling.inputTokens += estimate;
     if (call.signal.aborted) throw error;
-    throw new NightNetworkError(String(error), { cause: error });
+    const cause = streamError ?? error;
+    const Failure = transient(cause) ? NightTransientError : NightNetworkError;
+    throw new Failure(String(cause), { cause });
   }
   recordUsage(result.usage, estimate);
   const parsed = call.schema.safeParse(parseJson(result.text));

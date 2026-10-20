@@ -19,8 +19,13 @@ writeAuth({
   accountId: "test-account",
   planType: "test",
 });
-const { callBySchema, ceiling, NightCeilingError, NightSchemaError } =
-  await import("./night-call.ts");
+const {
+  callBySchema,
+  ceiling,
+  NightCeilingError,
+  NightSchemaError,
+  NightTransientError,
+} = await import("./night-call.ts");
 const { codexProviderOptions } = await import("../../agent/provider.ts");
 const { MockLanguageModelV4 } = await import("ai/test");
 
@@ -161,7 +166,7 @@ void test("HTTP failure has no transport or schema retry", async (t) => {
       new Response('{"error":{"message":"failed"}}', { status: 503 }),
     );
   });
-  await assert.rejects(callBySchema(ask()));
+  await assert.rejects(callBySchema(ask()), NightTransientError);
   assert.equal(calls, 1);
 });
 
@@ -190,7 +195,7 @@ void test("a failed stream rejects a partial answer without retry or usage row",
       ),
     );
   });
-  await assert.rejects(callBySchema(ask()));
+  await assert.rejects(callBySchema(ask()), NightTransientError);
   assert.equal(calls, 1);
   assert.equal(ceiling.calls, 1);
   assert.ok(ceiling.inputTokens > 0);
@@ -282,5 +287,35 @@ void test("Codex defaults preserve configured effort; explicit call options take
         assert.equal(out.providerOptions?.openai?.store, false);
       },
     ),
+  );
+});
+
+void test("HTTP status classification preserves key/quota stops (seed 20261020)", async (t) => {
+  const seed = 20261020;
+  t.diagnostic(`fast-check seed=${seed}`);
+  let status = 503;
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", () => {
+    calls++;
+    return Promise.resolve(
+      new Response('{"error":{"message":"provider refusal"}}', { status }),
+    );
+  });
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 400, max: 599 }), async (value) => {
+      status = value;
+      calls = 0;
+      ceiling.calls = 0;
+      ceiling.inputTokens = 0;
+      await assert.rejects(callBySchema(ask()), (error: unknown) => {
+        assert.equal(
+          error instanceof NightTransientError,
+          value === 408 || value >= 500,
+        );
+        return true;
+      });
+      assert.equal(calls, 1);
+    }),
+    { seed, numRuns: 100 },
   );
 });

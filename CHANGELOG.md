@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 🧠 **Ночь продолжает разбор после обрыва связи**: раньше большой день начинался заново после обрыва. Теперь, если связь с моделью оборвалась ночью, Ива продолжает разбор дня с того места, где остановилась, и сама повторяет попытку. If the model connection drops during the night, Iva saves each completed portion and resumes from it, automatically trying again within the same night.
 - 🔧 **Пустой ответ модели**: после нескольких пустых ответов Brief и Insight сообщают, что обзор не собран; напоминание приходит исходным текстом с записью ошибки, а Ива получает понятную причину неудачи помощника и предлагает повторить. After bounded empty responses, Brief and Insight report a missing review, reminders retain their text and error, and helper failures reach Iva with a readable reason to offer a retry.
 - 🧠 **Ночь сохраняет вашу правку выжимки дня**: если вы поправили выжимку дня, ночь больше не перетирает правку и ждёт вас, в том числе при поздней реплике за уже закрытый день. Освободить день можно командой `iva jobs skip memory-night <дата>` или возвратом выжимки. Night preserves owner edits across subsequent nights and late entries into completed days. Restore the summary or use `iva jobs skip memory-night <date>` to release the day.
 

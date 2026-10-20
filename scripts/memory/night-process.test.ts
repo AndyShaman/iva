@@ -2763,3 +2763,198 @@ void test("owner edit window: period summary saved while the model runs wins", a
   assert.match(read(weekly), /OWNER_EDIT/u);
   assert.doesNotMatch(read(weekly), /Ночная неделя/u);
 });
+
+void test("#309: kill during a later portion resumes from the saved answer", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [A({ gist: "saved first portion" })];
+  const held = fx.model.hold(2);
+  const run = spawnNight(fx);
+  t.after(() => run.child.kill("SIGKILL"));
+  await Promise.race([
+    held.reached,
+    run.result.then((result) => {
+      throw new Error(result.stderr);
+    }),
+  ]);
+  run.child.kill("SIGKILL");
+  await run.result;
+  const cache = JSON.parse(
+    read(join(fx.data, "memory/night", `${DATE}.json`)),
+  ) as {
+    pass: {
+      a?: unknown;
+      summaryHash: string | null;
+      progress: { answers: Array<{ gist: string }> };
+    };
+  };
+  assert.equal(cache.pass.a, undefined, "0.5.5 must see an unfinished A");
+  assert.equal(cache.pass.progress.answers.length, 1);
+  assert.equal(cache.pass.progress.answers[0].gist, "saved first portion");
+  assert.equal(
+    cache.pass.summaryHash,
+    null,
+    "#337 snapshot survives checkpoints",
+  );
+  // Release the dead request before giving the next process its response.
+  held.release();
+  await new Promise<void>((accept) => setImmediate(accept));
+  fx.model.replies = [
+    A({ gist: "finished", points: [{ text: "second", src: "e2" }] }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 3);
+  assert.match(fx.model.prompts[2], /saved first portion/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
+  const finished = JSON.parse(
+    read(join(fx.data, "memory/night", `${DATE}.json`)),
+  ) as { pass?: unknown; writtenSummaryHash?: string };
+  assert.equal(finished.pass, undefined);
+  assert.equal(typeof finished.writtenSummaryHash, "string");
+  assert.match(read(summary(fx)), /description: "finished"/u);
+});
+
+void test("#309: a 503 resumes the same night without repeating earlier portions or facts", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\nАврора ${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [
+    A({
+      gist: "first saved",
+      new_cards: [newAurora],
+      facts: [{ card: "Аврора", text: "Аврора", quote: "Аврора", src: "e1" }],
+    }),
+    { status: 503 },
+    A({ gist: "all done", points: [{ text: "second", src: "e2" }] }),
+    B({ card: "cards/projects/аврора" }),
+  ];
+  const result = await night(fx, null);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(fx.model.prompts.length, 4);
+  assert.match(fx.model.prompts[2], /first saved/u);
+  assert.doesNotMatch(fx.model.prompts[2], /аааа/u);
+  assert.equal(
+    logRows(read(join(fx.vault, "cards/projects/аврора.md"))).length,
+    1,
+  );
+  assert.equal(
+    (
+      JSON.parse(read(join(fx.data, "rollup-attempts.json"))) as Record<
+        string,
+        unknown
+      >
+    )[DATE],
+    undefined,
+  );
+});
+
+void test("#309: three transient failures pause a day across automatic and manual nights", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nФакт\n");
+  fx.model.replies = Array.from({ length: 3 }, () => ({ status: 503 }));
+  const result = await night(fx, null);
+  assert.equal(result.code, 1, result.stderr);
+  assert.equal(fx.model.prompts.length, 3);
+  const attempts = JSON.parse(
+    read(join(fx.data, "rollup-attempts.json")),
+  ) as Record<string, Array<{ reason: string }>>;
+  assert.equal(attempts[DATE].length, 3);
+  assert.ok(
+    attempts[DATE].every(
+      (attempt: { reason: string }) => attempt.reason === "no-report",
+    ),
+  );
+  assert.equal(existsSync(summary(fx)), false);
+  await night(fx, null);
+  await night(fx);
+  assert.equal(fx.model.prompts.length, 3, "exhausted day stays paused");
+});
+
+void test("#309: saved prefix is reused for every generated interruption point", async (t) => {
+  const seed = 20261020;
+  t.diagnostic(`fast-check seed=${seed}`);
+  await fc.assert(
+    fc.asyncProperty(
+      fc.integer({ min: 2, max: 5 }),
+      fc.nat(),
+      async (parts, point) => {
+        const fx = await fixture(t);
+        const interrupted = 1 + (point % (parts - 1));
+        day(
+          fx,
+          Array.from(
+            { length: parts },
+            (_, i) => `## 1${i}:00 [text]\n${String(i).repeat(30_000)}\n`,
+          ).join("\n"),
+        );
+        const answers = Array.from({ length: parts }, (_, i) =>
+          A({
+            gist: `portion ${i}`,
+            points: [{ text: `point ${i}`, src: `e${i + 1}` }],
+          }),
+        );
+        fx.model.replies = [...answers.slice(0, interrupted), { status: 401 }];
+        assert.equal((await night(fx)).code, 1);
+        const cachePath = join(fx.data, "memory/night", `${DATE}.json`);
+        const cache = JSON.parse(read(cachePath)) as {
+          pass: { progress: { answers: unknown[] } };
+        };
+        assert.equal(cache.pass.progress.answers.length, interrupted);
+        // Saved input identity protects the correspondence between portion and answer.
+        const daily = join(fx.vault, "daily", `${DATE}.md`);
+        const original = read(daily);
+        writeFileSync(daily, original.replace("0000", "edit"));
+        assert.equal((await night(fx)).code, 1);
+        assert.equal(fx.model.prompts.length, interrupted + 1);
+        writeFileSync(daily, original);
+        fx.model.replies = answers.slice(interrupted);
+        const resumed = await night(fx);
+        assert.equal(resumed.code, 0, resumed.stderr);
+        assert.equal(fx.model.prompts.length, parts + 1);
+        assert.match(fx.model.prompts[interrupted + 1], /portion 0/u);
+        const reference = await fixture(t);
+        day(reference, original.slice(original.indexOf("## ")));
+        reference.model.replies = answers;
+        assert.equal((await night(reference)).code, 0);
+        assert.equal(
+          read(summary(fx)),
+          read(summary(reference)),
+          "same result as an uninterrupted day",
+        );
+      },
+    ),
+    { seed, numRuns: 8 },
+  );
+});
+
+void test("#309: night ceiling preserves a completed portion for the next night", async (t) => {
+  const fx = await fixture(t);
+  day(
+    fx,
+    `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
+  );
+  fx.model.replies = [
+    { usage: 300_000, value: A({ gist: "saved at ceiling" }) },
+  ];
+  const cut = await night(fx);
+  assert.equal(cut.code, 1, cut.stderr);
+  assert.match(read(join(fx.data, "rollup-attempts.json")), /"cut"/u);
+  assert.equal(fx.model.prompts.length, 1);
+  fx.model.replies = [
+    A({
+      gist: "finished after ceiling",
+      points: [{ text: "second", src: "e2" }],
+    }),
+  ];
+  const resumed = await night(fx);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 2);
+  assert.match(fx.model.prompts[1], /saved at ceiling/u);
+  assert.doesNotMatch(fx.model.prompts[1], /аааа/u);
+});

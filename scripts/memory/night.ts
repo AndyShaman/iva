@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
+import { setTimeout as pause } from "node:timers/promises";
 import { resolveVaultDir } from "@iva/vault-dir";
 import { resolveDataDir } from "#lib/data-dir.ts";
 import { resolveTimeZone } from "#lib/timezone.ts";
@@ -104,6 +105,8 @@ interface Pass {
   readonly summaryHash?: string | null;
   /** Ответы A по частям дня; выжимка — из последнего. */
   a?: DayAnswer[];
+  /** Частичный A отдельно: читатель 0.5.5 видит только полный pass.a. */
+  progress?: { inputHash: string; answers: DayAnswer[] };
   /** Имя новой Card → путь: пишется до создания файла, повтор берёт ту же Card. */
   created: Record<string, string>;
   applied?: boolean;
@@ -394,13 +397,23 @@ function summarized(answer: DayAnswer): void {
 
 /** A по частям дня; часть видит выжимку предыдущих и пишет выжимку всего дня. */
 async function askDay(
-  date: string,
+  cache: DayCache,
   day: DayEntry[],
   cards: Card[],
   context: string[],
 ) {
-  const answers: DayAnswer[] = [];
-  for (const entries of input.splitEntries(day, limits.PART_SIZE)) {
+  const { date, pass } = { date: cache.date, pass: cache.pass! };
+  const inputHash = input.canonicalHash(day);
+  pass.progress ??= { inputHash, answers: [] };
+  if (pass.progress.inputHash !== inputHash)
+    throw new Error(
+      `день ${date} изменён во время разбора; восстанови вход дня`,
+    );
+  const answers = pass.progress.answers;
+  const remaining = input
+    .splitEntries(day, limits.PART_SIZE)
+    .slice(answers.length);
+  for (const entries of remaining) {
     const text = [...entries.map((entry) => entry.text), ...context].join("\n");
     const known = knownFor(cards, text, date);
     const earlier_parts = answers.map((answer) => answer.gist);
@@ -411,6 +424,7 @@ async function askDay(
       summarized((kept = usable(raw, day, cards)));
     await call.callBySchema({ ...ask, validate });
     answers.push(kept);
+    writeCache(cache);
   }
   return answers;
 }
@@ -935,14 +949,15 @@ function gistOf(date: string): string {
 async function askPass(cache: DayCache, entries: DayEntry[]) {
   const pass = cache.pass!;
   const part = entries.slice(pass.from, pass.upto);
-  if (!part.some((entry) => entry.origin === "owner")) return [];
+  if (!pass.progress && !part.some((entry) => entry.origin === "owner"))
+    return [];
   const cards = readCards();
   const seen = cards.filter((card) => cache.touched.includes(card.card));
   const context = [
     pass.from ? gistOf(cache.date) : "",
     ...seen.map((c) => c.name),
   ];
-  return await askDay(cache.date, part, cards, context);
+  return await askDay(cache, part, cards, context);
 }
 
 async function processDay(date: string): Promise<boolean> {
@@ -953,6 +968,7 @@ async function processDay(date: string): Promise<boolean> {
   const cache = openPass(date, entries, summaryHash);
   if (!cache?.pass) return true;
   cache.pass.a ??= await askPass(cache, entries);
+  delete cache.pass.progress;
   writeCache(cache);
   const cards = () => applyCards(cache, entries);
   if (!cache.pass.applied && !(await underCardLock(cards)))
@@ -1215,16 +1231,32 @@ function cleanupCaches(): void {
   }
 }
 
+const attemptDay = (date: string, reason: attempts.AttemptReason) =>
+  attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
+
+async function processDayWithAttempts(date: string): Promise<boolean> {
+  for (;;) {
+    try {
+      const complete = await processDay(date);
+      if (!complete) attemptDay(date, "day-unfinished");
+      return complete;
+    } catch (error) {
+      if (!(error instanceof call.NightTransientError)) throw error;
+      attemptDay(date, "no-report");
+      if (attempts.isExhausted(attempts.readAttempts(ATTEMPTS)[date]))
+        return false;
+      jobs.push(`${date}: связь с моделью оборвалась; продолжаю через секунду`);
+      await pause(1_000, undefined, { signal });
+    }
+  }
+}
+
 async function runDays(dates: readonly string[]) {
   const done: string[] = [];
   let code = 0;
-  const attempt = (date: string, reason: attempts.AttemptReason) =>
-    attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
-  for (const date of dates) {
-    if (deferred.has(date)) continue;
+  for (const date of dates.filter((date) => !deferred.has(date))) {
     try {
-      if (!(await processDay(date)))
-        return { done, code: 1, stop: attempt(date, "day-unfinished") };
+      if (!(await processDayWithAttempts(date))) return { done, code: 1 };
       done.push(date);
     } catch (error) {
       if (error instanceof OwnerEditConflict) {
@@ -1233,11 +1265,11 @@ async function runDays(dates: readonly string[]) {
       }
       if (error instanceof call.NightCeilingError) {
         console.error(`memory-night: обрез пределом ночи на ${date}`);
-        return { done, code: 1, stop: attempt(date, "cut") };
+        return { done, code: 1, stop: attemptDay(date, "cut") };
       }
       if (!(error instanceof call.NightSchemaError)) throw error;
       code = 1;
-      attempt(date, "no-report");
+      attemptDay(date, "no-report");
       jobs.push(`${date}: ответ A не по форме после повтора: ${error.message}`);
     }
   }
