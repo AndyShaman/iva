@@ -198,9 +198,9 @@ loaded, that line is all the model sees. Everything else about skills is in
 [extending.md](extending.md) — a plugin's skill is an ordinary skill that happens to arrive in
 a folder.
 
-`iva plugin add` and `propose` refuse longer skill descriptions in local
-`data/custom/plugin-drafts/` sources and ask for a shorter trigger.
-Other sources receive a warning and keep the existing truncation in the prompt index.
+`iva plugin add` and `propose` warn about longer skill descriptions for all sources,
+including local `data/custom/plugin-drafts/`. The build continues, and the prompt
+index truncates the description to 120 UTF-16 code units.
 
 ### Code: an eve Extension under `sh.iva/`
 
