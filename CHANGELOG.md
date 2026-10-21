@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 🔧 **Ссылки Spark открывают письмо из чата**: Ива сохраняет ссылки Spark на письма и черновики при отправке. Проверка секретов установки и форматов API-ключей действует и внутри этих ссылок. Spark message and draft links stay intact in replies, while installation secrets and API key shapes inside them are still redacted.
 - 🔧 **Схемы инструментов подключений**: схема без типа больше не обрывает ход на Claude, Ива дополняет её перед отправкой провайдеру. Connection tools with a missing schema type now reach providers with an object input schema.
 - 🔧 **Долгие команды в напоминаниях**: ожидание инструмента учитывает срок команды с запасом, поэтому команда дольше трёх минут возвращает итог. Reminder turns wait for pending tool deadlines before treating silence as a failure.
 - 🔧 **Помощники продолжают запускаться**: помощник больше не перестаёт запускаться, когда накопилось 20 сданных задач. Новый запуск освобождает место самой старой сданной задачи, а закрытие сданной задачи освобождает его сразу. Helpers can start after 20 delivered tasks by removing the oldest delivered task; closing a delivered task frees its place immediately.
