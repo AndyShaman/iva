@@ -77,6 +77,22 @@ await test("installation secrets are gated bare, in code and Markdown tables", a
     }
   }
 });
+await test("installation secrets inside Spark deep links are redacted", (t) => {
+  fixture(t);
+  for (const value of Object.values(env)) {
+    const input = `https://sparkmailapp.com/dpl/bl?token=${value}`;
+    const result = scanOutbound(input);
+    assert.equal(result.clean, false);
+    assert.equal(
+      result.text,
+      "https://sparkmailapp.com/dpl/bl?token=[REDACTED]",
+    );
+    assert.ok(
+      result.findings.some((finding) => finding.name === "installation_secret"),
+    );
+  }
+});
+
 await test("ordinary replies survive installation-secret checks (seed 101301)", (t) => {
   fixture(t);
   const before = process.env.IVA_QA_ORDINARY_OUTPUT;
