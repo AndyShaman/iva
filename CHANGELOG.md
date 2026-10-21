@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Повторить вопрос после перезапуска**: если Ива перезапустилась посреди ответа, сообщение об обрыве показывает вопрос и кнопку «Повторить». Нажатие отправляет вопрос снова; вложение нужно прислать ещё раз. After a restart during an answer, the interruption notice quotes your question and offers a Try again button. Tap it to send the question again; resend attachments yourself.
+
 - 🔧 **Ссылки Spark открывают письмо из чата**: Ива сохраняет ссылки Spark на письма и черновики при отправке. Проверка секретов установки и форматов API-ключей действует и внутри этих ссылок. Spark message and draft links stay intact in replies, while installation secrets and API key shapes inside them are still redacted.
 - 🔧 **Схемы инструментов подключений**: схема без типа больше не обрывает ход на Claude, Ива дополняет её перед отправкой провайдеру. Connection tools with a missing schema type now reach providers with an object input schema.
 - 🔧 **Долгие команды в напоминаниях**: ожидание инструмента учитывает срок команды с запасом, поэтому команда дольше трёх минут возвращает итог. Reminder turns wait for pending tool deadlines before treating silence as a failure.

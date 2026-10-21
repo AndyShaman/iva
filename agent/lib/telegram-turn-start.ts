@@ -98,6 +98,8 @@ export function chatTakeOverPatch(
     draftId: null,
     latencyLogged: null,
     resetAt: null,
+    restartRetryData: null,
+    restartRetryUpdate: null,
     ...fields,
   };
 }

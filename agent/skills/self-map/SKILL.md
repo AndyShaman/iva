@@ -180,8 +180,11 @@ What becomes of your work — for the owner's questions about you.
   answer began: what happened and to write again, no button.
 - **Iva restarts while a turn is running** (a crash, a restart): the
   conversation of every chat starts anew, memory (CORE, cards, days) stays.
-  The owner sees «Предыдущий ход оборвался - повтори запрос или /new»; the
-  turn does not start again by itself.
+  The owner sees «Предыдущий ход оборвался», a short quote of the last accepted
+  question in a private chat, and a «Повторить» button. The button sends the full
+  question as an ordinary turn, once and only on the owner's tap. An attachment
+  asks the owner to send it again; a group shows no quote. A new conversation or
+  another accepted turn closes the old button. The turn stays stopped until a tap.
 - **After a miss** (the server was off or restarting): a Reminder that came
   due fires on the first minute after; a Brief or an Insight runs if it is
   less than 3 hours late, otherwise that time is skipped; a night less than 20
