@@ -18,7 +18,8 @@ In a group chat (`/digest` there) other people read the answer: show only the op
 tasks (step 1), nothing from mail, calendar, personal Telegram or Connections.
 
 Load `watch` and follow its shared procedure for each substantial item; apply
-it only to the sources allowed here.
+it only to the sources allowed here. For chat links, follow `watch` and retain
+the message id and forum topic from the Telegram item you read.
 
 For changes, cover the time since the previous Brief, whose time is in the prompt
 (`Previous Brief`). Without that line, find the previous overview in the daily file.

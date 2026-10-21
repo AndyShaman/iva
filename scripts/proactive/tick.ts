@@ -277,14 +277,19 @@ const personButtons = (tr: Translate) =>
 
 function watchPrompt(candidates: readonly Candidate[], tr: Translate): string {
   const flagged = { attack: false };
-  const lines = candidates.map(({ key, from, note, unread, urgent }) => {
-    if (note !== undefined) return `- ${key}: ${gated(note, flagged)}`;
-    const who = [from.name, from.username && `@${from.username}`, from.email]
-      .map((part) => gated(part || undefined, flagged))
-      .filter(Boolean)
-      .join(" ");
-    return `- ${key} from ${who || "unknown"}: ${unread} unread${urgent ? ", urgent sender" : ""}`;
-  });
+  const lines = candidates.map(
+    ({ key, from, note, unread, urgent, message_id, topic_id }) => {
+      if (note !== undefined) return `- ${key}: ${gated(note, flagged)}`;
+      const who = [from.name, from.username && `@${from.username}`, from.email]
+        .map((part) => gated(part || undefined, flagged))
+        .filter(Boolean)
+        .join(" ");
+      const message = message_id
+        ? `, message_id=${message_id}${topic_id ? `, topic_id=${topic_id}` : ""}`
+        : "";
+      return `- ${key} from ${who || "unknown"}: ${unread} unread${urgent ? ", urgent sender" : ""}${message}`;
+    },
+  );
   const prompt =
     "Watch: these items are new for the owner and were not reported yet " +
     "(tg: a Telegram chat, mail: a Gmail message, check: a source check, " +

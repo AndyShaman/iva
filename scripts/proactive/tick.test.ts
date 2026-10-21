@@ -1342,3 +1342,52 @@ for (const english of [false, true])
         : "Обзор не собран. Остановилась на 40 шагах и не успела подвести итог.",
     ]);
   });
+
+test("Watch prompt carries the group message, topic and username from the source", async () => {
+  const h = harness();
+  const item = {
+    ...chat(-1004398169447, 1, "Team"),
+    from: { name: "Team", username: "public_team" },
+    message_id: 40,
+    topic_id: 12,
+  };
+  h.tg = { items: [item], error: null };
+  writeState(h, staleSeen(item));
+  await runProactiveTick(NOON, h.deps);
+  assert.match(h.prompts[0] ?? "", /tg:-1004398169447 from Team @public_team/u);
+  assert.match(h.prompts[0] ?? "", /message_id=40, topic_id=12/u);
+});
+
+test("Telegram metadata reaches the Watch turn through precheck and candidate selection", async () => {
+  const { telegramSource } = await import("./precheck.ts");
+  for (const forum of [false, true]) {
+    const h = harness();
+    const item = chat(-1004398169447, 1, "Team");
+    writeState(h, staleSeen(item));
+    const source = telegramSource({}, "", (name, args) =>
+      Promise.resolve().then(() => {
+        if (name === "list_chats")
+          return JSON.stringify({
+            results:
+              args.chat_type === "group"
+                ? [
+                    {
+                      chat_id: -1004398169447,
+                      title: "Team",
+                      type: "Supergroup",
+                      unread_mentions: 1,
+                    },
+                  ]
+                : [],
+          });
+        if (name === "list_messages")
+          return JSON.stringify({ results: [{ id: 40, reply_to: 7 }] });
+        return `Link: https://t.me/c/4398169447/${forum ? "12/" : ""}40`;
+      }),
+    );
+    await runProactiveTick(NOON, { ...h.deps, sources: [source] });
+    assert.match(h.prompts[0] ?? "", /message_id=40/u);
+    if (forum) assert.match(h.prompts[0] ?? "", /topic_id=12/u);
+    else assert.doesNotMatch(h.prompts[0] ?? "", /topic_id=/u);
+  }
+});
