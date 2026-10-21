@@ -1,13 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns test registrations. */
 import "../fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -76,41 +70,34 @@ async function checkDescription(
       },
     });
     const problem = `описание скилла case — ${description.length} знаков, предел 120; сократи до триггера "Use when…"`;
-    if (draft && description.length > 120) {
-      await assert.rejects(cmdPlugin([action, source]), { message: problem });
-      assert.equal(existsSync(pluginRoot(data, "case")), false);
-      assert.deepEqual((await readPluginsState(data)).plugins, []);
-      assert.deepEqual(screens, []);
-    } else {
-      await cmdPlugin([action, source]);
-      assert.equal(
-        action === "add"
-          ? (await readPluginsState(data)).plugins.length
-          : screens.length,
-        1,
+    await cmdPlugin([action, source]);
+    assert.equal(
+      action === "add"
+        ? (await readPluginsState(data)).plugins.length
+        : screens.length,
+      1,
+    );
+    assert.equal(warnings.includes(problem), description.length > 120);
+    const installedSource =
+      action === "add" ? pluginRoot(data, "case") : source;
+    const skills = await readCustomSkills(
+      join(installedSource, "skills"),
+      () => {},
+    );
+    assert.ok(skills.case.description.length <= 120);
+    if (description.length <= 120)
+      assert.equal(skills.case.description, description);
+    else assert.ok(skills.case.description.endsWith("…"));
+    if (draft && action === "add" && description.length === 120) {
+      writeFileSync(
+        join(source, "skills/case/SKILL.md"),
+        `---\nname: case\ndescription: ${JSON.stringify(`${description}x`)}\n---\nBody.\n`,
       );
-      assert.equal(warnings.includes(problem), description.length > 120);
-      const installedSource =
-        action === "add" ? pluginRoot(data, "case") : source;
-      const skills = await readCustomSkills(
-        join(installedSource, "skills"),
-        () => {},
+      await cmdPlugin(["update", "case"]);
+      assert.ok(
+        warnings.some((line) => line.includes("121 знаков, предел 120")),
       );
-      assert.ok(skills.case.description.length <= 120);
-      if (description.length <= 120)
-        assert.equal(skills.case.description, description);
-      else assert.ok(skills.case.description.endsWith("…"));
-      if (draft && action === "add" && description.length === 120) {
-        writeFileSync(
-          join(source, "skills/case/SKILL.md"),
-          `---\nname: case\ndescription: ${JSON.stringify(`${description}x`)}\n---\nBody.\n`,
-        );
-        await cmdPlugin(["update", "case"]);
-        assert.ok(
-          warnings.some((line) => line.includes("121 знаков, предел 120")),
-        );
-        assert.equal((await readPluginsState(data)).plugins.length, 1);
-      }
+      assert.equal((await readPluginsState(data)).plugins.length, 1);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -121,6 +108,7 @@ for (const action of ["add", "propose"] as const) {
   test(`${action}: draft boundary 120/121 and external compatibility`, async () => {
     await checkDescription("a".repeat(120), action, true);
     await checkDescription("a".repeat(121), action, true);
+    await checkDescription("a".repeat(200), action, true);
     await checkDescription("a".repeat(121), action, false);
     // 60 emoji occupy 120 UTF-16 code units, despite being 60 code points.
     await checkDescription("🙂".repeat(60), action, true);

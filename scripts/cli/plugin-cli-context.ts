@@ -8,7 +8,7 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import type { PluginReport } from "#lib/plugin-reader.ts";
 import type { PluginEntry, PluginsState } from "#lib/plugin-store.ts";
 import type { Translate } from "../lib/cli-translate.ts";
@@ -243,9 +243,7 @@ export function createPluginCliContext(options: PluginCliOptions) {
     return entry;
   }
 
-  async function checkDescriptions(report: PluginReport, source: string) {
-    const drafts = join(resolve(runtime.dataDirAbs()), "custom/plugin-drafts");
-    const draft = source !== "" && resolve(source).startsWith(drafts + sep);
+  async function checkDescriptions(report: PluginReport) {
     for (const { name, dir } of report.skills) {
       const { truncatedFrom } = core.skills.describeSkill(
         name,
@@ -253,7 +251,6 @@ export function createPluginCliContext(options: PluginCliOptions) {
       );
       if (truncatedFrom === null) continue;
       const problem = `описание скилла ${name} — ${truncatedFrom} знаков, предел ${core.skills.DESCRIPTION_CAP}; сократи до триггера "Use when…"`;
-      if (draft) throw new Error(problem);
       warn(problem);
     }
   }
