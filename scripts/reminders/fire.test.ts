@@ -1,7 +1,7 @@
 // Контракт срабатывания: в срок идёт один ход агента с текстом напоминания как промптом,
 // и код отправляет его финальный текст туда, где напоминание попросили. Ход упал или
 // промолчал — код шлёт текст напоминания как есть и называет причину в строке. Оба шва
-// (send и ход) — двойники: сети и eve в тесте нет.
+// Ход — двойник; доставка проверяется и двойником, и настоящим Outbox с подменённым fetch.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +27,135 @@ beforeEach(() => {
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
 const NOW = 1_800_000_000_000;
+
+const BUTTON_REPLY =
+  'Продолжить?\n\n<tg-button-row><tg-button type="callback_data" data="Да">Да</tg-button></tg-button-row>';
+
+function wireSend(rejectRich = false) {
+  const requests: { method: string; body: unknown }[] = [];
+  const send: typeof import("../lib/telegram-send.ts").sendTelegramHtml =
+    async (bot, chat, text, options) => {
+      const { sendTelegramHtml } = await import("../lib/telegram-send.ts");
+      return sendTelegramHtml(bot, chat, text, {
+        ...options,
+        fetchImpl: (url, init) => {
+          const address =
+            typeof url === "string"
+              ? url
+              : url instanceof URL
+                ? url.href
+                : url.url;
+          const method = address.split("/").at(-1)!;
+          assert.equal(typeof init?.body, "string");
+          const body = init?.body;
+          assert.ok(typeof body === "string");
+          requests.push({ method, body: JSON.parse(body) });
+          return Promise.resolve(
+            new Response("", {
+              status: rejectRich && method === "sendRichMessage" ? 400 : 200,
+            }),
+          );
+        },
+      });
+    };
+  return { requests, send };
+}
+
+void test("Reminder buttons reach sendRichMessage with the model reply and topic", async () => {
+  await firedRow({ id: "-100123", threadId: "42" });
+  const { send, requests } = wireSend();
+  const { runTurn } = turn("completed", BUTTON_REPLY);
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.deepEqual(requests, [
+    {
+      method: "sendRichMessage",
+      body: {
+        chat_id: "-100123",
+        message_thread_id: "42",
+        rich_message: { markdown: BUTTON_REPLY },
+      },
+    },
+  ]);
+  assert.equal((await list())[0]?.delivered, true);
+});
+
+void test("Reminder text without rich constructs keeps the HTML sendMessage body", async () => {
+  await firedRow();
+  const { send, requests } = wireSend();
+  const { runTurn } = turn("completed", "**Готово**");
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.deepEqual(requests, [
+    {
+      method: "sendMessage",
+      body: { chat_id: "555", text: "<b>Готово</b>", parse_mode: "HTML" },
+    },
+  ]);
+});
+
+void test("Reminder rich rejection falls back to HTML with button labels", async () => {
+  await firedRow();
+  const { send, requests } = wireSend(true);
+  const { runTurn } = turn("completed", BUTTON_REPLY);
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.deepEqual(requests, [
+    {
+      method: "sendRichMessage",
+      body: { chat_id: "555", rich_message: { markdown: BUTTON_REPLY } },
+    },
+    {
+      method: "sendMessage",
+      body: {
+        chat_id: "555",
+        text: "Продолжить?\n\n <b>Да</b>",
+        parse_mode: "HTML",
+      },
+    },
+  ]);
+  assert.equal((await list())[0]?.delivered, true);
+});
+
+void test("long Reminder text keeps every character across HTML chunks", async () => {
+  await firedRow();
+  const text = "я".repeat(9000);
+  const { send, requests } = wireSend();
+  const { runTurn } = turn("completed", text);
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.equal(requests.length, 3);
+  const parts = requests.map(({ method, body }) => {
+    assert.equal(method, "sendMessage");
+    assert.ok(body !== null && typeof body === "object" && "text" in body);
+    assert.equal(typeof body.text, "string");
+    const part = String(body.text);
+    assert.ok(part.length <= 4096);
+    assert.deepEqual(body, { chat_id: "555", text: part, parse_mode: "HTML" });
+    return part;
+  });
+  assert.equal(parts.join(""), text);
+});
+
+void test("long Reminder with buttons falls back to bounded HTML chunks after rich rejection", async () => {
+  await firedRow();
+  const prefix = "я".repeat(9000);
+  const text = `${prefix}\n\n${BUTTON_REPLY}`;
+  const { send, requests } = wireSend(true);
+  const { runTurn } = turn("completed", text);
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+  assert.deepEqual(requests[0], {
+    method: "sendRichMessage",
+    body: { chat_id: "555", rich_message: { markdown: text } },
+  });
+  const parts = requests.slice(1).map(({ method, body }) => {
+    assert.equal(method, "sendMessage");
+    assert.ok(body !== null && typeof body === "object" && "text" in body);
+    const part = String(body.text);
+    assert.ok(part.length <= 4096);
+    assert.deepEqual(body, { chat_id: "555", text: part, parse_mode: "HTML" });
+    return part;
+  });
+  assert.equal(parts.length, 3);
+  assert.equal(parts.join(""), `${prefix}\n\nПродолжить?\n\n <b>Да</b>`);
+  assert.equal((await list())[0]?.delivered, true);
+});
 
 void test("turn.failed after empty responses delivers the reminder and records failure", async () => {
   await firedRow();
