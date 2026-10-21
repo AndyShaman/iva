@@ -67,8 +67,12 @@
 \*                or the summary failed; or /stop or a steer message aborted it. Ф6, Ф13: a
 \*                parking after success and failure; after an abort: parking, turn.cancelled,
 \*                parking
-\*   CancelH      turn.cancelled (telegram.ts:327): finish completed if the record is compacting,
-\*                else cancelled (wasCancelled), finally dropIdleCompactionTurn
+\*   CancelH      turn.cancelled: finish completed if the record is compacting, else cancelled;
+\*                neither outcome writes a Stop mark, finally dropIdleCompactionTurn.
+\*                Explicit Stop writes stopPressed before the cancel POST (telegram-stop.ts),
+\*                except during compaction. A steer arrival snapshots the running non-compacting
+\*                record before Land claims it; its neutral note asserts only that observation,
+\*                even when the turn ends before the message is delivered. Routing is unchanged.
 \*   Forget       ASK_FORGOTTEN_MS: an open ask eve never announced is dropped after 30 min
 \*   Expire       a running record goes stale after RUN_STALE_MS when nobody owns it any more;
 \*                with LongCompaction also a compacting record (no heartbeat) while eve still
@@ -474,9 +478,9 @@ StopComp ==
 CancelH ==
   /\ ev = "cancelH" /\ ~hung
   /\ ev' = "postComp"
-  /\ LET compacting == rs = "running" /\ cflag IN
-       /\ Finish(FALSE)
-       /\ badCancelMark' = (badCancelMark \/ (~compacting /\ rsid = "cur" /\ rs = "running"))
+  /\ Finish(FALSE)
+  \* Cancellation itself never writes a Stop mark, including a steer abort of compaction.
+  /\ UNCHANGED badCancelMark
   /\ IF has THEN Drop ELSE UNCHANGED <<open, due, asked, compacted>>
   /\ UNCHANGED <<buf, started, after, steps, ctx, ctrl, hung, stops>>
   /\ UNCHANGED <<has, first, last, off, reclaim>>

@@ -82,6 +82,8 @@ export type TelegramInboundEffects = TelegramMediaEffects & {
   readonly onAbandoned: () => Promise<void>;
   // Прошлый ход прервали кнопкой «Стоп»: читает пометку и гасит её.
   readonly consumeCancelledMark: () => boolean;
+  // Снимок до занятия чата этим сообщением, сохраняется при завершении прошлого хода.
+  readonly receivedDuringTurn?: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -621,6 +623,13 @@ export async function runTelegramInbound(
       tr(
         "[The previous turn was interrupted by the user with the «Stop» button — some of the work may be unfinished. Don't redo it without an explicit request.]",
         "[Предыдущий ход был прерван пользователем кнопкой «Стоп» — часть работы могла не завершиться. Не повторяй её без явной просьбы.]",
+      ),
+    );
+  } else if (effects.receivedDuringTurn) {
+    operationalPreContext.push(
+      tr(
+        "[This message arrived while the previous turn was running. Check the history to see whether the previous request was completed before repeating any work.]",
+        "[Это сообщение пришло, пока шёл прошлый ход. Проверь по истории, доведена ли прошлая просьба, прежде чем повторять сделанное.]",
       ),
     );
   }

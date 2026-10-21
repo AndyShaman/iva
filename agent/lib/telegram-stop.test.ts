@@ -2,12 +2,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
-import {
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { StopCancelRequest } from "./telegram-stop.ts";
+const root = mkdtempSync(join(tmpdir(), "iva-stop-"));
+process.env.ASSISTANT_DATA_DIR = root;
+test.after(() => rmSync(root, { recursive: true, force: true }));
+const {
   handleTelegramDraftStop,
   requestTurnCancel,
   handleTelegramDraftStopRequest,
-  type StopCancelRequest,
-} from "./telegram-stop.ts";
+} = await import("./telegram-stop.ts");
 
 const native = { chat: { id: 7, type: "private" }, draft_id: 41 };
 function options(snapshot: Record<string, unknown> | null) {

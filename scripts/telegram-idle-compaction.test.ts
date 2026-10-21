@@ -19,7 +19,7 @@ process.env.ASSISTANT_DATA_DIR = dataDir;
 process.env.ASSISTANT_VAULT_DIR = vault;
 process.env.AGENT_LANGUAGE = "en";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "9";
-process.env.TELEGRAM_BOT_TOKEN = "idle-compaction-test-token";
+process.env.TELEGRAM_BOT_TOKEN = "12345:idle-compaction-test-token";
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = "idle-compaction-test-secret";
 process.env.TELEGRAM_BOT_USERNAME = "my_bot";
 process.env.ASSISTANT_BEARER = "idle-compaction-test-bearer";
@@ -241,12 +241,19 @@ function session(sessionId: string, chatId: number) {
 }
 
 /** Сообщение владельца через настоящий вебхук канала; возвращает число доставок в eve. */
-async function incoming(chatId: number, sessionId: string): Promise<number> {
+const incomingContexts: unknown[] = [];
+async function incoming(
+  chatId: number,
+  sessionId: string,
+  updateId = ++seq,
+  accepted = false,
+): Promise<number> {
   let sends = 0;
   const pending: Promise<unknown>[] = [];
   const target = { id: sessionId } as Session;
   const source = {
-    send: async () => {
+    send: async (...input: unknown[]) => {
+      incomingContexts.push(input);
       sends += 1;
       return target;
     },
@@ -256,7 +263,8 @@ async function incoming(chatId: number, sessionId: string): Promise<number> {
     clear: unused,
     reset: unused,
   } as unknown as ChannelSource<TelegramChannelState>;
-  const response = await webhook.handler(
+  const deliveryRoute = accepted ? route("/eve/v1/telegram/accepted") : webhook;
+  const response = await deliveryRoute.handler(
     new Request("http://local/eve/v1/telegram", {
       method: "POST",
       headers: {
@@ -264,7 +272,7 @@ async function incoming(chatId: number, sessionId: string): Promise<number> {
         "x-telegram-bot-api-secret-token": "idle-compaction-test-secret",
       },
       body: JSON.stringify({
-        update_id: ++seq,
+        update_id: updateId,
         message: {
           message_id: 100 + seq,
           chat: { id: chatId, type: "private" },
@@ -285,7 +293,7 @@ async function incoming(chatId: number, sessionId: string): Promise<number> {
       requestIp: "127.0.0.1",
     },
   );
-  assert.equal(response.status, 200);
+  assert.ok(response.status === 200 || (accepted && response.status === 204));
   await Promise.all(pending);
   return sends;
 }
@@ -675,11 +683,11 @@ test("отмена пересказа (turn.cancelled, как после /stop):
   await s.cancelled();
   assert.equal(statusOf(51)?.status, "idle");
   assert.equal(statusOf(51)?.wasCancelled, undefined);
-  // Отмена настоящего хода отметку ставит, как раньше.
+  // Без нажатия Стоп отмена настоящего хода тоже не ставит отметку.
   const real = session("s-stop-turn", 52);
   await real.started();
   await real.cancelled();
-  assert.equal(statusOf(52)?.wasCancelled, true);
+  assert.equal(statusOf(52)?.wasCancelled, undefined);
 });
 
 test("законченный пересказ, который не помог, больше не повторяется", async () => {
@@ -695,4 +703,104 @@ test("законченный пересказ, который не помог, �
   await s.waiting();
   assert.deepEqual(compactCalls, []);
   assert.equal(statusOf(53)?.status, "idle");
+});
+
+for (const language of ["ru", "en"] as const) {
+  test(`steer note on the channel wire, ${language}: running, idle, queue, legacy Stop`, async (t) => {
+    t.mock.timers.enable({
+      apis: ["Date"],
+      now: Date.now() + (language === "ru" ? 100_000 : 200_000),
+    });
+    const neutral =
+      language === "ru" ? "Это сообщение пришло" : "This message arrived";
+    const stop =
+      language === "ru"
+        ? "Предыдущий ход был прерван"
+        : "The previous turn was interrupted";
+    for (const [index, state] of [
+      "running",
+      "idle",
+      "queue",
+      "legacy",
+      "pressed",
+      "compacting",
+    ].entries()) {
+      const chatId = 800 + index;
+      writeFileSync(
+        settings,
+        JSON.stringify({
+          language,
+          turnPolicy: state === "queue" ? "queue" : "steer",
+        }),
+      );
+      t.mock.timers.tick(3000);
+      runStatus.setChatStatus(`${chatId}:`, {
+        status: state === "idle" || state === "legacy" ? "idle" : "running",
+        sessionId: `s-note-${index}`,
+        turnId: "old",
+        compacting: state === "compacting" ? true : null,
+        wasCancelled: state === "legacy" ? true : null,
+        stopPressed: state === "pressed" ? true : null,
+      });
+      incomingContexts.length = 0;
+      assert.equal(await incoming(chatId, `s-note-${index}`), 1);
+      const wire = JSON.stringify(incomingContexts);
+      if (state === "legacy" || state === "pressed") {
+        assert.ok(wire.includes(stop), wire);
+        assert.ok(!wire.includes(neutral), wire);
+        assert.equal(statusOf(chatId)?.stopPressed, undefined);
+        assert.equal(statusOf(chatId)?.wasCancelled, undefined);
+      } else if (state === "running") {
+        assert.ok(wire.includes(neutral), wire);
+        assert.ok(!wire.includes(stop), wire);
+      } else {
+        assert.ok(!wire.includes(neutral), wire);
+        assert.ok(!wire.includes(stop), wire);
+      }
+    }
+  });
+}
+
+test("explicit native Stop is kept through terminal cancellation and consumed once", async () => {
+  const { handleTelegramDraftStop } =
+    await import("../agent/lib/telegram-stop.ts");
+  const s = session("s-explicit-stop", 9);
+  await s.started();
+  runStatus.setChatStatus("9:", { draftId: 999 });
+  const before = statusOf(9);
+  assert.equal(
+    await handleTelegramDraftStop(
+      {
+        chat: { id: 9, type: "private" },
+        draft_id: 999,
+      },
+      { cancelImpl: async () => ({ status: "accepted" }) },
+    ),
+    "requested",
+  );
+  assert.equal(statusOf(9)?.stopPressed, true);
+  assert.equal(statusOf(9)?.updatedAt, before?.updatedAt);
+  await s.cancelled();
+  assert.equal(statusOf(9)?.wasCancelled, undefined);
+  incomingContexts.length = 0;
+  await incoming(9, "s-explicit-stop");
+  assert.match(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
+  assert.equal(statusOf(9)?.stopPressed, undefined);
+  incomingContexts.length = 0;
+  await incoming(9, "s-explicit-stop");
+  assert.doesNotMatch(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
+});
+
+test("a repeated older accepted update neither dispatches nor consumes a fresh Stop", async () => {
+  const chatId = 910;
+  runStatus.setChatStatus(`${chatId}:`, { status: "idle" });
+  assert.equal(await incoming(chatId, "s-repeat-note", 90001, true), 1);
+  assert.equal(await incoming(chatId, "s-repeat-note", 90002, true), 1);
+  runStatus.setChatStatus(`${chatId}:`, { stopPressed: true });
+  assert.equal(await incoming(chatId, "s-repeat-note", 90001, true), 0);
+  assert.equal(statusOf(chatId)?.stopPressed, true);
+  incomingContexts.length = 0;
+  assert.equal(await incoming(chatId, "s-repeat-note", 90003, true), 1);
+  assert.match(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
+  assert.equal(statusOf(chatId)?.stopPressed, undefined);
 });

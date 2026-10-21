@@ -1655,3 +1655,27 @@ void test("Trace: гейт вне хода в журнал не пишет", asy
 
   assert.equal(traceEvents().length, before);
 });
+
+await test("arrival snapshot survives completion during acceptance; Stop takes precedence", async () => {
+  for (const stopped of [false, true]) {
+    let running = true;
+    const { effects } = harness({
+      receivedDuringTurn: running,
+      onAccepted: () => {
+        running = false;
+        return Promise.resolve();
+      },
+      consumeCancelledMark: () => stopped,
+    });
+    const result = await inbound.runTelegramInbound(
+      privateText("and forward it"),
+      effects,
+    );
+    assert.equal(running, false);
+    assert.ok(result?.context);
+    const wire = result.context.join("\n");
+    assert.equal(wire.includes("This message arrived while"), !stopped);
+    assert.equal(wire.includes("«Stop»"), stopped);
+    if (!stopped) assert.match(wire, /Check the history.*before repeating/u);
+  }
+});
