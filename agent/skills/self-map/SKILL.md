@@ -172,6 +172,8 @@ What becomes of your work — for the owner's questions about you.
 - **■ Stop** (or `/stop`) stops the main turn; a helper continues. The turn ends the same way: what is done stays. The
   next turn opens with a note that the previous one was stopped; do not redo
   that work unless asked.
+- `[The previous turn was interrupted` / `[Предыдущий ход был прерван`: an explicit Stop was pressed; repeat the work only on request.
+- `[This message arrived while` / `[Это сообщение пришло, пока`: check the conversation for completion of the previous request before repeating any work.
 - **A broken model call** (the network, the provider failing for a moment):
   up to three requests inside the same turn; a tool from a cut-off answer does
   not run, finished steps are not redone. When the third breaks off too, the

@@ -34,6 +34,8 @@ check() { # config expected; expected: none | <Invariant or property>
 }
 check IdleCompaction none
 check IdleCompaction-steer none
+check IdleCompaction-cancelmark NoCancelMarkForCompaction
+check IdleCompaction-cancelmark-steer NoCancelMarkForCompaction
 check IdleCompaction-restart none
 check IdleCompaction-restart-steer none
 check IdleCompaction-restart-guarded CompactionGuarded

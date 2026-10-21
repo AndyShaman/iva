@@ -523,7 +523,6 @@ export async function finishTelegramStatus(
         turnAt: null,
         firstOutputAt: null,
         latencyLogged: null,
-        ...(mode === "cancelled" ? { wasCancelled: true } : {}),
         ...(keepBusy ? { status: "running", sessionId, compacting: true } : {}),
       },
     ),

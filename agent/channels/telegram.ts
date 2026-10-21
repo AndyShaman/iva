@@ -89,6 +89,7 @@ import {
   handleAcceptedTelegramWebhook,
   TELEGRAM_ACCEPTANCE_ROUTE,
   wrapTelegramQueueOnMessage,
+  telegramTurnPolicy,
 } from "../lib/telegram-acceptance.js";
 import {
   abandonTelegramEarlyStatus,
@@ -634,6 +635,12 @@ const telegram = telegramChannel({
     const tg = ctx.telegram;
     const chatKey = chatKeyOf(message.chat.id, message.messageThreadId);
     const ingressId = randomUUID();
+    const receivedStatus = getChatStatus(chatKey);
+    const receivedDuringTurn =
+      telegramTurnPolicy() === "steer" &&
+      receivedStatus?.status === "running" &&
+      receivedStatus.compacting !== true &&
+      Date.now() - (receivedStatus.updatedAt ?? 0) < RUN_STALE_MS;
     return rememberAccepted(
       chatKey,
       message,
@@ -664,6 +671,7 @@ const telegram = telegramChannel({
             setStatusIfImpl: setChatStatusIf,
           });
         },
+        receivedDuringTurn,
         consumeCancelledMark: () => {
           if (!getChatStatus(chatKey)?.wasCancelled) return false;
           setChatStatus(chatKey, { wasCancelled: null });
