@@ -282,7 +282,9 @@ export function interruptedTurnText(input: {
 }): ProviderErrorText {
   const situation = { ...input, question: input.question ?? "" };
   const to = answerTarget(situation);
-  const ask = midAnswerAsk(situation, input.data);
+  const ask = input.group
+    ? { en: " Send it again.", ru: " Пришли его ещё раз." }
+    : midAnswerAsk(situation, input.data);
   return {
     en: `The previous turn was interrupted${to.en}.${ask.en}`,
     ru: `Предыдущий ход оборвался${to.ru}.${ask.ru}`,

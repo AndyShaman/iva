@@ -358,6 +358,8 @@ export async function completeScopedResetState(
     retiredSessionId: null,
     restartRetryData: null,
     restartRetryUpdate: null,
+    restartRetryQuestion: null,
+    restartRetryMedia: null,
     ...QUEUED_STATUS_CLEARED,
     resetAt: Date.now(),
   });
@@ -682,8 +684,11 @@ export async function sendInterruptedTurnNotice(chatKey: string, text: string) {
   const { sendTelegramHtml } = await import("../lib/telegram-send.ts");
   const target = telegramTargetOf(chatKey);
   if (!target) throw new Error(`invalid Telegram chat key: ${chatKey}`);
+  const signal = AbortSignal.timeout(30_000);
   const result = await sendTelegramHtml(TOKEN ?? "", target.chat_id, text, {
     rich: true,
+    trace: { source: "restart-notice" },
+    fetchImpl: (input, init) => fetch(input, { ...init, signal }),
     ...(target.message_thread_id === undefined
       ? {}
       : { threadId: String(target.message_thread_id) }),
@@ -1044,6 +1049,8 @@ export async function reapStaleRuns({
           resetAt: reapedAt,
           restartRetryData,
           restartRetryUpdate: null,
+          restartRetryQuestion: status.turnQuestion,
+          restartRetryMedia: status.turnQuestionMedia,
         },
       );
     } catch (error) {

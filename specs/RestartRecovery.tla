@@ -235,6 +235,18 @@ ButtonNext == ReapOffer \/ NotifyOffer \/ ExpireOffer \/ RestartBridge
               \/ (\E u \in 1..MaxMsgs: TapOffer(u) \/ AdmitOffer(u))
 ButtonSpec == Init /\ [][ButtonNext /\ UNCHANGED <<vars, recoveryVars>>]_<<vars, recoveryVars, buttonVars>>
               /\ WF_buttonVars(NotifyOffer)
+\* Mutant: a reaper without the running -> idle CAS takes a notified turn again.
+ReapNotifiedOffer ==
+  /\ offerPhase = "notified" /\ offerNotices < 2
+  /\ offerPhase' = "closed"
+  /\ UNCHANGED <<offerToken, offerUpdate, offerPending, offerAdmitted,
+                 offerNotices, offerTaps, offerRestarts, offerExpired>>
+ButtonDoubleNoticeSpec == Init /\ [][(ButtonNext \/ ReapNotifiedOffer)
+  /\ UNCHANGED <<vars, recoveryVars>>]_<<vars, recoveryVars, buttonVars>>
+  /\ WF_buttonVars(NotifyOffer)
+\* Mutant: closing a turn drops its notification instead of invoking Outbox.
+ButtonLostNoticeSpec == Init /\ [][(ButtonNext /\ offerPhase' # "notified")
+  /\ UNCHANGED <<vars, recoveryVars>>]_<<vars, recoveryVars, buttonVars>>
 OneNoticePerTurn == offerNotices <= 1
 NoticeEventually == offerPhase = "closed" ~> offerNotices = 1
 OnlyOwnerTap == offerPending \cup offerAdmitted \subseteq offerTaps

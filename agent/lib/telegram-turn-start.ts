@@ -100,6 +100,8 @@ export function chatTakeOverPatch(
     resetAt: null,
     restartRetryData: null,
     restartRetryUpdate: null,
+    restartRetryQuestion: null,
+    restartRetryMedia: null,
     ...fields,
   };
 }

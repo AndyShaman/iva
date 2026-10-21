@@ -20,3 +20,5 @@ check RestartRecovery-window-unsafe ClosedStaysClosed
 check RestartRecovery-button none
 check RestartRecovery-button-auto OnlyOwnerTap
 check RestartRecovery-button-duplicate OneNewTurn
+check RestartRecovery-button-notices OneNoticePerTurn
+check RestartRecovery-button-lost NoticeEventually

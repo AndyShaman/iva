@@ -63,6 +63,8 @@ void test("the interrupted tap captures its question before another turn can rep
     status: "idle",
     turnQuestion: "original",
     restartRetryData: "token",
+    restartRetryQuestion: "original",
+    restartRetryMedia: false,
   });
   const accepted = claimInterruptedTap("snapshot:", "token", 17);
   setChatStatus("snapshot:", { turnQuestion: "next" });

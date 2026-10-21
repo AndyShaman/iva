@@ -45,7 +45,7 @@ export function turnQuestion(chatKey: string): TurnQuestion | undefined {
   return text === "" && !media ? undefined : { text, media };
 }
 
-/** Жетон уведомления и update_id живут в той же записи, что вопрос. */
+/** Жетон, снимок вопроса и update_id живут в одной записи. */
 export function claimInterruptedTap(
   chatKey: string,
   data: string,
@@ -74,7 +74,9 @@ export function claimInterruptedTap(
     ? null
     : {
         text:
-          typeof current.turnQuestion === "string" ? current.turnQuestion : "",
-        media: current.turnQuestionMedia === true,
+          typeof current.restartRetryQuestion === "string"
+            ? current.restartRetryQuestion
+            : "",
+        media: current.restartRetryMedia === true,
       };
 }

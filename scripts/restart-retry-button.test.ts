@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,9 +23,10 @@ async function interrupted(
   media = false,
   group = false,
   en = false,
+  thread = "",
 ) {
   const id = ++nextChat * (group ? -1 : 1);
-  const key = `${id}:`;
+  const key = `${id}:${thread}`;
   status.setChatStatus(key, {
     status: "running",
     sessionId: "interrupted",
@@ -142,8 +143,20 @@ void test("missing question, attachment and group use the existing break-notice 
   const media = await interrupted("файл", true);
   assert.match(media.notice, /Пришли сообщение с вложением ещё раз/u);
   assert.equal(media.data, undefined);
-  const group = await interrupted("ЛИЧНЫЙ ВОПРОС", false, true);
-  assert.ok(!group.notice.includes("ЛИЧНЫЙ ВОПРОС"));
+  for (const en of [false, true]) {
+    const group = await interrupted("ЛИЧНЫЙ ВОПРОС", false, true, en);
+    assert.ok(!group.notice.includes("ЛИЧНЫЙ ВОПРОС"));
+    assert.equal(group.data, undefined);
+    const topic = await interrupted(
+      "PRIVATE TOPIC QUESTION",
+      false,
+      false,
+      en,
+      "45",
+    );
+    assert.ok(!topic.notice.includes("PRIVATE TOPIC QUESTION"));
+    assert.equal(topic.data, undefined);
+  }
 });
 
 void test("Outbox sends the escaped quote and button on the Telegram wire, including a topic", async () => {
@@ -229,4 +242,123 @@ void test("group and untrusted taps keep the question out of the model", async (
   group.callback_query!.message!.chat = { id: -100, type: "supergroup" };
   assert.equal(await handleControl(group, io), true);
   assert.equal(group.message, undefined);
+});
+
+void test("restart notice has a shared 30s deadline and leaves the reaped turn idle", async (t) => {
+  const fx = await interrupted("network stall");
+  status.setChatStatus(fx.key, { status: "running", sessionId: "hung-send" });
+  const errors: unknown[][] = [];
+  const timeouts: number[] = [];
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    timeouts.push(ms);
+    return timeout(25);
+  });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    (_input: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted)
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new Error(String(signal.reason)),
+          );
+        else
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                signal.reason instanceof Error
+                  ? signal.reason
+                  : new Error(String(signal.reason)),
+              ),
+            {
+              once: true,
+            },
+          );
+      }),
+  );
+  const started = performance.now();
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      queue.reapStaleRuns({
+        listStatusesImpl: () => [
+          { chatKey: fx.key, status: status.getChatStatus(fx.key) },
+        ],
+        now: () => Date.now() + 100_000,
+        staleMs: 1,
+        resetImpl: async () => {},
+        deleteMessageImpl: async () => {},
+        logImpl: (...parts: unknown[]) => {
+          errors.push(parts);
+        },
+      }),
+      new Promise<string>((resolve) => {
+        guard = setTimeout(() => resolve("hung"), 500);
+      }),
+    ]);
+    assert.equal(result, 1);
+    assert.ok(performance.now() - started < 500);
+    assert.deepEqual(timeouts, [30_000]);
+    assert.equal(status.getChatStatus(fx.key)?.status, "idle");
+    assert.equal(errors.length, 1);
+    assert.match(
+      String(errors[0]),
+      /stale run notification failed.*(timeout|aborted)/iu,
+    );
+  } finally {
+    clearTimeout(guard);
+  }
+});
+
+void test("a tap keeps its snapshotted question after a literal old-version takeover and return", async () => {
+  const fx = await interrupted("original question");
+  const prev = status.getChatStatus(fx.key);
+  // chatTakeOverPatch from 16bd1b7d, with the old caller carrying ...prev.
+  status.setChatStatus(fx.key, {
+    status: "running",
+    ingressId: null,
+    ingressAt: null,
+    turnAt: null,
+    firstOutputAt: null,
+    sessionId: null,
+    turnId: null,
+    compacting: null,
+    draftId: null,
+    latencyLogged: null,
+    resetAt: null,
+    ...prev,
+  });
+  const { rememberTurnQuestion } =
+    await import("../agent/lib/turn-question.ts");
+  rememberTurnQuestion(fx.key, {
+    text: "new question after rollback",
+    media: true,
+  });
+  const update = tap(fx, 601);
+  assert.equal(await handleControl(update, io), false);
+  assert.ok(update.message?.text?.includes("original question"));
+  assert.ok(!update.message?.text?.includes("new question after rollback"));
+});
+
+void test("restart notification trace carries its own source", () => {
+  const traceDir = join(dir, "trace");
+  const events = readdirSync(traceDir).flatMap((file) =>
+    readFileSync(join(traceDir, file), "utf8")
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as { source: string; kind: string; name: string },
+      ),
+  );
+  const deliveries = events.filter(
+    (event) => event.kind === "outbox" && event.name === "delivered",
+  );
+  assert.ok(deliveries.length > 0);
+  assert.ok(deliveries.every((event) => event.source === "restart-notice"));
 });
