@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 🔧 **Повторить вопрос после перезапуска**: если Ива перезапустилась посреди ответа, сообщение об обрыве показывает вопрос и кнопку «Повторить». Нажатие отправляет вопрос снова; вложение нужно прислать ещё раз. After a restart during an answer, the interruption notice quotes your question and offers a Try again button. Tap it to send the question again; resend attachments yourself.
 - 🔧 **Кнопки приходят в напоминаниях**: ответы напоминаний и сигналов плагинов доставляют кнопки для выбора следующего действия. Обычный текст сохраняет прежнее оформление, при отказе Telegram ответ приходит в HTML. Reminder and plugin signal replies deliver action buttons, retaining HTML delivery for ordinary text and when Telegram rejects rich messages.
 - 🧠 **Модель помощника и фона**: Watch, Brief и Insight используют выбранную модель помощника и её окно контекста; выбор доступен в /menu. Watch, Brief and Insight use the helper model and its context window, selected in /menu.
 - 🔧 **Длинное описание навыка**: черновик плагина с описанием длиннее 120 знаков собирается с предупреждением; в индексе промпта описание обрезается до 120 знаков. Plugin drafts with long skill descriptions proceed with a warning and keep the 120-character prompt index cap.

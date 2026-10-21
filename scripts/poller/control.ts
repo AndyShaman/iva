@@ -23,8 +23,12 @@ import {
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { getChatStatus } from "#lib/run-status.ts";
 import { TELEGRAM_BUTTON_TAP_FIELD } from "#lib/telegram-parts.ts";
-import { isBreakNotice, isRetryTap } from "#lib/error-humanizer.ts";
-import { turnQuestion } from "#lib/turn-question.ts";
+import {
+  isBreakNotice,
+  isRetryTap,
+  isInterruptedTap,
+} from "#lib/error-humanizer.ts";
+import { claimInterruptedTap, turnQuestion } from "#lib/turn-question.ts";
 import { readEnvFresh } from "../lib/env-file.ts";
 import {
   formatUsageReport,
@@ -272,6 +276,7 @@ function isEveCallbackData(data: string): boolean {
 export function applyTelegramButtonTap(
   update: TelegramUpdate,
   callback: ControlCallbackQuery,
+  acceptedQuestion?: string,
 ): boolean {
   const message = callback.message;
   const chat = message?.chat;
@@ -284,7 +289,12 @@ export function applyTelegramButtonTap(
       message_id: message.message_id,
       chat: { ...chat },
       from: { ...from, is_bot: false },
-      text: tapTurnText(callback.data, message, chatKey(update)),
+      text: tapTurnText(
+        callback.data,
+        message,
+        chatKey(update),
+        acceptedQuestion,
+      ),
       ...(message.date === undefined ? {} : { date: message.date }),
       ...(message.message_thread_id === undefined
         ? {}
@@ -324,11 +334,13 @@ function tapTurnText(
   data: string,
   message: TelegramMessage | undefined,
   key: string | null,
+  acceptedQuestion?: string,
 ): string {
   const context = tapContextText(message);
+  if (isInterruptedTap(data)) data = data.split(":", 1)[0]!;
   if (context === "") return data;
   const label = tr("button under Iva's message", "кнопка под сообщением Ивы");
-  return `${data}\n\n(${label}: «${context}»)${fullQuestion(data, context, key)}`;
+  return `${data}\n\n(${label}: «${context}»)${fullQuestion(data, context, key, acceptedQuestion)}`;
 }
 
 /**
@@ -341,9 +353,10 @@ function fullQuestion(
   data: string,
   context: string,
   key: string | null,
+  acceptedQuestion?: string,
 ): string {
   if (key === null || !isRetryTap(data) || !isBreakNotice(context)) return "";
-  const question = turnQuestion(key)?.text ?? "";
+  const question = acceptedQuestion ?? turnQuestion(key)?.text ?? "";
   if (question === "") return "";
   const label = tr("the question in full", "вопрос целиком");
   return `\n\n(${label}: «${question}»)`;
@@ -919,6 +932,16 @@ async function handleButtonTap(context: CallbackContext) {
 // «Уже выбрано»; тот же апдейт после write-failed проходит как свежий (specs/ButtonTap.tla).
 // Дерево снимается до applyTelegramButtonTap: он удаляет callback_query из апдейта.
 async function handleOwnerTap({ update, callback, io }: CallbackContext) {
+  const restartTap = isInterruptedTap(callback.data);
+  const key = chatKey(update);
+  const accepted =
+    restartTap && key !== null
+      ? claimInterruptedTap(key, callback.data, update.update_id)
+      : null;
+  if (restartTap && accepted === null) {
+    await io.ackImpl(callback.id, alreadyChosenText()).catch(() => {});
+    return true;
+  }
   if (isRepeatTap(tapKey(callback), update.update_id)) {
     await io.ackImpl(callback.id, alreadyChosenText()).catch(() => {});
     return true;
@@ -926,7 +949,7 @@ async function handleOwnerTap({ update, callback, io }: CallbackContext) {
   const snapshot = tapTree(callback.message);
   // Неполный конверт (нет чата, отправителя или номера сообщения) сообщением
   // стать не может: гасим тап здесь, дальше ему делать нечего.
-  if (!applyTelegramButtonTap(update, callback)) {
+  if (!applyTelegramButtonTap(update, callback, accepted?.text)) {
     await io.ackImpl(callback.id).catch(() => {});
     return true;
   }

@@ -6,6 +6,7 @@ import {
   humanizeProviderError,
   isBreakNotice,
   isRetryTap,
+  isInterruptedTap,
 } from "./error-humanizer.ts";
 
 const REAL_LIMIT_ERROR =
@@ -490,4 +491,22 @@ test("a provider named like an Object method is told as «провайдер», 
       },
     );
   }
+});
+
+test("interrupted-button data accepts only the localized label and bounded token (seed 211021)", () => {
+  fc.assert(
+    fc.property(
+      fc.uuid(),
+      fc.constantFrom("Try again", "Повторить"),
+      (token, label) => {
+        const data = `${label}:${token}`;
+        assert.equal(isInterruptedTap(data), true);
+        assert.equal(isRetryTap(data), true);
+        assert.ok(Buffer.byteLength(data) <= 64);
+        assert.equal(isInterruptedTap(`${data}x`), false);
+        assert.equal(isInterruptedTap(`other:${token}`), false);
+      },
+    ),
+    { seed: 211021, numRuns: 100 },
+  );
 });

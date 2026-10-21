@@ -141,22 +141,29 @@ function repeated(count: number): ProviderErrorText {
 /** Подпись и data кнопки «Повторить» под сообщением об обрыве посреди ответа. */
 export const RETRY_LABEL = { en: "Try again", ru: "Повторить" } as const;
 
+/** Жетон предложения после перезапуска помещается в 64 байта callback_data. */
+export function isInterruptedTap(data: string): boolean {
+  return /^(?:Try again|Повторить):[\da-f-]{36}$/u.test(data);
+}
+
 /** Текст хода по нажатию «Повторить»: первой строкой идёт data кнопки (мост). */
 export function isRetryTap(text: string): boolean {
   const head = text.split("\n", 1)[0]?.trim() ?? "";
-  return head === RETRY_LABEL.en || head === RETRY_LABEL.ru;
+  return (
+    head === RETRY_LABEL.en || head === RETRY_LABEL.ru || isInterruptedTap(head)
+  );
 }
 
 /** Сообщение об обрыве посреди ответа на любом языке: по нему мост узнаёт свою кнопку. */
 export function isBreakNotice(text: string): boolean {
-  return /оборвалась на середине ответа|broke off in the middle of the answer/u.test(
+  return /оборвалась на середине ответа|broke off in the middle of the answer|Предыдущий ход оборвался|previous turn was interrupted/u.test(
     text,
   );
 }
 
 /** Кнопка под сообщением: нажатие приходит ходу текстом data и текстом сообщения. */
-function retryButton(label: string): string {
-  return `<tg-button-row><tg-button type="callback_data" data="${label}">${label}</tg-button></tg-button-row>`;
+function retryButton(label: string, data = label): string {
+  return `<tg-button-row><tg-button type="callback_data" data="${data}">${label}</tg-button></tg-button-row>`;
 }
 
 const LIMIT = /usage\s+limit\s+reached|rate[ _-]?limit|\b429\b/iu;
@@ -227,7 +234,7 @@ function answerTarget({
   question,
   media,
   group,
-}: Situation): ProviderErrorText {
+}: Pick<Situation, "question" | "media" | "group">): ProviderErrorText {
   const quote = group ? "" : quoteOf(question);
   if (quote !== "") return { en: ` to «${quote}»`, ru: ` на «${quote}»` };
   return media
@@ -239,15 +246,14 @@ function answerTarget({
 }
 
 // Вложение кнопка не вернёт: модель получила бы текст без файла. Тогда — «пришли ещё раз».
-function midAnswerAsk({
-  media,
-  question,
-  group,
-}: Situation): ProviderErrorText {
+function midAnswerAsk(
+  { media, question, group }: Pick<Situation, "question" | "media" | "group">,
+  data?: string,
+): ProviderErrorText {
   if (!media)
     return {
-      en: ` ${RETRY_LABEL.en}?\n\n${retryButton(RETRY_LABEL.en)}`,
-      ru: ` ${RETRY_LABEL.ru}?\n\n${retryButton(RETRY_LABEL.ru)}`,
+      en: ` ${RETRY_LABEL.en}?\n\n${retryButton(RETRY_LABEL.en, data)}`,
+      ru: ` ${RETRY_LABEL.ru}?\n\n${retryButton(RETRY_LABEL.ru, data)}`,
     };
   return question !== "" && !group
     ? {
@@ -264,6 +270,24 @@ function midAnswerText(situation: Situation): ProviderErrorText {
   return {
     en: `The connection to ${situation.name.en} broke off in the middle of the answer${to.en}.${again.en}${ask.en}`,
     ru: `Связь с ${situation.name.ins} оборвалась на середине ответа${to.ru}${again.ru}.${ask.ru}`,
+  };
+}
+
+/** Перезапуск: тот же вопрос, кнопка и просьба о вложении, что при обрыве связи. */
+export function interruptedTurnText(input: {
+  question?: string;
+  media: boolean;
+  group: boolean;
+  data: string;
+}): ProviderErrorText {
+  const situation = { ...input, question: input.question ?? "" };
+  const to = answerTarget(situation);
+  const ask = input.group
+    ? { en: " Send it again.", ru: " Пришли его ещё раз." }
+    : midAnswerAsk(situation, input.data);
+  return {
+    en: `The previous turn was interrupted${to.en}.${ask.en}`,
+    ru: `Предыдущий ход оборвался${to.ru}.${ask.ru}`,
   };
 }
 
