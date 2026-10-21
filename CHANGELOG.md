@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Кнопки приходят в напоминаниях**: ответы напоминаний и сигналов плагинов доставляют кнопки для выбора следующего действия. Обычный текст сохраняет прежнее оформление, при отказе Telegram ответ приходит в HTML. Reminder and plugin signal replies deliver action buttons, retaining HTML delivery for ordinary text and when Telegram rejects rich messages.
+
 - 🔧 **Ссылки Spark открывают письмо из чата**: Ива сохраняет ссылки Spark на письма и черновики при отправке. Проверка секретов установки и форматов API-ключей действует и внутри этих ссылок. Spark message and draft links stay intact in replies, while installation secrets and API key shapes inside them are still redacted.
 - 🔧 **Схемы инструментов подключений**: схема без типа больше не обрывает ход на Claude, Ива дополняет её перед отправкой провайдеру. Connection tools with a missing schema type now reach providers with an object input schema.
 - 🔧 **Долгие команды в напоминаниях**: ожидание инструмента учитывает срок команды с запасом, поэтому команда дольше трёх минут возвращает итог. Reminder turns wait for pending tool deadlines before treating silence as a failure.

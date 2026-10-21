@@ -334,6 +334,7 @@ async function deliver(
 ): Promise<Sent> {
   const result = await deps.send(target.token, target.chat, text, {
     retryTransient: true,
+    rich: true,
     threadId: target.threadId ?? undefined,
     trace: { source: "reminder" },
   });
