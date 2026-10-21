@@ -165,7 +165,7 @@ async function cancelTurnAndConfirm(
     setChatStatusIf(
       chatKey,
       { sessionId, turnId: status?.turnId },
-      { stopPressed: true },
+      { wasCancelled: true },
       { touch: false },
     );
   const outcome = await sendTurnCancel({
@@ -174,6 +174,13 @@ async function cancelTurnAndConfirm(
     sessionId,
     turnId: status?.turnId,
   });
+  if (outcome === "idle")
+    setChatStatusIf(
+      chatKey,
+      { sessionId, turnId: status?.turnId },
+      { wasCancelled: null },
+      { touch: false },
+    );
   return traceStopOutcome(chatKey, status, outcome);
 }
 

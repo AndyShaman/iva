@@ -673,9 +673,8 @@ const telegram = telegramChannel({
         },
         receivedDuringTurn,
         consumeCancelledMark: () => {
-          const status = getChatStatus(chatKey);
-          if (!status?.stopPressed && !status?.wasCancelled) return false;
-          setChatStatus(chatKey, { stopPressed: null, wasCancelled: null });
+          if (!getChatStatus(chatKey)?.wasCancelled) return false;
+          setChatStatus(chatKey, { wasCancelled: null });
           return true;
         },
       }),

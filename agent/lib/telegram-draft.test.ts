@@ -91,6 +91,7 @@ await test("отмена освобождает статус без пометк
     true,
   );
   assert.equal(runStatus.getChatStatus(key)?.wasCancelled, undefined);
+  assert.equal(runStatus.getChatStatus(key)?.stopPressed, undefined);
 });
 
 await test("освобождение записи после сбоя хода обходится без Bot API", async () => {

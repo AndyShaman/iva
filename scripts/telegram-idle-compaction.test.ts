@@ -683,11 +683,13 @@ test("отмена пересказа (turn.cancelled, как после /stop):
   await s.cancelled();
   assert.equal(statusOf(51)?.status, "idle");
   assert.equal(statusOf(51)?.wasCancelled, undefined);
+  assert.equal(statusOf(51)?.stopPressed, undefined);
   // Без нажатия Стоп отмена настоящего хода тоже не ставит отметку.
   const real = session("s-stop-turn", 52);
   await real.started();
   await real.cancelled();
   assert.equal(statusOf(52)?.wasCancelled, undefined);
+  assert.equal(statusOf(52)?.stopPressed, undefined);
 });
 
 test("законченный пересказ, который не помог, больше не повторяется", async () => {
@@ -739,8 +741,7 @@ for (const language of ["ru", "en"] as const) {
         sessionId: `s-note-${index}`,
         turnId: "old",
         compacting: state === "compacting" ? true : null,
-        wasCancelled: state === "legacy" ? true : null,
-        stopPressed: state === "pressed" ? true : null,
+        wasCancelled: state === "legacy" || state === "pressed" ? true : null,
       });
       incomingContexts.length = 0;
       assert.equal(await incoming(chatId, `s-note-${index}`), 1);
@@ -778,14 +779,14 @@ test("explicit native Stop is kept through terminal cancellation and consumed on
     ),
     "requested",
   );
-  assert.equal(statusOf(9)?.stopPressed, true);
+  assert.equal(statusOf(9)?.wasCancelled, true);
   assert.equal(statusOf(9)?.updatedAt, before?.updatedAt);
   await s.cancelled();
-  assert.equal(statusOf(9)?.wasCancelled, undefined);
+  assert.equal(statusOf(9)?.wasCancelled, true);
   incomingContexts.length = 0;
   await incoming(9, "s-explicit-stop");
   assert.match(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
-  assert.equal(statusOf(9)?.stopPressed, undefined);
+  assert.equal(statusOf(9)?.wasCancelled, undefined);
   incomingContexts.length = 0;
   await incoming(9, "s-explicit-stop");
   assert.doesNotMatch(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
@@ -796,11 +797,22 @@ test("a repeated older accepted update neither dispatches nor consumes a fresh S
   runStatus.setChatStatus(`${chatId}:`, { status: "idle" });
   assert.equal(await incoming(chatId, "s-repeat-note", 90001, true), 1);
   assert.equal(await incoming(chatId, "s-repeat-note", 90002, true), 1);
-  runStatus.setChatStatus(`${chatId}:`, { stopPressed: true });
+  runStatus.setChatStatus(`${chatId}:`, { wasCancelled: true });
   assert.equal(await incoming(chatId, "s-repeat-note", 90001, true), 0);
-  assert.equal(statusOf(chatId)?.stopPressed, true);
+  assert.equal(statusOf(chatId)?.wasCancelled, true);
   incomingContexts.length = 0;
   assert.equal(await incoming(chatId, "s-repeat-note", 90003, true), 1);
   assert.match(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
-  assert.equal(statusOf(chatId)?.stopPressed, undefined);
+  assert.equal(statusOf(chatId)?.wasCancelled, undefined);
+});
+
+test("a reminder turn after Stop clears the fact before the next owner message", async () => {
+  const chatId = 911;
+  const reminder = session("s-reminder-after-stop", chatId);
+  runStatus.setChatStatus(`${chatId}:`, { status: "idle", wasCancelled: true });
+  await reminder.turn([100]);
+  assert.equal(statusOf(chatId)?.wasCancelled, undefined);
+  incomingContexts.length = 0;
+  await incoming(chatId, "s-owner-after-reminder");
+  assert.doesNotMatch(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
 });

@@ -69,7 +69,7 @@
 \*                parking
 \*   CancelH      turn.cancelled: finish completed if the record is compacting, else cancelled;
 \*                neither outcome writes a Stop mark, finally dropIdleCompactionTurn.
-\*                Explicit Stop writes stopPressed before the cancel POST (telegram-stop.ts),
+\*                Explicit Stop writes wasCancelled before the cancel POST (telegram-stop.ts),
 \*                except during compaction. A steer arrival snapshots the running non-compacting
 \*                record before Land claims it; its neutral note asserts only that observation,
 \*                even when the turn ends before the message is delivered. Routing is unchanged.
@@ -110,6 +110,7 @@
 \* a missing ASSISTANT_BEARER (no claim, no ask: the same as due = FALSE).
 \*
 \* Code switches (TRUE = the code; each witness sets one to FALSE):
+\*   CancelKeepsStop   turn.cancelled preserves the explicit Stop fact
 \*   AwaitPost         session.waiting awaits the compact POST (R1)
 \*   ReleaseOnlyCompacting  a refusal frees only {sessionId, compacting: true} (R2)
 \*   ClaimChat         the chat is claimed before the request
@@ -137,7 +138,7 @@ EXTENDS Naturals
 CONSTANTS
   Policy, MaxMsgs, MaxSteps, MaxRestarts, MaxStops,
   Bypass, LatePost, LongCompaction,
-  AwaitPost, ReleaseOnlyCompacting, ClaimChat, OpenGuard, SilentReap, TurnClears, DueOnce,
+  CancelKeepsStop, AwaitPost, ReleaseOnlyCompacting, ClaimChat, OpenGuard, SilentReap, TurnClears, DueOnce,
   DueChecksOff, ParkRelease, Reaper, QueueReplies, DropOnFail, DropEndsAsk, Reclaim, BeginClaim, BeginAnyIdle
 
 ASSUME Policy \in {"queue", "steer"}
@@ -480,7 +481,7 @@ CancelH ==
   /\ ev' = "postComp"
   /\ Finish(FALSE)
   \* Cancellation itself never writes a Stop mark, including a steer abort of compaction.
-  /\ UNCHANGED badCancelMark
+  /\ badCancelMark' = (badCancelMark \/ ~CancelKeepsStop)
   /\ IF has THEN Drop ELSE UNCHANGED <<open, due, asked, compacted>>
   /\ UNCHANGED <<buf, started, after, steps, ctx, ctrl, hung, stops>>
   /\ UNCHANGED <<has, first, last, off, reclaim>>

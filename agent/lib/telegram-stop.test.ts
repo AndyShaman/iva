@@ -251,3 +251,36 @@ void test("malformed native stop cannot use an absent draft id to cancel a runni
     );
   assert.equal(f.calls.length, 0);
 });
+
+void test("no_active_turn clears the Stop fact only for the requested session and turn", async () => {
+  const { getChatStatus, setChatStatus } = await import("./run-status.ts");
+  for (const replacement of [
+    null,
+    { sessionId: "s", turnId: "next" },
+    { sessionId: "new", turnId: "t" },
+  ]) {
+    setChatStatus("7:", {
+      status: "running",
+      sessionId: "s",
+      turnId: "t",
+      wasCancelled: null,
+    });
+    assert.equal(
+      await requestTurnCancel("7:", {
+        url: "http://localhost/cancel",
+        secret: "secret",
+        cancelImpl: async () => {
+          assert.equal(getChatStatus("7:")?.wasCancelled, true);
+          if (replacement)
+            setChatStatus("7:", { ...replacement, wasCancelled: true });
+          return { status: "no_active_turn" };
+        },
+      }),
+      "idle",
+    );
+    assert.equal(
+      getChatStatus("7:")?.wasCancelled,
+      replacement ? true : undefined,
+    );
+  }
+});
