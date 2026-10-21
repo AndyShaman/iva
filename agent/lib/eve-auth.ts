@@ -57,6 +57,24 @@ export function isHelperTurn(
   );
 }
 
+const HELPER_MODEL_TURNS = new Set<unknown>([
+  "helper",
+  "watch",
+  "brief",
+  "insight",
+]);
+
+/** Model selection is shared with isolated background turns; helper rights stay separate. */
+export function usesHelperModel(
+  ctx: Parameters<typeof isHelperTurn>[0],
+): boolean {
+  return [ctx?.session?.auth?.initiator, ctx?.session?.auth?.current].some(
+    (auth) =>
+      auth?.authenticator === "iva-bearer" &&
+      HELPER_MODEL_TURNS.has(auth.attributes?.iva_turn),
+  );
+}
+
 /** Service attributes are accepted only after bearer authentication. */
 function serviceAuth(
   request: Request,

@@ -224,7 +224,11 @@ test("R8 helper model: full /model path, back button, saved clears helper flag",
   try {
     const { chat, user } = seed("intro");
     await handleModelCmd(chat, user, { msgId: 11 });
-    assert.match(edits().at(-1)!.text, /Helper model/);
+    assert.match(edits().at(-1)!.text, /Helper and background model/);
+    assert.match(
+      edits().at(-1)!.text,
+      /Used by helpers, Watch, Brief and Insight/,
+    );
     assert.match(edits().at(-1)!.keyboard, /iva_model:helper/);
     assert.equal(await tap(chat, user, "iva_model:helper"), true);
     const st = getWizard(chat, user) as unknown as {

@@ -439,7 +439,11 @@ async function handleModelCmd(
       "| --- | --- | --- |",
       `| ${escapeRichText(providerLabel)} | ${escapeRichText(model)} | ${escapeRichText(effortLabel(effort))} |`,
     ].join("\n"),
-    `${button(tr("Helper model", "Модель помощника"), "iva_model:helper")}: ${escapeRichText(helperModel)}`,
+    `${button(tr("Helper and background model", "Модель помощника и фона"), "iva_model:helper")}: ${escapeRichText(helperModel)}`,
+    tr(
+      "Used by helpers, Watch, Brief and Insight.",
+      "Для помощников, Watch, Brief и Insight.",
+    ),
     `${button(tr("Change", "Сменить"), "iva_model:chg")} — ${tr(
       "pick another provider or model.",
       "выбрать другого провайдера или модель.",
