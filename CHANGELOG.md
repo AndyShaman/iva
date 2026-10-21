@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 🧠 **Модель помощника и фона**: Watch, Brief и Insight используют выбранную модель помощника и её окно контекста; выбор доступен в /menu. Watch, Brief and Insight use the helper model and its context window, selected in /menu.
 - 🔧 **Длинное описание навыка**: черновик плагина с описанием длиннее 120 знаков собирается с предупреждением; в индексе промпта описание обрезается до 120 знаков. Plugin drafts with long skill descriptions proceed with a warning and keep the 120-character prompt index cap.
 
 - 🔧 **Ссылки Spark открывают письмо из чата**: Ива сохраняет ссылки Spark на письма и черновики при отправке. Проверка секретов установки и форматов API-ключей действует и внутри этих ссылок. Spark message and draft links stay intact in replies, while installation secrets and API key shapes inside them are still redacted.

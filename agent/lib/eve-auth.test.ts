@@ -8,6 +8,7 @@ import {
   assistantBearerAuth,
   createEveAuth,
   isHelperTurn,
+  usesHelperModel,
   TURN_KINDS,
 } from "./eve-auth.ts";
 
@@ -36,6 +37,7 @@ test("helper detection tolerates missing context, session, auth and attributes",
     },
   ]) {
     assert.equal(isHelperTurn(ctx), false);
+    assert.equal(usesHelperModel(ctx), false);
   }
 });
 
@@ -226,4 +228,36 @@ test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`
   await assert.rejects(async () =>
     assistantBearerAuth(TOKEN)(turnRequest(TOKEN, "helper")),
   );
+});
+
+test("background model choice preserves helper-only rights and requires an exact kind", () => {
+  for (const kind of [
+    "helper",
+    "watch",
+    "brief",
+    "insight",
+    "reminder",
+    "signal",
+    "alert",
+    null,
+    ["watch"],
+    { toString: () => "watch" },
+  ]) {
+    const ctx = {
+      session: {
+        auth: {
+          current: {
+            authenticator: "iva-bearer",
+            attributes: { iva_turn: kind },
+          },
+        },
+      },
+    };
+    assert.equal(isHelperTurn(ctx), kind === "helper");
+    assert.equal(
+      usesHelperModel(ctx),
+      typeof kind === "string" &&
+        ["helper", "watch", "brief", "insight"].includes(kind),
+    );
+  }
 });

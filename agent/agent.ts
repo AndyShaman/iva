@@ -1,6 +1,6 @@
 import { resolveContextWindow } from "./lib/context-window.ts";
 import { claudeContextWindow } from "./lib/claude-cli.ts";
-import { isHelperTurn } from "./lib/eve-auth.ts";
+import { usesHelperModel } from "./lib/eve-auth.ts";
 import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
 import { defineAgent, defineDynamic } from "eve";
 // Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts
@@ -18,16 +18,16 @@ import { compactionThresholdPercent } from "./lib/compaction.js";
 import { chatModelSeesImages } from "./vision.js";
 
 export function stepModelChoice(
-  ctx: Parameters<typeof isHelperTurn>[0] & { session: { id: string } },
+  ctx: Parameters<typeof usesHelperModel>[0] & { session: { id: string } },
 ) {
-  const helper = isHelperTurn(ctx);
-  const model = helper
+  const helperModel = usesHelperModel(ctx);
+  const model = helperModel
     ? process.env.HELPER_MODEL === undefined
       ? MODEL_PROVIDERS[providerName].defaultHelperModel || cfg.textModel
       : process.env.HELPER_MODEL.trim() || cfg.textModel
     : cfg.textModel;
   const contextWindow =
-    helper && providerName === "claude"
+    helperModel && providerName === "claude"
       ? resolveContextWindow(
           "CLAUDE_CONTEXT_WINDOW",
           process.env.CLAUDE_CONTEXT_WINDOW,
