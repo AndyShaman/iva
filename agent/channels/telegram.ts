@@ -81,9 +81,17 @@ import {
   dropIdleCompactionTurn,
   endIdleCompaction,
   openIdleCompactionTurn,
+  parkIdleCompactionTurn,
   startIdleCompaction,
   idleCompactionDue,
+  takeManualCompactionReport,
 } from "../lib/idle-compaction.js";
+import {
+  handleTelegramCompactRequest,
+  TELEGRAM_COMPACT_ROUTE,
+  compactThousands,
+} from "../lib/telegram-compact-route.ts";
+import { tr } from "../lib/i18n.ts";
 import { providerConfig } from "../provider.js";
 import {
   handleAcceptedTelegramWebhook,
@@ -274,6 +282,43 @@ function keepTurnAlive(
   });
 }
 
+async function notifyManualCompaction(
+  telegram: Pick<TelegramHandle, "sendMessage">,
+  manual: ReturnType<typeof endIdleCompaction>,
+) {
+  if (!manual) return;
+  await noticeSender((text) => telegram.sendMessage(text))(
+    manual.completed
+      ? tr(
+          `Compressed the conversation: it was ≈${compactThousands(manual.before)}k tokens. I'll measure the new size with the next answer.`,
+          `Сжала разговор: было ≈${compactThousands(manual.before)} тыс. Новый размер измерю со следующим ответом.`,
+        )
+      : tr(
+          "Compression was interrupted. Try /compact again.",
+          "Сжатие прервалось. Повтори /compact.",
+        ),
+  );
+}
+
+function compactTelegramSession(
+  chatKey: string,
+  sessionId: string,
+  manual = false,
+) {
+  const bearer = process.env.ASSISTANT_BEARER?.trim();
+  return startIdleCompaction({
+    sessionId,
+    manual,
+    claimImpl: () => claimChatForCompaction(chatKey, sessionId, bearer),
+    requestImpl: (id) =>
+      requestSessionCompact({
+        url: localSessionCompactUrl(id),
+        bearer: bearer ?? "",
+      }),
+    releaseImpl: () => releaseCompactionClaim(chatKey, sessionId),
+  });
+}
+
 let bearerMissingLogged = false;
 
 // Занять свободный чат под пересказ между ходами — тем же захватом, что ход и напоминание.
@@ -411,6 +456,7 @@ const telegram = telegramChannel({
       try {
         await flushSettledTelegramQuestions(channel.state, channel.telegram);
       } finally {
+        const report = takeManualCompactionReport(ctx.session.id);
         closeIdleCompactionTurn(ctx.session.id, providerConfig.contextWindow);
         await finishTelegramStatus(
           channel,
@@ -422,6 +468,13 @@ const telegram = telegramChannel({
             idleCompactionDue(ctx.session.id),
           ),
         );
+        if (report)
+          await noticeSender((text) => channel.telegram.sendMessage(text))(
+            tr(
+              `Compressed the conversation: ≈${compactThousands(report.before)}k → ≈${compactThousands(report.after)}k tokens.`,
+              `Сжала разговор: было ≈${compactThousands(report.before)} тыс. → стало ≈${compactThousands(report.after)} тыс.`,
+            ),
+          );
       }
     },
     async "turn.cancelled"(_data, channel, ctx) {
@@ -449,6 +502,7 @@ const telegram = telegramChannel({
         channel.telegram.messageThreadId,
       );
       const bearer = process.env.ASSISTANT_BEARER?.trim();
+      let manual: ReturnType<typeof endIdleCompaction> = null;
       try {
         const parked = getChatStatus(chatKey);
         // Парковка застала запись пересказа этой сессии: он кончился.
@@ -456,8 +510,9 @@ const telegram = telegramChannel({
           parked?.sessionId === sessionId &&
           parked.compacting === true &&
           !idleCompactionDue(sessionId)
-        )
-          endIdleCompaction(sessionId);
+        ) {
+          manual = endIdleCompaction(sessionId);
+        }
         await finishTelegramStatus(
           channel,
           sessionId,
@@ -469,19 +524,12 @@ const telegram = telegramChannel({
             idleCompactionDue(sessionId),
           ),
         );
+        await notifyManualCompaction(channel.telegram, manual);
       } finally {
         // Ждём ответа eve: она ждёт этот обработчик, поэтому просьба встаёт в её очередь
         // раньше, чем она возьмёт следующее сообщение, и пересказ идёт под записью.
-        await startIdleCompaction({
-          sessionId,
-          claimImpl: () => claimChatForCompaction(chatKey, sessionId, bearer),
-          requestImpl: (id) =>
-            requestSessionCompact({
-              url: localSessionCompactUrl(id),
-              bearer: bearer ?? "",
-            }),
-          releaseImpl: () => releaseCompactionClaim(chatKey, sessionId),
-        });
+        parkIdleCompactionTurn(sessionId);
+        await compactTelegramSession(chatKey, sessionId);
       }
       await flushSettledTelegramQuestions(channel.state, channel.telegram);
     },
@@ -716,6 +764,14 @@ export default {
         telegramWebhookRoute.handler,
         request,
         args,
+      ),
+    ),
+    POST(TELEGRAM_COMPACT_ROUTE, (req, args) =>
+      handleTelegramCompactRequest(
+        req,
+        args,
+        (key, id) => compactTelegramSession(key, id, true),
+        process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN,
       ),
     ),
     POST("/eve/v1/telegram/reset", (req, args) =>

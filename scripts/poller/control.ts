@@ -1,3 +1,5 @@
+import { TELEGRAM_COMPACT_ROUTE } from "#lib/telegram-compact-route.ts";
+import { localChannelUrl } from "#lib/telegram-cancel-route.ts";
 import { botCommands, helpText, startText, tr } from "#lib/i18n.ts";
 import {
   resetTargetForControl,
@@ -228,6 +230,7 @@ export const OUT_OF_BAND_COMMANDS = [
   "/usage",
   "/restart",
   "/new",
+  "/compact",
   "/update",
   "/model",
   "/think",
@@ -1233,6 +1236,7 @@ const COMMAND_HANDLERS: Record<OutOfBandCommand, CommandHandler> = {
   "/usage": reportUsage,
   "/restart": resetConversation,
   "/new": resetConversation,
+  "/compact": compactConversation,
   // /update — check upstream; if newer, offer inline Update/Skip buttons. Out-of-band.
   "/update": ({ chatId, text }) =>
     handleUpdateCheck(chatId, { force: text.split(/\s+/).includes("--force") }),
@@ -1334,6 +1338,52 @@ function usageReportText(text: string): string {
     return formatUsageReport(agg);
   } catch (e: unknown) {
     return "Couldn't read the usage log: " + errorMessage(e);
+  }
+}
+
+// Та же адресация, что /new, включая ответ на сообщение бота в группе.
+async function compactConversation(command: ControlCommand) {
+  const key = chatKey(command.update);
+  const target = resetTargetFor(command.update, key);
+  if (!key || !target)
+    return replyConfirmed(
+      command.io,
+      command.chatId,
+      tr(
+        "Reply to my message to select a conversation, then use /compact.",
+        "Ответь на моё сообщение командой /compact, чтобы выбрать разговор.",
+      ),
+    );
+  try {
+    const response = await fetch(localChannelUrl(TELEGRAM_COMPACT_ROUTE), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": SECRET ?? "",
+      },
+      body: JSON.stringify({ chatKey: key, target }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const result: unknown = await response.json();
+    if (
+      !response.ok ||
+      typeof result !== "object" ||
+      result === null ||
+      !("text" in result) ||
+      typeof result.text !== "string"
+    )
+      throw new Error("compact response missing text");
+    return replyConfirmed(command.io, command.chatId, result.text);
+  } catch (error) {
+    log("compact command failed:", errorMessage(error));
+    return replyConfirmed(
+      command.io,
+      command.chatId,
+      tr(
+        "Compression couldn't be confirmed. Try /compact after the chat is free.",
+        "Подтверждение сжатия пока отсутствует. Повтори /compact, когда чат освободится.",
+      ),
+    );
   }
 }
 

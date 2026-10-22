@@ -145,6 +145,7 @@ ASSUME Policy \in {"queue", "steer"}
 
 Level == {"none", "low", "high"}
 
+VARIABLES manualCount, manualUnsafe
 VARIABLES
   \* person and bridge: normal and reply-to-bot messages waiting for routing
   sent, pend, pendR, bq, wire, dw,
@@ -173,9 +174,11 @@ lossV == <<restarts, lostTold, lostSilent>>
 ghostV == <<asksSince, badStack, badStackRec, badAskOff, idleDone, turnClean, badOff,
             falseNotice, leak, inboxLeak, hangSeen, hangTurn, badCancelMark, expired, leakWin,
             hangWin>>
-vars == <<bridgeV, eveV, postV, recV, memV, lossV, ghostV>>
+systemVars == <<bridgeV, eveV, postV, recV, memV, lossV, ghostV>>
+vars == <<systemVars, manualCount, manualUnsafe>>
 
 Init ==
+  /\ manualCount = 0 /\ manualUnsafe = FALSE
   /\ sent = 0 /\ pend = 0 /\ pendR = 0 /\ bq = 0 /\ wire = 0 /\ dw = 0
   /\ buf = 0 /\ started = 0 /\ ev = "parked" /\ after = "parked" /\ steps = 0 /\ ctx = "low"
   /\ ctrl = 0 /\ hung = FALSE /\ stops = 0
@@ -400,6 +403,31 @@ WaitRelease ==
   /\ UNCHANGED <<has, open, first, last, due, asked, compacted, off>>
   /\ UNCHANGED <<bridgeV, postV, lossV, ghostV>>
 
+\* /compact is a separate bridge action: it claims the same record and POST,
+\* while eve keeps its current state and can independently emit session.waiting.
+ManualOpenGuard == TRUE
+ManualUnguarded == FALSE
+ManualParked == ev = "parked"
+ManualPostTurn == ev \in {"parked", "postTurn"}
+ManualRequest ==
+  /\ manualCount = 0 /\ manualCount' = 1
+  /\ has /\ last # "none" /\ ~off /\ ~asked /\ ~reclaim
+  /\ ~resetAt /\ post = 0 /\ ~CompPending /\ ~hung
+  /\ IF ManualOpenGuard THEN ManualParked /\ ~open /\ ~Running
+                         ELSE ev \in {"parked", "turn"}
+  /\ manualUnsafe' = open
+  /\ rs' = "running" /\ rk' = "none" /\ rsid' = "cur"
+  /\ cflag' = TRUE /\ fresh' = TRUE /\ resetAt' = FALSE /\ marked' = FALSE
+  /\ due' = FALSE /\ asked' = TRUE /\ reclaim' = TRUE /\ post' = 1
+  /\ asksSince' = 1 /\ idleDone' = FALSE /\ expired' = FALSE
+  \* Each explicit manual request starts its own single-POST cycle.
+  /\ UNCHANGED <<eveV, bridgeV, late, lossV>>
+  /\ UNCHANGED <<badStack, badStackRec, badAskOff, turnClean, badOff, falseNotice,
+                 leak, inboxLeak, hangSeen, hangTurn, badCancelMark, leakWin, hangWin>>
+  /\ UNCHANGED <<has, open, first, last, compacted, off>>
+
+ManualOutsideTurn == ~manualUnsafe
+
 WaitClaim ==
   /\ ev = "waitClaim" /\ ~hung
   /\ LET canClaim == ~resetAt /\ ~Running
@@ -558,21 +586,25 @@ Restart ==
   /\ UNCHANGED <<asksSince, badStack, badStackRec, badAskOff, idleDone, turnClean, badOff,
                  falseNotice, leak, inboxLeak, badCancelMark, expired, leakWin>>
 
-Next ==
+SystemNext ==
   \/ Send \/ Route \/ Drain \/ Arrive
   \/ EveStartComp \/ BeginHook \/ EveStartTurn \/ Step \/ InTurnComp \/ TurnEnd \/ TurnFail \/ PostTurnSkip
   \/ WaitRelease \/ WaitClaim \/ PostAnswer \/ LateLand
   \/ CompDone \/ CompFail \/ StopComp \/ CancelH
   \/ Forget \/ Expire \/ Reap \/ Restart
 
+Next == (SystemNext /\ UNCHANGED <<manualCount, manualUnsafe>>) \/ ManualRequest
+
+\* manualCount only bounds user requests; fairness keeps the original system tuple.
 \* Fair eve, bridge and code; people, failures, /stop and restarts are not forced.
 Spec == Init /\ [][Next]_vars
-        /\ WF_vars(Route) /\ WF_vars(Drain) /\ WF_vars(Arrive)
-        /\ WF_vars(EveStartComp) /\ WF_vars(BeginHook) /\ WF_vars(EveStartTurn) /\ WF_vars(Step \/ TurnEnd)
-        /\ WF_vars(WaitRelease) /\ WF_vars(WaitClaim) /\ WF_vars(PostAnswer) /\ WF_vars(LateLand)
-        /\ WF_vars(CompDone \/ CompFail) /\ WF_vars(CancelH) /\ WF_vars(Expire) /\ WF_vars(Reap)
+        /\ WF_systemVars(Route) /\ WF_systemVars(Drain) /\ WF_systemVars(Arrive)
+        /\ WF_systemVars(EveStartComp) /\ WF_systemVars(BeginHook) /\ WF_systemVars(EveStartTurn) /\ WF_systemVars(Step \/ TurnEnd)
+        /\ WF_systemVars(WaitRelease) /\ WF_systemVars(WaitClaim) /\ WF_systemVars(PostAnswer) /\ WF_systemVars(LateLand)
+        /\ WF_systemVars(CompDone \/ CompFail) /\ WF_systemVars(CancelH) /\ WF_systemVars(Expire) /\ WF_systemVars(Reap)
 
 TypeOK ==
+  /\ manualCount \in 0..1 /\ manualUnsafe \in BOOLEAN
   /\ sent \in 0..MaxMsgs /\ pend \in 0..MaxMsgs /\ pendR \in 0..MaxMsgs /\ bq \in 0..MaxMsgs
   /\ wire \in 0..MaxMsgs /\ dw \in 0..MaxMsgs /\ buf \in 0..MaxMsgs /\ started \in 0..MaxMsgs
   /\ ev \in {"parked", "turn", "compReq", "compact", "postTurn", "postComp", "postAbort", "waitClaim",

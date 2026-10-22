@@ -6,6 +6,7 @@
 // статус чата — настоящий файл, маршрутизация моста настоящая.
 import "./lib/ts-esm-hooks.ts";
 import assert from "node:assert/strict";
+import fc from "fast-check";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,8 @@ type ApiCall = { method: string; body: Record<string, unknown> | undefined };
 const apiCalls: ApiCall[] = [];
 const compactCalls: { sessionId: string; auth: string | null }[] = [];
 // Что отвечает eve на просьбу: приняла, сессии нет, отказала, либо ответа нет вовсе.
+let manualSessionId: string | null = null;
+const manualRequests: { body: unknown; auth: string | null }[] = [];
 let compactStatus:
   "accepted" | "no_active_session" | "refused" | "broken" | "silent" =
   "accepted";
@@ -45,6 +48,23 @@ const COMPACT_URL =
 globalThis.fetch = async (url, init = {}) => {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the double reads whatever the caller passes.
   const href = String(url);
+  if (href === "http://127.0.0.1:8723/eve/v1/telegram/compact") {
+    const request = new Request(href, init);
+    manualRequests.push({
+      body: await request.clone().json(),
+      auth: request.headers.get("x-telegram-bot-api-secret-token"),
+    });
+    return route("/eve/v1/telegram/compact").handler(request, {
+      attachSession: (id) => ({ id }) as Session,
+      resolveSession: async () =>
+        manualSessionId ? ({ id: manualSessionId } as Session) : undefined,
+      from: unused,
+      to: unused,
+      params: {},
+      waitUntil: unused,
+      requestIp: "127.0.0.1",
+    });
+  }
   const compact = COMPACT_URL.exec(href);
   if (compact) {
     const sessionId = decodeURIComponent(compact[1] ?? "");
@@ -146,6 +166,8 @@ const settings = join(dataDir, "settings.json");
 let seq = 0;
 beforeEach(() => {
   apiCalls.length = 0;
+  manualRequests.length = 0;
+  manualSessionId = null;
   compactCalls.length = 0;
   compactStatus = "accepted";
   whileAsking = null;
@@ -457,6 +479,8 @@ test("порядок steer: сообщение уходит в eve и сразу
   await s.waiting();
   assert.equal(compactCalls.length, 1, "пересказ просим при любом порядке");
   apiCalls.length = 0;
+  manualRequests.length = 0;
+  manualSessionId = null;
   assert.equal(await incoming(45, "s-steer"), 1, "сообщение доставлено в eve");
   // Чат занят пересказом: раннего статуса нет, запись пересказа не тронута, но под
   // сообщением сразу знак очереди — без него минута пересказа выглядит как тишина.
@@ -815,4 +839,279 @@ test("a reminder turn after Stop clears the fact before the next owner message",
   incomingContexts.length = 0;
   await incoming(chatId, "s-owner-after-reminder");
   assert.doesNotMatch(JSON.stringify(incomingContexts), /«Stop»|«Стоп»/u);
+});
+
+const { handleControl, registerBotCommands } =
+  await import("./poller/control.ts");
+function compactUpdate(chatId: number, text = "/compact", type = "private") {
+  return {
+    update_id: ++seq,
+    message: {
+      message_id: ++seq,
+      chat: { id: chatId, type },
+      from: { id: 9, is_bot: false },
+      text,
+    },
+  };
+}
+const sentText = () =>
+  apiCalls
+    .filter((call) => call.method === "sendMessage")
+    .map((call) => String(call.body?.text))
+    .join("\n");
+
+test("/compact на проводе: команда моста, общий POST eve, занятость до парковки, честный размер первого шага", async () => {
+  const s = session("s-manual-wire", 701);
+  manualSessionId = "s-manual-wire";
+  await s.turn([40_000]);
+  await s.waiting();
+  assert.equal(await handleControl(compactUpdate(701)), true);
+  assert.deepEqual(manualRequests, [
+    {
+      body: { chatKey: "701:", target: { address: { chatId: "701" } } },
+      auth: "idle-compaction-test-secret",
+    },
+  ]);
+  assert.deepEqual(compactCalls, [
+    { sessionId: "s-manual-wire", auth: "Bearer idle-compaction-test-bearer" },
+  ]);
+  assert.equal(statusOf(701)?.compacting, true);
+  assert.match(sentText(), /Compressing the conversation/);
+  await handleControl(compactUpdate(701));
+  assert.equal(compactCalls.length, 1);
+  assert.match(
+    sentText(),
+    /The conversation is already being compressed\. Please wait for the reply\.$/,
+  );
+  s.compacted();
+  await s.waiting();
+  assert.equal(statusOf(701)?.status, "idle");
+  assert.match(sentText(), /it was ≈40k tokens/);
+  await s.turn([25_000, 27_000]);
+  await s.waiting();
+  assert.match(sentText(), /≈40k → ≈25k tokens/);
+  assert.equal(compactCalls.length, 1);
+});
+
+test("/compact при малом входе, после /stop, /new и перезапуска: без POST и без занятия чата", async () => {
+  for (const mode of ["small", "stop", "new", "restart"] as const) {
+    const chatId = 710 + seq++;
+    const id = `s-manual-${mode}`;
+    const s = session(id, chatId);
+    manualSessionId = id;
+    if (mode === "small") {
+      await s.turn([23_000]);
+      await s.waiting();
+    }
+    if (mode === "stop") {
+      await s.running([80_000]);
+      await s.cancelled();
+      await s.waiting();
+    }
+    // /new and process restart have no in-memory step input for the selected session.
+    assert.equal(await handleControl(compactUpdate(chatId)), true);
+    assert.notEqual(statusOf(chatId)?.compacting, true);
+  }
+  assert.deepEqual(compactCalls, []);
+  assert.match(sentText(), /nothing to compress/);
+});
+
+test("/compact во время ответа оставляет ход, отказ и прерывание свёртки видны владельцу", async () => {
+  const s = session("s-manual-fail", 702);
+  manualSessionId = "s-manual-fail";
+  await s.running([80_000]);
+  await handleControl(compactUpdate(702));
+  assert.deepEqual(compactCalls, []);
+  await s.cancelled();
+  await s.waiting();
+  await s.turn([40_000]);
+  await s.waiting();
+  compactStatus = "refused";
+  await handleControl(compactUpdate(702));
+  assert.equal(statusOf(702)?.status, "idle");
+  assert.match(sentText(), /couldn't be confirmed/);
+  compactStatus = "accepted";
+  await handleControl(compactUpdate(702));
+  await s.waiting();
+  assert.match(sentText(), /Compression was interrupted/);
+  assert.equal(statusOf(702)?.status, "idle");
+});
+
+test("/compact в группах адресуется как /new; посторонний отправитель командой не управляет", async () => {
+  await handleControl(compactUpdate(-703, "/compact", "group"));
+  assert.equal(manualRequests.length, 0);
+  assert.match(sentText(), /Reply to my message/);
+  const update = compactUpdate(704);
+  update.message.from.id = 999;
+  assert.equal(await handleControl(update), false);
+  assert.equal(manualRequests.length, 0);
+});
+
+test("/compact есть в /help и синем меню на проводе setMyCommands", async () => {
+  await handleControl(compactUpdate(705, "/help"));
+  assert.match(sentText(), /\/compact/);
+  await registerBotCommands();
+  const menus = apiCalls.filter((call) => call.method === "setMyCommands");
+  assert.equal(menus.length, 2);
+  for (const menu of menus)
+    assert.match(JSON.stringify(menu.body), /"command":"compact"/);
+});
+
+test("роут /compact проверяет секрет и формат до захвата чата", async () => {
+  const handler = route("/eve/v1/telegram/compact").handler;
+  const args = {
+    attachSession: unused,
+    resolveSession: unused,
+    from: unused,
+    to: unused,
+    params: {},
+    waitUntil: unused,
+    requestIp: "127.0.0.1",
+  };
+  for (const [body, secret, status] of [
+    ["{}", "wrong", 401],
+    ["{", "idle-compaction-test-secret", 400],
+    ["{}", "idle-compaction-test-secret", 400],
+  ] as const) {
+    const response = await handler(
+      new Request("http://local/eve/v1/telegram/compact", {
+        method: "POST",
+        body,
+        headers: { "x-telegram-bot-api-secret-token": secret },
+      }),
+      args,
+    );
+    assert.equal(response.status, status);
+  }
+  assert.deepEqual(compactCalls, []);
+});
+
+test("/compact в ответ на сообщение бота в группе выбирает ту же адресацию, что /new", async () => {
+  const s = session("s-manual-group", -706);
+  manualSessionId = "s-manual-group";
+  await s.turn([40_000]);
+  await s.waiting();
+  const base = compactUpdate(-706, "/compact", "group");
+  const update = {
+    ...base,
+    message: {
+      ...base.message,
+      reply_to_message: { message_id: 88, from: { id: 12345, is_bot: true } },
+    },
+  };
+  assert.equal(await handleControl(update), true);
+  assert.deepEqual(manualRequests.at(-1)?.body, {
+    chatKey: "-706:",
+    target: { address: { chatId: "-706", conversationId: "88" } },
+  });
+  assert.deepEqual(compactCalls, [
+    { sessionId: "s-manual-group", auth: "Bearer idle-compaction-test-bearer" },
+  ]);
+  s.compacted();
+  await s.waiting();
+});
+
+test("property: произвольный неверный ключ /compact отвергается до разрешения сессии", async () => {
+  const handler = route("/eve/v1/telegram/compact").handler;
+  const args = {
+    attachSession: unused,
+    resolveSession: unused,
+    from: unused,
+    to: unused,
+    params: {},
+    waitUntil: unused,
+    requestIp: "127.0.0.1",
+  };
+  await fc.assert(
+    fc.asyncProperty(
+      fc.string({ maxLength: 100 }).filter((key) => !/^-?\d+:\d*$/u.test(key)),
+      fc.jsonValue(),
+      async (chatKey, target) => {
+        const response = await handler(
+          new Request("http://local/eve/v1/telegram/compact", {
+            method: "POST",
+            headers: {
+              "x-telegram-bot-api-secret-token": "idle-compaction-test-secret",
+            },
+            body: JSON.stringify({ chatKey, target }),
+          }),
+          args,
+        );
+        assert.equal(response.status, 400);
+      },
+    ),
+    { numRuns: 100 },
+  );
+  assert.deepEqual(compactCalls, []);
+});
+
+test("/compact между turn.completed и session.waiting ждёт парковки того же хода", async () => {
+  const s = session("s-manual-window-r1", 720);
+  manualSessionId = "s-manual-window-r1";
+  await s.turn([40_000]);
+  assert.equal(statusOf(720)?.status, "idle");
+  await handleControl(compactUpdate(720));
+  assert.deepEqual(compactCalls, [], "до парковки ручной POST запрещён");
+  assert.match(sentText(), /Try \/compact after I finish/);
+  await s.waiting();
+  assert.doesNotMatch(sentText(), /Compression was interrupted/);
+  await handleControl(compactUpdate(720));
+  assert.equal(compactCalls.length, 1);
+  await s.compacting();
+  assert.equal(statusOf(720)?.compacting, true, "пересказ держит чат");
+  s.compacted();
+  await s.waiting();
+  assert.match(sentText(), /it was ≈40k tokens/);
+  assert.equal(statusOf(720)?.status, "idle");
+});
+
+test("/compact сразу после автосвёртки сохраняет один POST", async () => {
+  const s = session("s-manual-after-auto-r1", 721);
+  manualSessionId = "s-manual-after-auto-r1";
+  await s.turn([LIMIT]);
+  await s.waiting();
+  assert.equal(compactCalls.length, 1);
+  s.compacted();
+  await s.waiting();
+  await handleControl(compactUpdate(721));
+  assert.equal(
+    compactCalls.length,
+    1,
+    "повторного пересказа устаревшего входа нет",
+  );
+  assert.match(sentText(), /nothing to compress/);
+});
+
+test("/compact во время автосвёртки сообщает о пересказе", async () => {
+  const s = session("s-manual-during-auto-r1", 722);
+  manualSessionId = "s-manual-during-auto-r1";
+  await s.turn([LIMIT]);
+  await s.waiting();
+  await handleControl(compactUpdate(722));
+  assert.equal(compactCalls.length, 1);
+  assert.equal(
+    sentText(),
+    "The conversation is already being compressed. Please wait for the reply.",
+  );
+  assert.doesNotMatch(sentText(), /I'm answering now/);
+  s.compacted();
+  await s.waiting();
+});
+
+test("ручная свёртка предупреждает о повторе после перезапуска; восстановление освобождает чат", async () => {
+  const s = session("s-manual-restart-r1", 723);
+  manualSessionId = "s-manual-restart-r1";
+  await s.turn([40_000]);
+  await s.waiting();
+  await handleControl(compactUpdate(723));
+  assert.match(sentText(), /After a restart, repeat \/compact/);
+  const { rewriteRunStatusesForUpdate } = await import("./lib/wf-store.ts");
+  assert.ok(rewriteRunStatusesForUpdate(dataDir, true) >= 1);
+  assert.equal(statusOf(723)?.status, "idle");
+  assert.equal(statusOf(723)?.compacting, undefined);
+  assert.equal(typeof statusOf(723)?.resetAt, "number");
+  apiCalls.length = 0;
+  await handleControl(compactUpdate(723));
+  assert.equal(compactCalls.length, 1);
+  assert.match(sentText(), /nothing to compress/);
 });
