@@ -343,6 +343,7 @@ export const claimHelper = (
         s.rows.some(
           (row) => row.goal === null && row.status === "pending" && !row.run,
         )) ||
+      // Today HELPER_MAX_OPEN enforces this cap; helper-constants-docs.test.ts guards their relation.
       s.rows.filter((r) => r.run).length >= HELPER_MAX_RUNNING
     )
       return false;
