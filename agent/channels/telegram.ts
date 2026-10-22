@@ -81,6 +81,7 @@ import {
   dropIdleCompactionTurn,
   endIdleCompaction,
   openIdleCompactionTurn,
+  parkIdleCompactionTurn,
   startIdleCompaction,
   idleCompactionDue,
   takeManualCompactionReport,
@@ -527,6 +528,7 @@ const telegram = telegramChannel({
       } finally {
         // Ждём ответа eve: она ждёт этот обработчик, поэтому просьба встаёт в её очередь
         // раньше, чем она возьмёт следующее сообщение, и пересказ идёт под записью.
+        parkIdleCompactionTurn(sessionId);
         await compactTelegramSession(chatKey, sessionId);
       }
       await flushSettledTelegramQuestions(channel.state, channel.telegram);

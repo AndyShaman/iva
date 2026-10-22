@@ -879,7 +879,7 @@ test("/compact на проводе: команда моста, общий POST e
   assert.match(sentText(), /Compressing the conversation/);
   await handleControl(compactUpdate(701));
   assert.equal(compactCalls.length, 1);
-  assert.match(sentText(), /Try \/compact after I finish/);
+  assert.match(sentText(), /already being compressed/);
   s.compacted();
   await s.waiting();
   assert.equal(statusOf(701)?.status, "idle");
@@ -1040,4 +1040,72 @@ test("property: произвольный неверный ключ /compact от
     { numRuns: 100 },
   );
   assert.deepEqual(compactCalls, []);
+});
+
+test("/compact между turn.completed и session.waiting ждёт парковки того же хода", async () => {
+  const s = session("s-manual-window-r1", 720);
+  manualSessionId = "s-manual-window-r1";
+  await s.turn([40_000]);
+  assert.equal(statusOf(720)?.status, "idle");
+  await handleControl(compactUpdate(720));
+  assert.deepEqual(compactCalls, [], "до парковки ручной POST запрещён");
+  assert.match(sentText(), /Try \/compact after I finish/);
+  await s.waiting();
+  assert.doesNotMatch(sentText(), /Compression was interrupted/);
+  await handleControl(compactUpdate(720));
+  assert.equal(compactCalls.length, 1);
+  await s.compacting();
+  assert.equal(statusOf(720)?.compacting, true, "пересказ держит чат");
+  s.compacted();
+  await s.waiting();
+  assert.match(sentText(), /it was ≈40k tokens/);
+  assert.equal(statusOf(720)?.status, "idle");
+});
+
+test("/compact сразу после автосвёртки сохраняет один POST", async () => {
+  const s = session("s-manual-after-auto-r1", 721);
+  manualSessionId = "s-manual-after-auto-r1";
+  await s.turn([LIMIT]);
+  await s.waiting();
+  assert.equal(compactCalls.length, 1);
+  s.compacted();
+  await s.waiting();
+  await handleControl(compactUpdate(721));
+  assert.equal(
+    compactCalls.length,
+    1,
+    "повторного пересказа устаревшего входа нет",
+  );
+  assert.match(sentText(), /nothing to compress/);
+});
+
+test("/compact во время автосвёртки сообщает о пересказе", async () => {
+  const s = session("s-manual-during-auto-r1", 722);
+  manualSessionId = "s-manual-during-auto-r1";
+  await s.turn([LIMIT]);
+  await s.waiting();
+  await handleControl(compactUpdate(722));
+  assert.equal(compactCalls.length, 1);
+  assert.match(sentText(), /already being compressed/);
+  assert.doesNotMatch(sentText(), /I'm answering now/);
+  s.compacted();
+  await s.waiting();
+});
+
+test("ручная свёртка предупреждает о повторе после перезапуска; восстановление освобождает чат", async () => {
+  const s = session("s-manual-restart-r1", 723);
+  manualSessionId = "s-manual-restart-r1";
+  await s.turn([40_000]);
+  await s.waiting();
+  await handleControl(compactUpdate(723));
+  assert.match(sentText(), /After a restart, repeat \/compact/);
+  const { rewriteRunStatusesForUpdate } = await import("./lib/wf-store.ts");
+  assert.ok(rewriteRunStatusesForUpdate(dataDir, true) >= 1);
+  assert.equal(statusOf(723)?.status, "idle");
+  assert.equal(statusOf(723)?.compacting, undefined);
+  assert.equal(typeof statusOf(723)?.resetAt, "number");
+  apiCalls.length = 0;
+  await handleControl(compactUpdate(723));
+  assert.equal(compactCalls.length, 1);
+  assert.match(sentText(), /nothing to compress/);
 });

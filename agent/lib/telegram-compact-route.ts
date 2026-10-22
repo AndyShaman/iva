@@ -5,8 +5,11 @@ import {
   parseTelegramResetTarget,
   type ResetTarget,
 } from "./telegram-reset-route.ts";
-import { getChatStatus, isRunning } from "./run-status.ts";
-import { manualCompactionInput } from "./idle-compaction.ts";
+import { getChatStatus, isCompacting, isRunning } from "./run-status.ts";
+import {
+  idleCompactionAwaitingPark,
+  manualCompactionInput,
+} from "./idle-compaction.ts";
 import { tr } from "./i18n.ts";
 
 export const TELEGRAM_COMPACT_ROUTE = "/eve/v1/telegram/compact";
@@ -48,6 +51,13 @@ function resolveCompactSession(
   );
 }
 
+function compactTurnPending(key: string, sessionId?: string) {
+  return (
+    isRunning(key) ||
+    (sessionId !== undefined && idleCompactionAwaitingPark(sessionId))
+  );
+}
+
 export async function handleTelegramCompactRequest(
   req: Request,
   operations: CompactOperations,
@@ -57,14 +67,21 @@ export async function handleTelegramCompactRequest(
   const parsed = await readCompactRequest(req, secretToken);
   if (parsed instanceof Response) return parsed;
   const { key, target } = parsed;
-  if (isRunning(key))
+  if (isCompacting(key))
+    return Response.json({
+      text: tr(
+        "The conversation is already being compressed. I'll show its size afterward.",
+        "Разговор уже сжимается, подожду и покажу размер.",
+      ),
+    });
+  const session = await resolveCompactSession(target, operations);
+  if (compactTurnPending(key, session?.id))
     return Response.json({
       text: tr(
         "I'm answering now. Try /compact after I finish.",
         "Сейчас идёт ответ. Повтори /compact, когда закончу.",
       ),
     });
-  const session = await resolveCompactSession(target, operations);
   if (
     !session ||
     getChatStatus(key)?.resetAt !== undefined ||
@@ -80,8 +97,8 @@ export async function handleTelegramCompactRequest(
   return Response.json({
     text: accepted
       ? tr(
-          "Compressing the conversation. I'll show its new size with the next answer.",
-          "Сжимаю разговор. Новый размер покажу со следующим ответом.",
+          "Compressing the conversation. I'll show its new size with the next answer. After a restart, repeat /compact.",
+          "Сжимаю разговор. Новый размер покажу со следующим ответом. После перезапуска повтори /compact.",
         )
       : tr(
           "Compression couldn't be confirmed. Try /compact after the chat is free.",

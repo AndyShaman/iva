@@ -517,6 +517,7 @@ test("property: просьба уходит только за порогом и 
 test("ручная просьба ниже автопорога использует тот же захват и POST, открытый ход и повтор отвергаются", async () => {
   const id = fresh();
   turn(id, [40_000]);
+  idle.parkIdleCompactionTurn(id);
   const events: string[] = [];
   const ask = () =>
     idle.startIdleCompaction({
@@ -552,6 +553,7 @@ test("ручная просьба при малом входе, после от�
     const id = fresh();
     if (mode !== "new") turn(id, [mode === "small" ? 23_000 : 80_000]);
     if (mode === "cancelled") idle.dropIdleCompactionTurn(id);
+    idle.parkIdleCompactionTurn(id);
     assert.equal(
       await idle.startIdleCompaction({
         sessionId: id,
@@ -573,6 +575,7 @@ test("два ручных запроса во время захвата дают
   for (const startsTurn of [false, true]) {
     const id = fresh();
     turn(id, [40_000]);
+    idle.parkIdleCompactionTurn(id);
     let releaseClaim!: () => void;
     let requests = 0;
     let released = 0;
@@ -603,4 +606,30 @@ test("два ручных запроса во время захвата дают
     assert.equal(requests, startsTurn ? 0 : 1);
     assert.equal(released, startsTurn ? 1 : 0);
   }
+});
+
+test("новый ход завершился во время ручного захвата: POST ждёт его парковки", async () => {
+  const id = fresh();
+  turn(id, [40_000]);
+  idle.parkIdleCompactionTurn(id);
+  let released = false;
+  assert.equal(
+    await idle.startIdleCompaction({
+      sessionId: id,
+      manual: true,
+      claimImpl: () => {
+        turn(id, [40_000]);
+        return true;
+      },
+      requestImpl: async () => {
+        assert.fail("POST до новой парковки");
+      },
+      releaseImpl: () => {
+        released = true;
+      },
+    }),
+    false,
+  );
+  assert.equal(released, true);
+  assert.equal(idle.idleCompactionAwaitingPark(id), true);
 });

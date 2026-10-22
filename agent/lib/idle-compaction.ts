@@ -21,6 +21,8 @@ import { idleCompactionLimit } from "./compaction.ts";
 type Turn = {
   /** Между turn.started и концом хода: пересказ в это время — страховка eve, не наш. */
   open: boolean;
+  /** Парковка завершённого хода обработана: ручная просьба уже безопасна. */
+  parked: boolean;
   starting: boolean;
   manualBefore: number | null;
   /** Первый известный и последний вход шага текущего хода; null — провайдер не назвал. */
@@ -51,6 +53,7 @@ export const ASK_FORGOTTEN_MS = 30 * 60_000;
 export function openIdleCompactionTurn(sessionId: string): void {
   const turn = turns.get(sessionId) ?? {
     open: true,
+    parked: false,
     starting: false,
     manualBefore: null,
     first: null,
@@ -62,7 +65,13 @@ export function openIdleCompactionTurn(sessionId: string): void {
     reclaim: null,
     reclaimAt: 0,
   };
-  Object.assign(turn, { open: true, first: null, last: null, due: false });
+  Object.assign(turn, {
+    open: true,
+    parked: false,
+    first: null,
+    last: null,
+    due: false,
+  });
   // Свежая сессия — в конец: вытесняется та, что молчит дольше всех.
   turns.delete(sessionId);
   turns.set(sessionId, turn);
@@ -129,10 +138,22 @@ export function endIdleCompaction(sessionId: string) {
   return result;
 }
 
-/** Последний вход известен, ход закрыт, обычная свежая сессия около 23 тыс. */
+/** session.waiting обработала освобождение записи завершённого хода. */
+export function parkIdleCompactionTurn(sessionId: string): void {
+  const turn = turns.get(sessionId);
+  if (turn) turn.parked = true;
+}
+
+export const idleCompactionAwaitingPark = (sessionId: string) => {
+  const turn = turns.get(sessionId);
+  return Boolean(turn && !turn.parked);
+};
+
+/** Последний вход известен, ход запаркован, обычная свежая сессия около 23 тыс. */
 export function manualCompactionInput(sessionId: string): number | null {
   const turn = turns.get(sessionId);
   return turn &&
+    turn.parked &&
     !turn.open &&
     !turn.starting &&
     !turn.off &&
@@ -201,6 +222,9 @@ export function dropIdleCompactionTurn(sessionId: string): void {
 
 export const idleCompactionDue = (sessionId: string) =>
   Boolean(turns.get(sessionId)?.due);
+const compactionTurnReady = (turn: Turn, manual: boolean) =>
+  !turn.open && (!manual || turn.parked);
+
 function canStartCompaction(
   turn: Turn,
   manual: boolean,
@@ -208,7 +232,7 @@ function canStartCompaction(
   now: () => number,
 ): boolean {
   return (
-    !turn.open &&
+    compactionTurnReady(turn, manual) &&
     !turn.starting &&
     (manual ? manualInput !== null : turn.due) &&
     !(turn.reclaim && now() - turn.reclaimAt < ASK_FORGOTTEN_MS)
@@ -258,7 +282,7 @@ export async function startIdleCompaction({
   } finally {
     turn.starting = false;
   }
-  if (turn.open) {
+  if (!compactionTurnReady(turn, manual)) {
     await releaseRefused(releaseImpl, logImpl);
     return false;
   }
