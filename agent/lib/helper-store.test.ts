@@ -343,6 +343,32 @@ test("admission preserves pending, unread and Goal rows and reuses closed rows; 
   );
 });
 
+test("three concurrent claims survive reload, reject a fourth and reuse a finished slot", async (t) => {
+  await data(t);
+  const rows = await Promise.all([added(), added(), added()]);
+  const owner = { ownerStartedAt: 10 };
+  const claims = await Promise.all(
+    rows.flatMap((row) => [
+      s.claimHelper(row.id, owner, 1100),
+      s.claimHelper(row.id, owner, 1100),
+    ]),
+  );
+  assert.equal(claims.filter(Boolean).length, 3);
+  assert.equal((await s.readHelpers()).rows.filter((r) => r.run).length, 3);
+  assert.equal(
+    (await s.addHelper({ task: "fourth", may: "", chat }, 1200)).ok,
+    false,
+  );
+  await s.finalizeHelper(
+    rows[0].id,
+    { kind: "running", firedAt: 1100 },
+    finish,
+    1300,
+  );
+  const next = await added(1400);
+  assert.ok(await s.claimHelper(next.id, owner, 1500));
+  assert.equal((await s.readHelpers()).rows.filter((r) => r.run).length, 3);
+});
 test("claim/fired CAS, repeated client T3, first stop and finalize cannot resurrect/overwrite", async (t) => {
   const dir = await data(t);
   const a = await added();
@@ -352,7 +378,7 @@ test("claim/fired CAS, repeated client T3, first stop and finalize cannot resurr
     s.claimHelper(a.id, owner, 1100),
     s.claimHelper(b.id, owner, 1100),
   ]);
-  assert.equal(claims.filter(Boolean).length, 1);
+  assert.equal(claims.filter(Boolean).length, 2);
   const row = claims.find(Boolean)!;
   assert.equal(await s.recordHelperSession(row.id, 1099, "stale"), false);
   assert.equal(await s.recordHelperSession(row.id, 1100, "server"), true);
@@ -483,7 +509,7 @@ test("command sequences preserve capacity, stop, receipts and undelivered lifeti
           assert.ok(
             state.rows.filter((r) => r.status === "pending").length <= 3,
           );
-          assert.ok(state.rows.filter((r) => r.run).length <= 1);
+          assert.ok(state.rows.filter((r) => r.run).length <= 3);
           for (const row of state.rows) {
             assert.equal(row.may, "opaque");
             if (row.outcome) assert.equal(row.run, null);

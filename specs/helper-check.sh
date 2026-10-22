@@ -84,6 +84,9 @@ check HelperRun-v72-snapshot-failure none || exit 2
 check HelperRun-v72-lost-id none || exit 2
 check HelperRun-v72-record-failure none || exit 2
 check HelperRun-v72-capacity none || exit 2
+check HelperRun-capacity3 none || exit 2
+check HelperRun-capacity3-reach CapacityNotFull || exit 2
+check HelperRun-no-running-cap RunningBounded || exit 2
 check HelperRun-v72-reminder-busy none || exit 2
 check HelperRun-v72-cancel-finish OutcomeJustified || exit 2
 check HelperRun-v72-no-ceiling BoundedEnd || exit 2

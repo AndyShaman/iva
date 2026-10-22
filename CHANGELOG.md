@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Долгую работу берут помощники**: Ива сразу передаёт многошаговую работу помощнику и сообщает примерное время ответа. Одновременно работают до трёх помощников. Iva delegates long work promptly, gives an estimated return time and runs up to three helpers concurrently.
+
 - 🔧 **Открыть чат из присмотра и обзора**: ссылка на группу ведёт к сообщению, в форуме сохраняет тему. Для человека без username Ива показывает имя в тексте. Watch and Brief group links include the message and forum topic; contacts without usernames appear by name.
 
 - 🔧 **Повторить вопрос после перезапуска**: если Ива перезапустилась посреди ответа, сообщение об обрыве показывает вопрос и кнопку «Повторить». Нажатие отправляет вопрос снова; вложение нужно прислать ещё раз. After a restart during an answer, the interruption notice quotes your question and offers a Try again button. Tap it to send the question again; resend attachments yourself.

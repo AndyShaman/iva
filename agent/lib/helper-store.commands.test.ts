@@ -87,7 +87,7 @@ class Command implements fc.AsyncCommand<Model, typeof s> {
             row.status === "pending" &&
             row.fired === null &&
             row.stop === null &&
-            m.rows.filter((x) => x.fired !== null).length < 1;
+            m.rows.filter((x) => x.fired !== null).length < 3;
           const a = await r.claimHelper(row.id, { ownerStartedAt: 10 }, now);
           assert.equal(a !== null, allowed);
           if (allowed) row.fired = now;

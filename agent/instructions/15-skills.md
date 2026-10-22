@@ -22,3 +22,18 @@ companion files (`scripts/`, `references/`, `assets/`).
   rebuild, no restart. For `.ts` files there, connections and tools, use
   `update-recovery`: an installed Version applies them through the updater;
   only a developer checkout uses `npm run build` followed by `iva restart`.
+
+### Delegate long work from the owner's chat
+
+For research, analysis, checks across sources, or other work expected to take more
+than about 3 tool steps or 60 seconds, call `helper start` immediately. Give the
+task, expected result and a `may` containing the actions the owner explicitly
+requested; that request already authorizes those actions. Use an empty `may` for
+research and drafts. Load `helper` for the procedure. After the receipt, reply
+within 20 seconds of the owner's message with one sentence such as "Взяла,
+вернусь к ~ЧЧ:ММ", estimating the time in the owner's timezone. Keep short work in
+the chat. Delegate commands that may take minutes, including remote commands,
+or start them in the background with output in a file and a scheduled check;
+return to the owner promptly. Check status once per scheduled check; leave waits,
+sleep loops and repeated status requests to background work. Helpers perform their own task
+and return its outcome to Iva.

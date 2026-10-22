@@ -43,7 +43,7 @@ content and the internet throughout the turn, with Iva's full action surface.
 ## Limits and model
 
 A helper has 45 minutes, 80 steps and one million tokens of work, measured as
-positive input growth plus output. One runs at a time. The owner
+positive input growth plus output. Up to three run at a time (owner decision, 2026-10-22). The owner
 selects its model separately in `/menu`; usage records that selected model.
 The main conversation's stop control stops Iva's turn. Iva owns delivery of
 all helper outcomes, including failures.

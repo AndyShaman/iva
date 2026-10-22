@@ -90,6 +90,7 @@ async function setup(t: test.TestContext) {
     snapshot: "ok",
     cancel: "accepted",
     create: "ok",
+    uniqueSessions: false,
     onCreate: async () => {},
     calls: [] as string[],
     signals: [] as AbortSignal[],
@@ -113,7 +114,11 @@ async function setup(t: test.TestContext) {
       if (state.create === "error")
         return Response.json({ error: "Unauthorized" }, { status: 401 });
       await state.onCreate();
-      return Response.json({ sessionId: "server" });
+      return Response.json({
+        sessionId: state.uniqueSessions
+          ? new Headers(init.headers).get("x-iva-helper")
+          : "server",
+      });
     }
     if (path === "stream") {
       assert.equal(u.searchParams.get("includeTailIndex"), "1");
@@ -332,11 +337,30 @@ test("v7 create is not a stream subscription; core headers and 15s signal are pr
   assert.equal(headers.get("x-iva-helper"), a.id);
   assert.equal(f.state.signals.length, 1);
 });
+test("overlapping ticks start three distinct helpers once and retain their sessions", async (t) => {
+  const f = await setup(t);
+  const rows = await Promise.all([f.add(), f.add(), f.add()]);
+  f.state.uniqueSessions = true;
+  await Promise.all([f.tick(), f.tick(), f.tick()]);
+  const creates = f.state.requests.filter(
+    (_, i) => f.state.calls[i] === "session",
+  );
+  assert.equal(creates.length, 3);
+  assert.deepEqual(
+    creates.map((r) => new Headers(r.headers).get("x-iva-helper")).sort(),
+    rows.map((r) => r.id).sort(),
+  );
+  const stored = await s.readHelpers();
+  assert.equal(stored.rows.filter((r) => r.run?.sessionId === r.id).length, 3);
+  assert.equal(
+    (await s.addHelper({ task: "fourth", may: "", chat }, 4000)).ok,
+    false,
+  );
+});
 for (const hasGoal of [false, true])
   test(`v7 overlapping ticks${hasGoal ? " with goal" : ""}: one claim, one result writer and one finished trace; reset does not hold next admission`, async (t) => {
     const f = await setup(t),
-      a = await f.add(),
-      b = await f.add();
+      a = await f.add();
     if (hasGoal) {
       const { changeGoal } = await import("./goal-store.ts");
       await changeGoal(
@@ -371,6 +395,8 @@ for (const hasGoal of [false, true])
     await Promise.all([f.tick(4000), f.tick(4000)]);
     await f.flush();
     assert.equal((await s.getHelper(a.id))?.outcome, "done");
+    const b = await f.add();
+    await f.tick(5000);
     assert.ok((await s.getHelper(b.id))?.run);
     assert.equal(writes.length, 1);
     const logs = (
@@ -431,7 +457,7 @@ for (const event of [
   { type: "message.completed", data: 7 },
   { type: "message.completed", data: { message: 7 } },
 ])
-  test(`snapshot shape: ${JSON.stringify(event)} keeps run and occupied slot`, async (t) => {
+  test(`snapshot shape: ${JSON.stringify(event)} keeps its run while another slot starts`, async (t) => {
     const f = await setup(t),
       a = await f.running(),
       b = await f.add(),
@@ -443,8 +469,8 @@ for (const event of [
     await f.tick();
     await f.flush();
     assert.deepEqual(await s.getHelper(a.id), before);
-    assert.equal((await s.getHelper(b.id))?.run, null);
-    assert.deepEqual(f.state.calls, ["stream"]);
+    assert.equal((await s.getHelper(b.id))?.run?.sessionId, "server");
+    assert.deepEqual(f.state.calls, ["stream", "session"]);
   });
 
 for (const status of [401, 403, 429, 503])
@@ -463,7 +489,8 @@ for (const status of [401, 403, 429, 503])
     } else {
       assert.ok(row?.run);
       assert.equal(row?.outcome, null);
-      assert.equal((await s.getHelper(b.id))?.run, null);
+      assert.equal(row.run.sessionId, null);
+      assert.equal((await s.getHelper(b.id))?.run?.sessionId, "server");
     }
   });
 test("v7 K2: HTTP 503 with a body is definitive", async (t) => {

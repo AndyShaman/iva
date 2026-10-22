@@ -19,12 +19,12 @@ Times ending in MS are milliseconds. The work counter
 sums the positive increase in input tokens plus output tokens for each step, with
 the first input included. After compaction a negative input increase contributes
 zero. Actual paid input can exceed this counter. There is no daily work quota.
-Iva starts one helper at a time. Pending work and retained rows have separate limits.
+Iva runs up to three helpers at a time. Pending work and retained rows have separate limits.
 
 | Constant                |    Value |
 | ----------------------- | -------: |
 | `HELPER_MAX_OPEN`       |        3 |
-| `HELPER_MAX_RUNNING`    |        1 |
+| `HELPER_MAX_RUNNING`    |        3 |
 | `HELPER_MAX_ROWS`       |       20 |
 | `HELPER_DEADLINE_MS`    |  2700000 |
 | `HELPER_GRACE_MS`       |   120000 |
