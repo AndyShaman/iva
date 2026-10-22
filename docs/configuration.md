@@ -59,7 +59,9 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 
 For `claude` there is no API key either: install the CLI on the server as the service user (`npm install -g --prefix ~/.local @anthropic-ai/claude-code`, no root) and sign it in once (`claude auth login`). Iva never sees a key — it calls that CLI, and `iva doctor` reports the plan from `claude auth status`. Keep `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_BASE_URL` and any `CLAUDE_CODE_USE_*` out of `.env`: each of them sends the CLI somewhere other than your subscription, so Iva refuses to use this provider and says which variable is in the way rather than quietly ignoring it. Full flow: [providers.md](./providers.md#claude-by-promax-subscription-claude).
 
-**Don't inflate the context window.** Iva compacts the conversation between turns once a turn's input reaches 60% of this number (or 275,000 tokens, whichever is smaller), and inside a turn a quarter above that as a safety net. Set it above the model's real window and the compactor fires too late — the request overflows before the conversation gets trimmed. When you switch models, enter the new model's actual window, not a rounder bigger one.
+**Don't inflate the context window.** Iva compacts the conversation between turns once a turn's input reaches 60% of this number (or 110,000 tokens, whichever is smaller), and inside a turn a quarter above that as a safety net. Set it above the model's real window and the compactor fires too late — the request overflows before the conversation gets trimmed. When you switch models, enter the new model's actual window, not a rounder bigger one.
+
+Use `/compact` to compress an idle conversation with at least 30,000 measured input tokens. Iva confirms completion, then reports the before/after size with the next answer using its first measured model input. During an answer, repeat the command after it finishes. After a restart, one completed turn supplies the input measurement.
 
 ## Telegram
 
