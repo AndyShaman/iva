@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 🧹 **Свёртка разговора по команде**: `/compact` сворачивает разговор и показывает изменение размера по первому входу после свёртки. Автосвёртка начинается со 110 000 входных токенов. `/compact` compresses the conversation and reports its size on the first measured input afterward; automatic compaction now starts at 110,000 input tokens.
+- 🔧 **Долгую работу берут помощники**: Ива сразу передаёт многошаговую работу помощнику и сообщает примерное время ответа. Одновременно работают до трёх помощников. Iva delegates long work promptly, gives an estimated return time and runs up to three helpers concurrently.
 
 - 🔧 **Открыть чат из присмотра и обзора**: ссылка на группу ведёт к сообщению, в форуме сохраняет тему. Для человека без username Ива показывает имя в тексте. Watch and Brief group links include the message and forum topic; contacts without usernames appear by name.
 

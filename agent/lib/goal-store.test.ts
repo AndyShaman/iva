@@ -615,7 +615,7 @@ test("fc.commands mixes goal and owner transitions while preserving links and un
         after.goals.map((g) => g.id).sort(),
         [...model.ids].sort(),
       );
-      assert.ok(after.rows.filter((r) => r.run).length <= 1);
+      assert.ok(after.rows.filter((r) => r.run).length <= 3);
       assert.ok(after.rows.filter((r) => r.status === "pending").length <= 3);
       assert.ok(
         after.rows.filter((r) => r.goal !== null && r.status !== "closed")

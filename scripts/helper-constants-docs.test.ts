@@ -16,3 +16,15 @@ test("English and Russian helper limit tables match every exported constant", as
     assert.deepEqual(found.sort(), expected.sort());
   }
 });
+test("helper and goal models use the enforced running capacity", async () => {
+  for (const name of ["HelperRun", "GoalCheck"]) {
+    const text = await readFile(
+      new URL(`../specs/${name}.tla`, import.meta.url),
+      "utf8",
+    );
+    const match = /RunningLimit == (\d+)/.exec(text);
+    assert.ok(match, name);
+    assert.equal(Number(match[1]), constants.HELPER_MAX_RUNNING, name);
+  }
+  assert.ok(constants.HELPER_MAX_OPEN >= constants.HELPER_MAX_RUNNING);
+});

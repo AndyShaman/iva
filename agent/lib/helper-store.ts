@@ -12,7 +12,7 @@ export const HELPER_MAX_OPEN = 3,
 export const HELPER_DEADLINE_MS = 2700000,
   HELPER_GRACE_MS = 120000;
 export const HELPER_CEILING_TOKENS = 1000000;
-export const HELPER_MAX_RUNNING = 1;
+export const HELPER_MAX_RUNNING = 3;
 export const HELPER_CHECK_MS = 15000;
 export const HELPER_SUMMARY_MAX = 1500,
   HELPER_KEEP_MS = 86400000;
@@ -343,6 +343,7 @@ export const claimHelper = (
         s.rows.some(
           (row) => row.goal === null && row.status === "pending" && !row.run,
         )) ||
+      // Today HELPER_MAX_OPEN enforces this cap; helper-constants-docs.test.ts guards their relation.
       s.rows.filter((r) => r.run).length >= HELPER_MAX_RUNNING
     )
       return false;

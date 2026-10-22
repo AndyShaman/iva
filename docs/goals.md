@@ -13,8 +13,8 @@ waiting. You can change the boundary, wording or Plan later.
 Checks normally run every two hours, between quiet hours set in proactive
 settings. A Goal permits eight checks per owner day; five Goals can be open
 per installation. Checks use the usual Helper limits: 80 steps, one million
-tokens of work and a 45-minute deadline with two minutes of grace. One Helper
-runs at a time, with waiting places reserved for your own Helper requests.
+tokens of work and a 45-minute deadline with two minutes of grace. Up to three
+Helpers run at a time, with waiting places reserved for your own Helper requests.
 The next check may be scheduled from thirty minutes to seven days away.
 
 An unchanged check stays quiet. A result, meaningful change, performed action
