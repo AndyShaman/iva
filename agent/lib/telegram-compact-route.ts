@@ -70,8 +70,8 @@ export async function handleTelegramCompactRequest(
   if (isCompacting(key))
     return Response.json({
       text: tr(
-        "The conversation is already being compressed. I'll show its size afterward.",
-        "Разговор уже сжимается, подожду и покажу размер.",
+        "The conversation is already being compressed. Please wait for the reply.",
+        "Разговор уже сжимается, подожди ответа.",
       ),
     });
   const session = await resolveCompactSession(target, operations);

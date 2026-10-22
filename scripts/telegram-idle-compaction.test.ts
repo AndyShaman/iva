@@ -879,7 +879,10 @@ test("/compact на проводе: команда моста, общий POST e
   assert.match(sentText(), /Compressing the conversation/);
   await handleControl(compactUpdate(701));
   assert.equal(compactCalls.length, 1);
-  assert.match(sentText(), /already being compressed/);
+  assert.match(
+    sentText(),
+    /The conversation is already being compressed\. Please wait for the reply\.$/,
+  );
   s.compacted();
   await s.waiting();
   assert.equal(statusOf(701)?.status, "idle");
@@ -1086,7 +1089,10 @@ test("/compact во время автосвёртки сообщает о пер
   await s.waiting();
   await handleControl(compactUpdate(722));
   assert.equal(compactCalls.length, 1);
-  assert.match(sentText(), /already being compressed/);
+  assert.equal(
+    sentText(),
+    "The conversation is already being compressed. Please wait for the reply.",
+  );
   assert.doesNotMatch(sentText(), /I'm answering now/);
   s.compacted();
   await s.waiting();
