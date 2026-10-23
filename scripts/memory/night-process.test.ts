@@ -217,7 +217,7 @@ function spawnNight(
       CUSTOM_BASE_URL: fx.baseUrl,
       CUSTOM_API_KEY: "test",
       CUSTOM_MODEL: "double",
-      IVA_JOB_STOP_AT: String(Date.now() + 60_000),
+      IVA_JOB_STOP_AT: String(Date.parse(env.IVA_TEST_NOW ?? NOW) + 60_000),
       TELEGRAM_BOT_TOKEN: "",
       TELEGRAM_DIGEST_CHAT_ID: "",
       TELEGRAM_ALLOWED_USER_IDS: "",
@@ -331,6 +331,7 @@ void test("обычный день: A и B, Card, выжимка, отметка
   ];
   const first = await night(fx);
   assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stderr, /^iva-model-auth-success custom \d+$/mu);
   assert.equal(fx.model.prompts.length, 2);
   assert.equal(
     read(file),
@@ -350,6 +351,7 @@ void test("обычный день: A и B, Card, выжимка, отметка
   const head = git(fx.vault, "rev-parse", "HEAD");
   const again = await night(fx, null);
   assert.equal(again.code, 0, again.stderr);
+  assert.doesNotMatch(again.stderr, /iva-model-auth-success/u);
   assert.equal(fx.model.prompts.length, 2);
   assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
 });

@@ -1,3 +1,4 @@
+import { noticeLang } from "../lib/notice-policy.ts";
 import { logHint } from "../lib/systemd-control.ts";
 import { unitPath } from "../lib/launchd.ts";
 import { createHash } from "node:crypto";
@@ -578,8 +579,35 @@ async function checkEnvFile(ctx: DoctorContext): Promise<boolean> {
   // Вендора без ключа в .env доктор проверяет там же, где живёт его вход: в чужом CLI
   // на этой же машине. Молчать об этом значило бы объявить .env здоровым перед
   // отказом агента на старте.
-  if (provider.auth === "cli") await checkClaudeCli(ctx);
+  if (!(await checkModelAuth(ctx, rawProvider)) && provider.auth === "cli")
+    await checkClaudeCli(ctx);
   return true;
+}
+
+/** Authored modules are loaded only during the check: doctor also repairs missing trees. */
+async function checkModelAuth(
+  ctx: DoctorContext,
+  provider: string,
+): Promise<boolean> {
+  try {
+    const { pendingModelAuth } = await import("#lib/model-auth-state.ts");
+    const { modelAuthText } = await import("#lib/model-auth.ts");
+    const expired = pendingModelAuth(ctx.dataDirectory).find(
+      (status) => status.provider === provider,
+    );
+    if (!expired) return false;
+    ctx.fail(
+      modelAuthText(provider, await noticeLang(ctx.env), {
+        ...expired,
+        timeZone: ctx.env.ASSISTANT_TIMEZONE,
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (!authoredTreeMissing(error))
+      ctx.warn(`Model login status unreadable: ${String(error)}`);
+    return false;
+  }
 }
 
 /** Статус Claude Code CLI: имя плана при входе и подсказка вместо него при отказе. */

@@ -1,3 +1,5 @@
+import { observeModelAuth } from "#lib/model-auth-alert.ts";
+import { modelAuthText } from "#lib/model-auth.ts";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import "../fixtures/no-host-anthropic.ts";
 import "../fixtures/systemd-env.ts";
@@ -2087,9 +2089,11 @@ function fakeClaude(t: TestContext, body: string): string {
 async function diagnoseClaude(
   t: TestContext,
   env: Record<string, string>,
+  prepare?: (root: string) => void,
 ): Promise<{ bad: string[]; ok: string[] }> {
   const root = await sandbox(t);
   writeFileSync(join(root, ".env"), "MODEL_PROVIDER=claude\n");
+  prepare?.(root);
   const bad: string[] = [];
   const ok: string[] = [];
   const runtime: CliRuntime = {
@@ -2227,5 +2231,34 @@ test("repair 13/15: missing lsof is unknown and macOS doctor names Iva jobs", as
   assert.ok(
     events.some((m) => m.includes("задания Ивы installed")),
     events.join("\n"),
+  );
+});
+
+test("doctor fails on last-call authentication evidence even with a signed-in Claude CLI", async (t) => {
+  const at = Date.parse("2026-10-21T01:33:00Z");
+  const ready = await diagnoseClaude(
+    t,
+    {
+      CLAUDE_COMMAND: fakeClaude(
+        t,
+        '{"loggedIn":true,"subscriptionType":"max"}',
+      ),
+    },
+    (root) =>
+      observeModelAuth(join(root, "data"), {
+        provider: "claude",
+        at,
+        failed: true,
+        answers: true,
+      }),
+  );
+  assert.ok(
+    ready.bad.includes(
+      modelAuthText("claude", "ru", { since: at, answers: true }),
+    ),
+  );
+  assert.equal(
+    ready.ok.some((message) => message.includes("signed in")),
+    false,
   );
 });

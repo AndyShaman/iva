@@ -1,3 +1,6 @@
+import { pendingModelAuth } from "#lib/model-auth-state.ts";
+import { modelAuthText } from "#lib/model-auth.ts";
+import { noticeLang } from "../lib/notice-policy.ts";
 // Тик Watch, Brief и Insight (ADR-0020, ADR-0022, модель specs/Proactive.tla):
 //   node --env-file-if-exists=.env scripts/proactive/tick.ts
 // Запускает его agent/schedules/proactive.ts каждые полчаса. Замок без ожидания — второй
@@ -82,6 +85,7 @@ const ITEM_MARKER = /<!--\s*iva:item\s+([^\s<>]+)\s*-->/gu;
 const BRIEF_WINDOW_MIN = 3 * 60;
 
 export type TickDeps = {
+  readonly authContext?: () => Promise<string>;
   readonly config: () => ProactiveConfig;
   readonly timeZone: string;
   readonly statePath: string;
@@ -442,6 +446,10 @@ function toldParts(
   return { parts: [note], told: failures };
 }
 
+function modelAuthContext(deps: TickDeps): Promise<string> {
+  return deps.authContext ? deps.authContext() : Promise.resolve("");
+}
+
 /** Шаги 8–9: ход, доставка, подъём и отметка сбоев. Провал хода — код 1, отправки нет. */
 async function wake(
   deps: TickDeps,
@@ -458,7 +466,8 @@ async function wake(
 ): Promise<number> {
   const text = await turnText(
     deps,
-    watchPrompt(candidates, await deps.translate()),
+    watchPrompt(candidates, await deps.translate()) +
+      (await modelAuthContext(deps)),
     "watch",
     log,
   );
@@ -663,7 +672,7 @@ async function brief(
   );
   const text = await turnText(
     deps,
-    briefPrompt(slot, tr, unfixed, previous),
+    briefPrompt(slot, tr, unfixed, previous) + (await modelAuthContext(deps)),
     "brief",
     log,
   );
@@ -1070,6 +1079,18 @@ export async function main(
   try {
     const now = Math.floor(clock() / 60_000) * 60_000;
     return await runProactiveTick(now, {
+      authContext: async () => {
+        const lang = await noticeLang(env);
+        const lines = pendingModelAuth(dir).map((status) =>
+          modelAuthText(status.provider, lang, {
+            ...status,
+            timeZone: resolveTimeZone(tz),
+          }),
+        );
+        return lines.length
+          ? `\nModel login status. Include this exact wording in the Watch/Brief item. The minute dispatcher owns the Alert; send no separate Alert:\n${lines.join("\n")}`
+          : "";
+      },
       config: () =>
         loadConfig(join(dir, "settings.json"), (line) => console.log(line)),
       timeZone: resolveTimeZone(tz),

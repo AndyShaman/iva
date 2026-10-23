@@ -1033,14 +1033,22 @@ test("the weekly throttle works on an installation whose agent/ is gone", (t) =>
   const home = dataDir(t);
   const island = join(home, "island");
   const data = join(home, "data");
-  mkdirSync(island, { recursive: true });
+  mkdirSync(join(island, "scripts/lib"), { recursive: true });
+  mkdirSync(join(island, "packages/alert-state"), { recursive: true });
+  writeFileSync(
+    join(island, "packages/alert-state/index.ts"),
+    readFileSync(
+      new URL("../../packages/alert-state/index.ts", import.meta.url),
+      "utf8",
+    ),
+  );
   mkdirSync(data, { recursive: true });
   writeFileSync(
     join(island, "package.json"),
     JSON.stringify({ type: "module" }),
   );
   writeFileSync(
-    join(island, "notice-policy.ts"),
+    join(island, "scripts/lib/notice-policy.ts"),
     readFileSync(join(import.meta.dirname, "notice-policy.ts"), "utf8"),
   );
 
@@ -1051,7 +1059,9 @@ test("the weekly throttle works on an installation whose agent/ is gone", (t) =>
       encoding: "utf8",
       env: {
         ...process.env,
-        __POLICY_URL: pathToFileURL(join(island, "notice-policy.ts")).href,
+        __POLICY_URL: pathToFileURL(
+          join(island, "scripts/lib/notice-policy.ts"),
+        ).href,
         __DATA_DIR: data,
       },
       stdio: ["ignore", "pipe", "pipe"],

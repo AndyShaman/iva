@@ -8,6 +8,11 @@
 // (NoticeSend): гейт стоит на вызове Bot API, а не тут (правило в outbox.ts). Реплика с
 // кнопкой «Повторить» канал везёт швом Outbox: кнопка живёт только в rich-сообщении.
 import { humanizeProviderError } from "./error-humanizer.ts";
+import { modelAuthFailure } from "./model-auth.ts";
+import {
+  dispatchModelAuth,
+  type AuthObservation,
+} from "./model-auth-dispatch.ts";
 import { tr } from "./i18n.ts";
 import type { NoticeSend } from "./outbox.ts";
 
@@ -85,8 +90,19 @@ export async function notifyTelegramFailure(
   turnId: string | null,
   data: TelegramFailureData,
   send: NoticeSend,
-  { now = Date.now() }: { now?: number } = {},
+  {
+    now = Date.now(),
+    authDispatch = dispatchModelAuth,
+  }: {
+    now?: number;
+    authDispatch?: (observation: AuthObservation) => Promise<void>;
+  } = {},
 ): Promise<void> {
+  const provider = modelAuthFailure(data);
+  if (provider) {
+    await authDispatch({ provider, at: now, failed: true, answers: true });
+    return;
+  }
   if (turnId === "") {
     console.error(
       `[telegram] turn.failed без turnId, сессия ${sessionId}: уведомление считаю по сессии`,

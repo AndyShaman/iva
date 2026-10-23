@@ -1391,3 +1391,45 @@ test("Telegram metadata reaches the Watch turn through precheck and candidate se
     else assert.doesNotMatch(h.prompts[0] ?? "", /topic_id=/u);
   }
 });
+
+test("Watch and Brief receive the same login wording without creating another Alert", async () => {
+  const { modelAuthText } = await import("#lib/model-auth.ts");
+  const wording = modelAuthText("claude", "en", { answers: true });
+  for (const kind of ["watch", "brief"]) {
+    let alerts = 0;
+    const h = harness({
+      authContext: () => Promise.resolve(`\n${wording}`),
+      recordAlert: () => {
+        alerts++;
+        return true;
+      },
+    });
+    if (kind === "brief") h.config = { ...h.config, briefTimes: ["12:00"] };
+    else
+      h.tg = {
+        items: [{ key: "tg:1", unread: 1, from: { name: "Test" } }],
+        error: null,
+      };
+    // A new install seeds unread state; put a prior run on disk for Watch.
+    if (kind === "watch")
+      writeFileSync(
+        h.statePath,
+        JSON.stringify({
+          ...initialState(NOON - 2 * HOUR),
+          seen: {
+            "tg:1": {
+              firstSeenMs: NOON - 2 * HOUR,
+              unread: 1,
+              reported: false,
+            },
+          },
+        }),
+      );
+    await runProactiveTick(NOON, h.deps);
+    assert.ok(
+      h.prompts.some((prompt) => prompt.includes(wording)),
+      kind,
+    );
+    assert.equal(alerts, 0);
+  }
+});

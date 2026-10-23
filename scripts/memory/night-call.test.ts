@@ -1,3 +1,4 @@
+import "../fixtures/no-host-anthropic.ts";
 // Настоящий ночной шов через SDK и codexFetch, без сетевого доступа и живых токенов.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -103,6 +104,8 @@ void test("night subscription call requires streaming, honors low effort, record
   assert.deepEqual(await callBySchema(ask()), { text: "ночь" });
   assert.equal(calls, 1);
   assert.equal(ceiling.inputTokens, 123);
+  const { modelSuccessAt } = await import("./night-call.ts");
+  assert.ok(typeof modelSuccessAt === "number" && modelSuccessAt > 0);
   const row = JSON.parse(
     readFileSync(join(data, "usage.jsonl"), "utf8"),
   ) as Record<string, unknown>;

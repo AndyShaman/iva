@@ -269,3 +269,32 @@ await test("ключ провайдера настоящего формата н
   assert.equal(sent.length, 1);
   assert.doesNotMatch(sent[0], /sk-or-v1|4f9c1e77/u);
 });
+
+await test("expired login reply delegates to the one Alert sender, with no generic channel notice", async () => {
+  const { sent, send } = collector();
+  const observations: unknown[] = [];
+  await notifyTelegramFailure(
+    "auth",
+    "turn",
+    { message: "Failed to authenticate: OAuth session expired" },
+    send,
+    {
+      now: 12345,
+      authDispatch: (observation) => {
+        observations.push(observation);
+        return Promise.resolve();
+      },
+    },
+  );
+  assert.deepEqual(sent, []);
+  assert.deepEqual(observations, [
+    { provider: "claude", at: 12345, failed: true, answers: true },
+  ]);
+  assert.match(
+    telegramFailureMessage(
+      { message: "Failed to authenticate: OAuth session expired" },
+      "claude",
+    ),
+    /claude auth login/u,
+  );
+});

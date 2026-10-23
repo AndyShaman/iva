@@ -1,3 +1,5 @@
+import "../../scripts/fixtures/no-host-anthropic.ts";
+import { modelAuthText } from "./model-auth.ts";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -62,20 +64,25 @@ test("refused credentials say who refused and where to fix it, without repeats",
   for (const input of [
     { message: "Invalid API key" },
     { message: "Unauthorized" },
-    { message: "Request rejected", details: '{"statusCode":403}' },
+    {
+      message: "Request rejected",
+      details: '{"statusCode":403,"apiErrorMessage":"invalid key"}',
+    },
     {
       message: "api.anthropic.com did not finish the response (HTTP 401)",
       details: { attempts: 1 },
     },
   ]) {
     assert.deepEqual(humanizeProviderError({ ...input, provider: "claude" }), {
-      en: "Anthropic did not accept the key or login. Check it in /menu and write again.",
-      ru: "Anthropic не принял ключ или вход. Проверь его в /menu и напиши ещё раз.",
+      en: modelAuthText("claude", "en", { answers: true }),
+      ru: modelAuthText("claude", "ru", { answers: true }),
     });
   }
   assert.equal(
     humanizeProviderError({ message: "Unauthorized" }).ru,
-    "Провайдер не принял ключ или вход. Проверь его в /menu и напиши ещё раз.",
+    modelAuthText(process.env.MODEL_PROVIDER ?? "custom", "ru", {
+      answers: true,
+    }),
   );
 });
 
@@ -486,8 +493,8 @@ test("a provider named like an Object method is told as «провайдер», 
     assert.deepEqual(
       humanizeProviderError({ message: "Unauthorized", provider }),
       {
-        en: "The provider did not accept the key or login. Check it in /menu and write again.",
-        ru: "Провайдер не принял ключ или вход. Проверь его в /menu и напиши ещё раз.",
+        en: modelAuthText("custom", "en", { answers: true }),
+        ru: modelAuthText("custom", "ru", { answers: true }),
       },
     );
   }

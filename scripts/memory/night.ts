@@ -1,3 +1,4 @@
+import { modelAuthSuccessLine } from "#lib/model-auth.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -1334,6 +1335,16 @@ async function night(manual: string | undefined): Promise<number> {
   return code;
 }
 
+function reportModelAuthSuccess(): void {
+  if (call?.modelSuccessAt !== undefined)
+    console.error(
+      modelAuthSuccessLine(
+        process.env.MODEL_PROVIDER ?? "ollama",
+        call.modelSuccessAt,
+      ),
+    );
+}
+
 async function main(): Promise<number> {
   const manual = process.argv[2];
   const date = /^\d{4}-\d{2}-\d{2}$/u.test(manual ?? "") ? manual : "";
@@ -1355,6 +1366,7 @@ async function main(): Promise<number> {
   } finally {
     clearTimeout(timer);
     for (const row of jobs) console.error(`memory-night: ${row}`);
+    reportModelAuthSuccess();
   }
 }
 

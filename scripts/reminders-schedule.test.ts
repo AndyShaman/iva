@@ -42,11 +42,13 @@ test("the reminders dispatcher ticks every minute through waitUntil", async () =
   // Таблицы в свежем каталоге нет: тик ничего не забирает, но пульс о себе пишет.
   assert.ok(Array.isArray(result));
   assert.deepEqual(
-    result.slice(0, 2),
+    result.slice(1, 3),
     Array.from({ length: 2 }, () => ({
       status: "fulfilled",
       value: { claimed: 0, spawned: 0, filled: 0, swept: 0 },
     })),
   );
+  assert.equal(result.length, 3);
+  assert.deepEqual(result[0], { status: "fulfilled", value: undefined });
   assert.notEqual(readTickPulse(), null);
 });

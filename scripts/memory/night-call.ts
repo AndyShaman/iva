@@ -73,6 +73,8 @@ function transient(error: unknown): boolean {
   return temporary;
 }
 
+export let modelSuccessAt: number | undefined;
+
 export const nightModelName = providerConfig.textModel;
 const model = makeTextModel({
   chatModelSeesImages: () => Promise.resolve(false),
@@ -168,6 +170,7 @@ async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
     const Failure = transient(cause) ? NightTransientError : NightNetworkError;
     throw new Failure(String(cause), { cause });
   }
+  modelSuccessAt = Date.now();
   recordUsage(result.usage, estimate);
   const parsed = call.schema.safeParse(parseJson(result.text));
   if (!parsed.success)

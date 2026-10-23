@@ -11,6 +11,7 @@
 // upstreamStatusCode, upstreamMessage, apiErrorMessage). Остальное в details — стек, тело
 // ответа, errorId — не читается: номер строки `:429:` в стеке не значит лимит (рецензия
 // 07.10.2026).
+import { modelAuthFailure, modelAuthText } from "./model-auth.ts";
 import { richQuoteLine } from "./telegram-format.ts";
 
 export interface ProviderErrorText {
@@ -169,8 +170,6 @@ function retryButton(label: string, data = label): string {
 const LIMIT = /usage\s+limit\s+reached|rate[ _-]?limit|\b429\b/iu;
 const TOOL_SCHEMA = /invalid[ _-]?json[ _-]?schema/iu;
 const BILLING = /insufficient[ _-]?credits|billing|\b402\b/iu;
-const AUTH =
-  /invalid[ _-]?api[ _-]?key|unauthorized|authentication|\b(?:401|403)\b/iu;
 const CONTEXT = /context\s+length|too\s+many\s+tokens|maximum\s+context/iu;
 const SILENT = /produced no output for|produced nothing for/iu;
 const UNREACHABLE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED/u;
@@ -181,6 +180,7 @@ const CONNECTION =
 
 type Situation = {
   readonly evidence: string;
+  readonly provider: string | undefined;
   readonly details: Record<string, unknown>;
   readonly name: ProviderName;
   readonly question: string;
@@ -345,11 +345,15 @@ const RULES: readonly Rule[] = [
     }),
   },
   {
-    when: ({ evidence }) => AUTH.test(evidence),
-    say: ({ name }) => ({
-      en: `${capital(name.en)} did not accept the key or login. Check it in /menu and write again.`,
-      ru: `${capital(name.nom)} не принял ключ или вход. Проверь его в /menu и напиши ещё раз.`,
-    }),
+    when: ({ evidence, provider }) =>
+      modelAuthFailure(evidence, provider) !== null,
+    say: ({ evidence, provider }) => {
+      const name = modelAuthFailure(evidence, provider) ?? "custom";
+      return {
+        en: modelAuthText(name, "en", { answers: true }),
+        ru: modelAuthText(name, "ru", { answers: true }),
+      };
+    },
   },
   {
     when: ({ evidence }) => CONTEXT.test(evidence),
@@ -385,6 +389,7 @@ export function humanizeProviderError(
   const details = detailsRecord(input.details);
   const situation: Situation = {
     evidence: evidenceOf(input.message, details),
+    provider: input.provider,
     details,
     name: providerName(input.provider),
     question: input.question ?? "",
