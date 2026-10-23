@@ -179,8 +179,8 @@ const CONNECTION =
   /did not finish the response|broke off|StreamTruncated|connection .{0,40}lost|terminated|socket hang up|other side closed|ECONNRESET|EPIPE|UND_ERR|network request failed|fetch\s+failed|timeout|ETIMEDOUT|stream(?:\s+was)?\s+aborted|no answer reached/iu;
 
 type Situation = {
+  readonly authProvider: string | null;
   readonly evidence: string;
-  readonly provider: string | undefined;
   readonly details: Record<string, unknown>;
   readonly name: ProviderName;
   readonly question: string;
@@ -335,6 +335,16 @@ function connectionText({ name, details }: Situation): ProviderErrorText {
 // Порядок — по смыслу для владельца: сначала то, что повтором не лечится (лимит, деньги,
 // ключ, схема, переполнение), потом обрыв посреди ответа (кнопка), потом связь.
 const RULES: readonly Rule[] = [
+  {
+    when: ({ authProvider }) => authProvider !== null,
+    say: ({ authProvider }) => {
+      const name = authProvider ?? "custom";
+      return {
+        en: modelAuthText(name, "en", { answers: true }),
+        ru: modelAuthText(name, "ru", { answers: true }),
+      };
+    },
+  },
   { when: ({ evidence }) => LIMIT.test(evidence), say: limitText },
   { when: ({ evidence }) => TOOL_SCHEMA.test(evidence), say: toolSchemaText },
   {
@@ -343,17 +353,6 @@ const RULES: readonly Rule[] = [
       en: "Provider balance/plan exhausted - top up or switch models: /model",
       ru: "Баланс/тариф провайдера исчерпан - пополни или смени модель: /model",
     }),
-  },
-  {
-    when: ({ evidence, provider }) =>
-      modelAuthFailure(evidence, provider) !== null,
-    say: ({ evidence, provider }) => {
-      const name = modelAuthFailure(evidence, provider) ?? "custom";
-      return {
-        en: modelAuthText(name, "en", { answers: true }),
-        ru: modelAuthText(name, "ru", { answers: true }),
-      };
-    },
   },
   {
     when: ({ evidence }) => CONTEXT.test(evidence),
@@ -388,8 +387,8 @@ export function humanizeProviderError(
 ): ProviderErrorText {
   const details = detailsRecord(input.details);
   const situation: Situation = {
+    authProvider: modelAuthFailure(input, input.provider),
     evidence: evidenceOf(input.message, details),
-    provider: input.provider,
     details,
     name: providerName(input.provider),
     question: input.question ?? "",

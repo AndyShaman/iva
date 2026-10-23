@@ -89,6 +89,7 @@ test("Codex refresh and OpenRouter 401 carry their repair commands", async (t) =
     ["token refresh failed: 400 invalid_grant", "codex", "iva login"],
     ["HTTP 401", "openrouter", "замените ключ в /menu"],
   ]) {
+    f.env.MODEL_PROVIDER = provider;
     f.fail(modelAuthFailure(message, provider)!);
     await f.tick();
     assert.ok(f.sent.at(-1)!.includes(command));
@@ -293,4 +294,91 @@ test("a successful schedule restores login only with proof of an actual model ca
 
 test("stateless child transport leaves alert state to the agent", async () => {
   assert.equal(await sendModelAuthAlert("test", {}), false);
+});
+
+test("REPAIR1: unchanged schedule evidence does not rewrite inode or mtime", async (t) => {
+  const { statSync } = await import("node:fs");
+  const f = fixture(t);
+  f.job();
+  await f.tick();
+  const path = join(f.dir, "alert-state.json");
+  const before = statSync(path, { bigint: true });
+  f.setNow(START + 60_000);
+  await f.tick();
+  const after = statSync(path, { bigint: true });
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mtimeNs, before.mtimeNs);
+});
+test("REPAIR1: provider switch silently removes old outage and throttle", async (t) => {
+  const f = fixture(t);
+  f.job();
+  f.fail();
+  await f.tick();
+  f.env.MODEL_PROVIDER = "codex";
+  observeModelAuth(f.dir, {
+    provider: "codex",
+    at: START + 1000,
+    failed: false,
+  });
+  await f.tick();
+  f.setNow(START + MODEL_AUTH_REPEAT_MS);
+  await f.tick();
+  assert.equal(f.sent.length, 1);
+  assert.equal(readAlertState(f.dir)[authKey("claude")], undefined);
+  assert.deepEqual(pendingModelAuth(f.dir), []);
+});
+test("REPAIR1: owner replies at 23:30 and 00:30 count toward the morning Alert", async (t) => {
+  const { notifyTelegramFailure } =
+    await import("#lib/telegram-failure-notice.ts");
+  const { noticeSender } = await import("#lib/outbox.ts");
+  const { createAuthDispatcher } = await import("#lib/model-auth-dispatch.ts");
+  const { runAuthAlert } = await import("#lib/model-auth-alert.ts");
+  const night = Date.parse("2026-10-21T23:30:00Z");
+  const f = fixture(t, night);
+  const modelBefore = process.env.MODEL_PROVIDER;
+  process.env.MODEL_PROVIDER = "claude";
+  t.after(() => {
+    if (modelBefore === undefined) delete process.env.MODEL_PROVIDER;
+    else process.env.MODEL_PROVIDER = modelBefore;
+  });
+  const before = process.env.TELEGRAM_ALLOWED_USER_IDS;
+  process.env.TELEGRAM_ALLOWED_USER_IDS = "owner";
+  t.after(() => {
+    if (before === undefined) delete process.env.TELEGRAM_ALLOWED_USER_IDS;
+    else process.env.TELEGRAM_ALLOWED_USER_IDS = before;
+  });
+  const dispatch = createAuthDispatcher((obs) =>
+    runAuthAlert(obs, {
+      dir: f.dir,
+      env: f.env,
+      lang: "ru",
+      send: (text) => {
+        f.sent.push(`ALERT ${text}`);
+        return Promise.resolve(true);
+      },
+    }),
+  );
+  const direct: string[] = [];
+  for (const [i, at] of [night, night + 60 * 60 * 1000].entries()) {
+    f.setNow(at);
+    await notifyTelegramFailure(
+      "repair-owner",
+      `turn-${i}`,
+      {
+        message: "OAuth session expired",
+        ...{ chatId: "owner", group: false },
+      },
+      noticeSender((text) => {
+        direct.push(text);
+        return Promise.resolve();
+      }),
+      { now: at, authDispatch: dispatch },
+    );
+    await dispatch();
+    assert.equal(direct.length, i + 1);
+    assert.match(direct[i], /claude auth login/u);
+  }
+  f.setNow(Date.parse("2026-10-22T08:00:00Z"));
+  await dispatch();
+  assert.deepEqual(f.sent, []);
 });

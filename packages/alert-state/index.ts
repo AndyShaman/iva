@@ -79,16 +79,16 @@ function writeAlertState(dataDir: string, state: AlertState): boolean {
   }
 }
 
-// Писателей несколько (тик проактивности, мост, ночь, апдейтер), поэтому чтение-правка-запись
-// идёт под замком — существующим из #lib/fs-atomic.ts. Загрузка ленивая, синхронная (require
-// ESM без top-level await: модуль грузят и через require, scripts/check-update.mjs) и fail-open:
-// без authored tree (островной прогон в тестах) замка нет и запись идёт как раньше — одна
-// потерянная отметка там дешевле умершего дросселя.
+// Operational scripts resolve the existing lock lazily. The built agent injects its
+// static authored import, because the output package has no source import aliases.
 type AlertLock = Pick<
   typeof import("#lib/fs-atomic.ts"),
   "acquireFileLockSync" | "releaseFileLock"
 >;
 let alertLockLib: AlertLock | null | undefined;
+export function configureAlertLock(lock: AlertLock): void {
+  alertLockLib = lock;
+}
 function alertLock(): AlertLock | null {
   if (alertLockLib === undefined)
     try {
@@ -124,13 +124,13 @@ export function updateAlertState(
   }
 }
 
-/** Замок состояния дросселя; null — без замка (нет authored tree), refused — не взят. */
+/** Missing lock implementation also refuses the write. */
 function lockAlertState(
   dataDir: string,
 ):
   NonNullable<ReturnType<AlertLock["acquireFileLockSync"]>> | null | "refused" {
   const lib = alertLock();
-  if (lib === null) return null;
+  if (lib === null) return "refused";
   try {
     const lock = lib.acquireFileLockSync(join(dataDir, "alert-state.lock"), {
       timeoutMs: ALERT_LOCK_WAIT_MS,

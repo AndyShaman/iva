@@ -62,7 +62,7 @@ test("non-auth statuses and network failures never become authentication alerts"
   );
   for (const message of [
     "429 invalid API key",
-    "503 OAuth session expired",
+    "503 invalid API key",
     "socket hang up",
     "timeout",
     "400 bad request",
@@ -108,13 +108,13 @@ test("generated authentication errors remain recognizable through details and ne
   );
 });
 
-test("ClaudeCliError name identifies the provider even without configured Claude", () => {
+test("error name cannot override the installation provider", () => {
   assert.equal(
     modelAuthFailure(
       { name: "ClaudeCliError", message: "Failed to authenticate" },
       "custom",
     ),
-    "claude",
+    "custom",
   );
 });
 
@@ -122,5 +122,85 @@ test("English recovery separates catch-up and remaining-job instructions", () =>
   assert.match(
     modelAuthRecoveryText("claude", "en", ["memory-night", "proactive"]),
     /next run\. Check the remaining/u,
+  );
+});
+
+test("REPAIR1: content numbers and auth words cannot hide or invent an error", () => {
+  for (const tail of [
+    "Card отброшено: бюджет 500 долларов\nClaudeCliError: OAuth session expired",
+    "Error at line 512\nClaudeCliError: OAuth session expired",
+    "Error at line 512\nOAuth session expired",
+    "бюджет 500 долларов\nOAuth session expired",
+  ])
+    assert.equal(modelAuthFailure(tail, "claude"), "claude");
+  assert.equal(
+    modelAuthFailure(
+      'token refresh failed: 400 {"error":"invalid_grant","request_id":"503"}',
+      "codex",
+    ),
+    "codex",
+  );
+  for (const tail of [
+    "Card отброшено: two-factor authentication site.com/login квартира 401\nAPI Error: 500 unavailable",
+    "invalid token in json",
+    "authentication",
+    "Card отброшено: OAuth session expired\nAPI Error: 500 unavailable",
+  ])
+    assert.equal(modelAuthFailure(tail, "claude"), null);
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 400, max: 599 }),
+      fc.constantFrom("login", "authentication", "401", "invalid token"),
+      (n, word) => {
+        const content = `Card отброшено: ${word} бюджет ${n} site.com/login`;
+        assert.equal(modelAuthFailure(content, "claude"), null);
+        assert.equal(
+          modelAuthFailure(
+            `${content}\nClaudeCliError: OAuth session expired`,
+            "claude",
+          ),
+          "claude",
+        );
+        assert.equal(
+          modelAuthFailure(`${content}\nAPI Error: 500 unavailable`, "claude"),
+          null,
+        );
+      },
+    ),
+    { seed: 231025, numRuns: 200 },
+  );
+});
+test("REPAIR1: configured provider and API-key wording", () => {
+  assert.equal(modelAuthFailure("invalid_grant", "claude"), "claude");
+  assert.equal(
+    modelAuthFailure("ClaudeCliError: Failed to authenticate", "custom"),
+    "custom",
+  );
+  assert.match(
+    modelAuthText("custom", "ru"),
+    /Ключ API, который использует Ива, не принимается/u,
+  );
+  assert.match(
+    modelAuthText("custom", "en"),
+    /API key used by Iva is not accepted/u,
+  );
+});
+test("REPAIR1: unset provider uses the model runtime default", (t) => {
+  const before = process.env.MODEL_PROVIDER;
+  delete process.env.MODEL_PROVIDER;
+  t.after(() => {
+    if (before === undefined) delete process.env.MODEL_PROVIDER;
+    else process.env.MODEL_PROVIDER = before;
+  });
+  assert.equal(modelAuthFailure({ statusCode: 401 }), "ollama");
+});
+test("REPAIR1: API key explanation in both languages", () => {
+  assert.match(
+    modelAuthText("custom", "ru"),
+    /Ключ API, который использует Ива, не принимается/u,
+  );
+  assert.match(
+    modelAuthText("custom", "en"),
+    /API key used by Iva is not accepted/u,
   );
 });

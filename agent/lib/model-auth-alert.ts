@@ -1,11 +1,13 @@
 // Model-login evidence and Alert policy run serially in the agent process.
 import { join } from "node:path";
 import { execFile } from "node:child_process";
+import { acquireFileLockSync, releaseFileLock } from "#lib/fs-atomic.ts";
 import { getLang } from "./i18n.ts";
 import { dataDir } from "./data-dir.ts";
 import { readFactsSync, jobFactsFile, latestFact } from "./job-facts.ts";
 import {
   modelAuthFailure,
+  modelAuthProvider,
   modelAuthSuccess,
   modelAuthText,
   modelAuthRecoveryText,
@@ -24,11 +26,15 @@ import { isQuietHour, parseProactive } from "./proactive-config.ts";
 import { readSettingsState } from "./settings.ts";
 import { resolveTimeZone } from "./timezone.ts";
 import {
+  configureAlertLock,
+  recordAlert,
   alertOnce,
   alertResolved,
   readAlertState,
   updateAlertState,
 } from "../../packages/alert-state/index.ts";
+
+configureAlertLock({ acquireFileLockSync, releaseFileLock });
 
 export function observeModelAuth(
   dir: string,
@@ -38,7 +44,6 @@ export function observeModelAuth(
   const key = authFactKey(observation.provider);
   const saved = updateAlertState(dir, (state) => {
     const previous = parseAuthStatus(state[key]?.essence ?? "");
-    if (!observation.failed && !previous) return false;
     const next: ModelAuthStatus = previous ?? {
       provider: observation.provider,
       since: observation.at,
@@ -51,7 +56,9 @@ export function observeModelAuth(
       return false;
     if (!observation.failed)
       next.successAt = Math.max(next.successAt, observation.at);
-    state[key] = { essence: JSON.stringify(next), lastSentAt: 0 };
+    const essence = JSON.stringify(next);
+    if (state[key]?.essence === essence) return false;
+    state[key] = { essence, lastSentAt: 0 };
     return true;
   });
   if (!saved)
@@ -88,6 +95,16 @@ export async function tickModelAuth({
   lang,
   send,
 }: AuthTickOptions = {}): Promise<void> {
+  const provider = modelAuthProvider(env);
+  updateAlertState(dir, (state) => {
+    const obsolete = Object.keys(state).filter(
+      (key) =>
+        (key.startsWith("model-auth:") && key !== authKey(provider)) ||
+        (key.startsWith("model-auth-fact:") && key !== authFactKey(provider)),
+    );
+    for (const key of obsolete) delete state[key];
+    return obsolete.length > 0;
+  });
   const facts = loadAuthFacts(dir);
   applyAuthFacts(dir, facts, env);
   const now = Date.now();
@@ -104,7 +121,9 @@ export async function tickModelAuth({
   if (isQuietHour(parseProactive(settings), hour)) return;
   const language = lang ?? getLang();
   const deliver = send ?? sendModelAuthNotice;
-  for (const status of readModelAuthStatuses(dir)) {
+  for (const status of readModelAuthStatuses(dir).filter(
+    (status) => status.provider === provider,
+  )) {
     await deliverAuthStatus(status, {
       dir,
       facts,
@@ -137,7 +156,7 @@ function applyAuthFacts(
         fact.name,
       );
     const success = modelAuthSuccess(fact.tail);
-    if (success && !failure)
+    if (success && success.provider === modelAuthProvider(env) && !failure)
       observeModelAuth(dir, { ...success, failed: false });
   }
 }
@@ -196,6 +215,17 @@ export async function runAuthAlert(
   options: AuthTickOptions = {},
 ): Promise<void> {
   const dir = options.dir ?? dataDir();
-  if (observation) observeModelAuth(dir, observation);
+  if (observation) {
+    observeModelAuth(dir, observation);
+    if (observation.reply) {
+      try {
+        await observation.reply();
+        if (observation.ownerReply)
+          recordAlert(dir, authKey(observation.provider), "expired");
+      } catch (error) {
+        console.error("model auth reply:", error);
+      }
+    }
+  }
   await tickModelAuth({ ...options, dir });
 }

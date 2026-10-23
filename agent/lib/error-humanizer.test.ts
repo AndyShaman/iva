@@ -1,5 +1,5 @@
 import "../../scripts/fixtures/no-host-anthropic.ts";
-import { modelAuthText } from "./model-auth.ts";
+import { modelAuthText, modelAuthProvider } from "./model-auth.ts";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -80,7 +80,7 @@ test("refused credentials say who refused and where to fix it, without repeats",
   }
   assert.equal(
     humanizeProviderError({ message: "Unauthorized" }).ru,
-    modelAuthText(process.env.MODEL_PROVIDER ?? "custom", "ru", {
+    modelAuthText(modelAuthProvider(), "ru", {
       answers: true,
     }),
   );
@@ -515,5 +515,20 @@ test("interrupted-button data accepts only the localized label and bounded token
       },
     ),
     { seed: 211021, numRuns: 100 },
+  );
+});
+
+test("REPAIR1: the reply keeps strong auth evidence ahead of incidental status and limit prose", () => {
+  assert.deepEqual(
+    humanizeProviderError({
+      message:
+        "ClaudeCliError: Failed to authenticate: OAuth session expired; 429 requests tried",
+      details: { statusCode: 503 },
+      provider: "claude",
+    }),
+    {
+      en: modelAuthText("claude", "en", { answers: true }),
+      ru: modelAuthText("claude", "ru", { answers: true }),
+    },
   );
 });

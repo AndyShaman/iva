@@ -58,4 +58,7 @@ export type AuthObservation = {
   at: number;
   failed: boolean;
   answers?: boolean;
+  /** Transient channel transport; never stored. The agent queue owns delivery. */
+  reply?: () => Promise<unknown>;
+  ownerReply?: boolean;
 };

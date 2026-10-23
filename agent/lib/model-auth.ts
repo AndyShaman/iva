@@ -23,53 +23,88 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/** The runtime and all auth evidence use the same installation provider. */
+export function modelAuthProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const provider = env.MODEL_PROVIDER ?? "ollama";
+  return Object.hasOwn(PROVIDERS, provider) ? provider : "custom";
+}
+
+function errorLines(text: string): string {
+  const lines = text
+    .split("\n")
+    .filter((line) => !/отброшено:|discarded:|^\s*Card\b/iu.test(line));
+  const errors = lines.filter((line) =>
+    /\b\w*Error:|\bstatusCode\b|token refresh failed|CODEX_AUTH_EXPIRED|^\s*(?:OAuth session expired|Failed to authenticate|invalid_grant|not logged in)/iu.test(
+      line,
+    ),
+  );
+  // Schedule stderr includes content. Only the final exception and explicit status/auth lines count.
+  if (text.includes("\n")) {
+    const last = [...errors]
+      .reverse()
+      .find((line) => /\b\w*Error:/u.test(line));
+    return errors
+      .filter((line) => line === last || !/\b\w*Error:/u.test(line))
+      .join("\n");
+  }
+  return lines.join("\n");
+}
 function errorEvidence(error: unknown): string {
   const obj = record(error);
   const details = record(obj.details);
-  const fields = [
-    "name",
-    "message",
-    "code",
-    "statusCode",
-    "upstreamStatusCode",
-    "upstreamMessage",
-    "apiErrorMessage",
-    "tail",
-  ];
   return [
-    typeof error === "string" ? error : "",
-    ...fields.flatMap((key) => [obj[key], details[key]]),
-  ]
-    .filter((value) => typeof value === "string" || typeof value === "number")
-    .join("\n");
+    typeof error === "string" && Object.keys(obj).length === 0
+      ? errorLines(error)
+      : "",
+    ...[obj, details].flatMap((value) => [
+      ...["message", "code", "upstreamMessage", "apiErrorMessage", "tail"].map(
+        (key) => (typeof value[key] === "string" ? errorLines(value[key]) : ""),
+      ),
+      ...["statusCode", "upstreamStatusCode"].map((key) =>
+        typeof value[key] === "number" || typeof value[key] === "string"
+          ? `statusCode: ${value[key]}`
+          : "",
+      ),
+    ]),
+  ].join("\n");
 }
-
 /** Read only error evidence, never stacks, tool results or request bodies. */
 export function modelAuthFailure(
   error: unknown,
   provider?: string,
 ): string | null {
   const evidence = errorEvidence(error);
-  if (/\b(?:429|408|402|5\d\d|5xx)\b/iu.test(evidence)) return null;
+  const resolved = modelAuthProvider(
+    provider === undefined ? process.env : { MODEL_PROVIDER: provider },
+  );
+  if (
+    /oauth session expired|failed to authenticate|invalid_grant|CODEX_AUTH_EXPIRED|not logged in/iu.test(
+      evidence,
+    )
+  )
+    return resolved;
+  const statuses = [
+    ...evidence.matchAll(
+      /(?:\bHTTP(?:\/\d(?:\.\d)?)?\s+|\bAPI Error:\s*|\bstatusCode["']?\s*[:=]\s*|^\s*(?:\w*Error:\s*)?)([45]\d\d)\b/gimu,
+    ),
+  ].map((match) => Number(match[1]));
+  if (
+    statuses.some(
+      (status) =>
+        status === 429 || status === 408 || status === 402 || status >= 500,
+    )
+  )
+    return null;
   const auth =
-    /failed to authenticate|oauth session expired|not signed in|\/login\b|invalid[ _-]?(?:x[ _-]?)?api[ _-]?key|CODEX_AUTH_EXPIRED|token refresh failed:\s*(?:400|401)|invalid_grant|not logged in|unauthorized|authentication|invalid token/iu.test(
+    /not signed in|(?:run|please|use)\s+\/login\b|invalid[ _-]?(?:x[ _-]?)?api[ _-]?key|unauthorized|token refresh failed:\s*(?:400|401)/iu.test(
       evidence,
     );
   const forbiddenKey =
-    /\b403\b/u.test(evidence) &&
+    statuses.includes(403) &&
     /\b(?:key|token|authorization|authentication)\b/iu.test(evidence);
-  if (!auth && !forbiddenKey && !/\b401\b/u.test(evidence)) return null;
-  return authProvider(evidence, provider);
-}
-function authProvider(
-  evidence: string,
-  provider = process.env.MODEL_PROVIDER ?? "custom",
-): string {
-  if (/CODEX_AUTH_EXPIRED|token refresh failed|invalid_grant/iu.test(evidence))
-    return "codex";
-  if (/ClaudeCliError|oauth session expired|claude auth login/iu.test(evidence))
-    return "claude";
-  return Object.hasOwn(PROVIDERS, provider) ? provider : "custom";
+  return auth || forbiddenKey || statuses.includes(401) ? resolved : null;
 }
 
 const JOB_NAMES: Readonly<Record<string, readonly [string, string]>> = {
@@ -126,8 +161,8 @@ export function modelAuthText(
   const when = authSince(facts, lang);
   const repair = authRepair(provider);
   if (lang === "ru")
-    return `Вход Ивы в ${name} истёк${effects.length ? `, поэтому сейчас недоступны ${effects.join(", ")}` : ""}${when ? ` (с ${when})` : ""}.\nКак починить: на машине, где стоит Ива, ${repair ? `выполните \`${repair}\`` : "замените ключ в /menu → Модель"}, затем напишите мне любое сообщение.`;
-  return `Iva's login to ${name} has expired${effects.length ? `, so these are currently unavailable: ${effects.join(", ")}` : ""}${when ? ` (since ${when})` : ""}.\nHow to fix: on the machine running Iva, ${repair ? `run \`${repair}\`` : "replace the key in /menu → Model"}, then send me any message.`;
+    return `${repair ? `Вход Ивы в ${name} истёк` : "Ключ API, который использует Ива, не принимается"}${effects.length ? `, поэтому сейчас недоступны ${effects.join(", ")}` : ""}${when ? ` (с ${when})` : ""}.\nКак починить: на машине, где стоит Ива, ${repair ? `выполните \`${repair}\`` : "замените ключ в /menu → Модель"}, затем напишите мне любое сообщение.`;
+  return `${repair ? `Iva's login to ${name} has expired` : "The API key used by Iva is not accepted"}${effects.length ? `, so these are currently unavailable: ${effects.join(", ")}` : ""}${when ? ` (since ${when})` : ""}.\nHow to fix: on the machine running Iva, ${repair ? `run \`${repair}\`` : "replace the key in /menu → Model"}, then send me any message.`;
 }
 
 export function modelAuthRecoveryText(

@@ -234,15 +234,20 @@ export async function rememberAccepted<T>(
 function chatQuestion(channel: {
   telegram: Pick<TelegramHandle, "chatId" | "messageThreadId">;
   state: Pick<TelegramChannelState, "chatType">;
-}): { question?: string; media?: boolean; group: boolean } {
+}): {
+  question?: string;
+  media?: boolean;
+  group: boolean;
+  chatId: string | number | undefined;
+} {
   const tg = channel.telegram;
   const group = channel.state.chatType !== "private";
   const asked = tg.chatId
     ? turnQuestion(chatKeyOf(tg.chatId, tg.messageThreadId))
     : undefined;
   return asked === undefined
-    ? { group }
-    : { question: asked.text, media: asked.media, group };
+    ? { group, chatId: tg.chatId }
+    : { question: asked.text, media: asked.media, group, chatId: tg.chatId };
 }
 
 // Сообщение о сбое хода. Простой текст уходит одним sendMessage, как раньше; текст с кнопкой

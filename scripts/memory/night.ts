@@ -1,4 +1,4 @@
-import { modelAuthSuccessLine } from "#lib/model-auth.ts";
+import { modelAuthSuccessLine, modelAuthProvider } from "#lib/model-auth.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -1338,10 +1338,7 @@ async function night(manual: string | undefined): Promise<number> {
 function reportModelAuthSuccess(): void {
   if (call?.modelSuccessAt !== undefined)
     console.error(
-      modelAuthSuccessLine(
-        process.env.MODEL_PROVIDER ?? "ollama",
-        call.modelSuccessAt,
-      ),
+      modelAuthSuccessLine(modelAuthProvider(), call.modelSuccessAt),
     );
 }
 

@@ -1392,13 +1392,13 @@ test("Telegram metadata reaches the Watch turn through precheck and candidate se
   }
 });
 
-test("Watch and Brief receive the same login wording without creating another Alert", async () => {
+test("REPAIR1: Watch and Brief omit obsolete login status from their prompts", async () => {
   const { modelAuthText } = await import("#lib/model-auth.ts");
   const wording = modelAuthText("claude", "en", { answers: true });
   for (const kind of ["watch", "brief"]) {
     let alerts = 0;
     const h = harness({
-      authContext: () => Promise.resolve(`\n${wording}`),
+      ...{ authContext: () => Promise.resolve(`\n${wording}`) },
       recordAlert: () => {
         alerts++;
         return true;
@@ -1427,7 +1427,7 @@ test("Watch and Brief receive the same login wording without creating another Al
       );
     await runProactiveTick(NOON, h.deps);
     assert.ok(
-      h.prompts.some((prompt) => prompt.includes(wording)),
+      h.prompts.every((prompt) => !prompt.includes(wording)),
       kind,
     );
     assert.equal(alerts, 0);

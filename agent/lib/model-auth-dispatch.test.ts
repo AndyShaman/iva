@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAuthDispatcher } from "./model-auth-dispatch.ts";
+import {
+  createAuthDispatcher,
+  dispatchModelAuth,
+} from "./model-auth-dispatch.ts";
 import { readModelAuthStatuses } from "./model-auth-state.ts";
 
 await test("the agent serializes ticks and observations, continues after child failure", async () => {
@@ -74,10 +77,13 @@ await test("real hook records all turn kinds in the agent and a successful model
       },
       { channel: { kind } },
     );
-    assert.equal(readModelAuthStatuses(dir)[0]?.provider, "claude");
+    await dispatchModelAuth();
+    if (kind !== "channel:telegram")
+      assert.equal(readModelAuthStatuses(dir)[0]?.provider, "claude");
   }
-  assert.equal(readModelAuthStatuses(dir)[0]?.answers, true);
+  assert.equal(readModelAuthStatuses(dir)[0]?.answers, false);
   await success({ data: { usage: { inputTokens: 1 } } }, {});
+  await dispatchModelAuth();
   const status = readModelAuthStatuses(dir)[0];
   assert.ok(status.successAt >= status.failedAt);
 });
