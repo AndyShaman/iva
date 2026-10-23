@@ -1029,7 +1029,7 @@ process.stdout.write(JSON.stringify({
 }));
 `;
 
-test("missing authored lock refuses persistence and keeps delivery fail-open", (t) => {
+test("the weekly throttle works on an installation whose agent/ is gone", (t) => {
   const home = dataDir(t);
   const island = join(home, "island");
   const data = join(home, "data");
@@ -1076,11 +1076,18 @@ test("missing authored lock refuses persistence and keeps delivery fail-open", (
   assert.equal(probe.first, "sent");
   assert.equal(
     probe.second,
-    "sent",
-    "missing lock cannot persist the throttle",
+    "throttled",
+    "the throttle must survive without agent/",
   );
   assert.equal(probe.lang, "en", "the language falls back to the environment");
-  assert.equal(existsSync(join(data, "alert-state.json")), false);
+  const statePath = join(data, "alert-state.json");
+  assert.equal(statSync(statePath).mode & 0o777, 0o600);
+  const state: unknown = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(
+    typeof (state as Record<string, { lastSentAt?: unknown }>)["authored-tree"]
+      .lastSentAt,
+    "number",
+  );
 });
 
 // Report ночи: при любых фактах 2–5 строк, провал — одна строка, дат ISO и служебного

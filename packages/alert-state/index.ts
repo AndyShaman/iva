@@ -81,6 +81,7 @@ function writeAlertState(dataDir: string, state: AlertState): boolean {
 
 // Operational scripts resolve the existing lock lazily. The built agent injects its
 // static authored import, because the output package has no source import aliases.
+// Scripts without an authored tree retain their atomic write without a lock.
 type AlertLock = Pick<
   typeof import("#lib/fs-atomic.ts"),
   "acquireFileLockSync" | "releaseFileLock"
@@ -124,13 +125,13 @@ export function updateAlertState(
   }
 }
 
-/** Missing lock implementation also refuses the write. */
+/** The agent always injects its lock; null is the script fallback without agent/. */
 function lockAlertState(
   dataDir: string,
 ):
   NonNullable<ReturnType<AlertLock["acquireFileLockSync"]>> | null | "refused" {
   const lib = alertLock();
-  if (lib === null) return "refused";
+  if (lib === null) return null;
   try {
     const lock = lib.acquireFileLockSync(join(dataDir, "alert-state.lock"), {
       timeoutMs: ALERT_LOCK_WAIT_MS,

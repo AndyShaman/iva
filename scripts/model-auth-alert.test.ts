@@ -382,3 +382,40 @@ test("REPAIR1: owner replies at 23:30 and 00:30 count toward the morning Alert",
   await dispatch();
   assert.deepEqual(f.sent, []);
 });
+
+test("REPAIR2: read-only data still delivers the originating-chat reply", async (t) => {
+  const { chmodSync } = await import("node:fs");
+  const { notifyTelegramFailure } =
+    await import("#lib/telegram-failure-notice.ts");
+  const { noticeSender } = await import("#lib/outbox.ts");
+  const { createAuthDispatcher } = await import("#lib/model-auth-dispatch.ts");
+  const { runAuthAlert } = await import("#lib/model-auth-alert.ts");
+  const f = fixture(t);
+  const direct: string[] = [];
+  const dispatch = createAuthDispatcher((obs) =>
+    runAuthAlert(obs, {
+      dir: f.dir,
+      env: f.env,
+      send: () => Promise.resolve(true),
+    }),
+  );
+  chmodSync(f.dir, 0o500);
+  try {
+    await notifyTelegramFailure(
+      "read-only-auth",
+      "turn",
+      { message: "OAuth session expired" },
+      noticeSender((text) => {
+        direct.push(text);
+        return Promise.resolve();
+      }),
+      { now: START, authDispatch: dispatch },
+    );
+    await dispatch();
+    assert.equal(direct.length, 1);
+    assert.match(direct[0], /\/menu|claude auth login|iva login/u);
+    assert.deepEqual(readAlertState(f.dir), {});
+  } finally {
+    chmodSync(f.dir, 0o700);
+  }
+});

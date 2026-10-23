@@ -216,7 +216,6 @@ export async function runAuthAlert(
 ): Promise<void> {
   const dir = options.dir ?? dataDir();
   if (observation) {
-    observeModelAuth(dir, observation);
     if (observation.reply) {
       try {
         await observation.reply();
@@ -226,6 +225,7 @@ export async function runAuthAlert(
         console.error("model auth reply:", error);
       }
     }
+    observeModelAuth(dir, observation);
   }
   await tickModelAuth({ ...options, dir });
 }
