@@ -86,11 +86,11 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 | ----------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | 🍃 Leaves   | the word-for-word transcript of each day, Iva's replies included                                    | `daily/YYYY-MM-DD.md`                                |
 | 🌿 Branches | summaries folded upward: day → week → month → year                                                  | `summaries/daily/`, `weekly/`, `monthly/`, `yearly/` |
-| 🪵 Trunk    | `CORE.md` (≤1200 chars, in every prompt) + typed cards: contacts, projects, decisions, ideas, notes | `CORE.md`, `cards/`                                  |
+| 🪵 Trunk    | `CORE.md` (≤3600 chars, in every prompt) + typed cards: contacts, projects, decisions, ideas, notes | `CORE.md`, `cards/`                                  |
 
 - Every message lands verbatim in a daily markdown log — nothing is paraphrased on arrival.
 - A nightly rollup at 04:00 distills day → week → month → year into schema-validated cards; facts that change get rewritten, not piled up.
-- One core file, `CORE.md` (≤1,200 chars), rides in every prompt — Iva knows you before it searches anything.
+- One core file, `CORE.md` (≤3,600 chars), rides in every prompt — Iva knows you before it searches anything.
 
 Full architecture and search internals: [docs/memory.md](docs/memory.md).
 

@@ -36,5 +36,4 @@ has no Verdict. Iva can repeat an Outcome after a crash around delivery.
 
 The format extends `helpers.json` with Goals. An older build refuses the new
 keys and leaves the file preserved. Return to a compatible build, or restore
-a saved older-format file for rollback with loss of Goals. Goal stays in beta
-until the owner's word to release it.
+a saved older-format file for rollback with loss of Goals.
