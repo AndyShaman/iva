@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🧠 **Длинный день разбирается за несколько ночей**: обрез пределом сохраняет прогресс, а дни с тремя старыми обрезами сами возвращаются в очередь. Спасибо Стасу (@stan_is_love) за отчёт. Long days continue across nights with saved progress, and days paused after three earlier ceiling cuts automatically return to the queue. Thanks to Stas (@stan_is_love) for the report.
+
 - 🔧 **Ива сообщает о протухшем входе**: Alert приходит с командой починки после тихих часов и повторяется раз в сутки. Успешный вызов модели подтверждает восстановление входа. Iva reports an expired model login with repair instructions after quiet hours, repeats it daily, and confirms recovery after a successful model call.
 
 - 🧹 **Свёртка разговора по команде**: `/compact` сворачивает разговор и показывает изменение размера по первому входу после свёртки. Автосвёртка начинается со 110 000 входных токенов. `/compact` compresses the conversation and reports its size on the first measured input afterward; automatic compaction now starts at 110,000 input tokens.

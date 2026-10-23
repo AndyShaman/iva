@@ -1266,7 +1266,7 @@ async function runDays(dates: readonly string[]) {
       }
       if (error instanceof call.NightCeilingError) {
         console.error(`memory-night: обрез пределом ночи на ${date}`);
-        return { done, code: 1, stop: attemptDay(date, "cut") };
+        return { done, code: 1 };
       }
       if (!(error instanceof call.NightSchemaError)) throw error;
       code = 1;

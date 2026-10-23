@@ -22,7 +22,7 @@ Save ==
   /\ savedThrough' = IF cursor' > savedThrough THEN cursor' ELSE savedThrough
   /\ phase' = IF cursor' = Parts THEN "publish" ELSE "ask"
   /\ UNCHANGED <<received, failures, result, crashed, askedSaved, realFailures, interruptions>>
-\* Only actual day failures/ceiling cuts consume an Attempt.
+\* Only actual day failures consume an Attempt.
 \* Process death/deadline before an observed failure consumes no Attempt.
 Interrupt ==
   /\ phase \in {"ask", "received", "publish"}
@@ -35,8 +35,10 @@ Crash ==
   /\ ~crashed /\ phase \in {"ask", "received", "publish"}
   /\ phase' = "interrupted" /\ crashed' = TRUE
   /\ UNCHANGED <<cursor, saved, received, failures, result, savedThrough, askedSaved, realFailures, interruptions>>
+\* Ceiling cuts, like temporary outages/deadlines, preserve attempts and saved A.
+\* CountTransient is the mutant that counts these interruptions as day failures.
 Transient ==
-  /\ phase \in {"ask", "received", "publish"} /\ interruptions < 2
+  /\ phase \in {"ask", "received", "publish"} /\ interruptions < MaxAttempts + 1
   /\ phase' = "interrupted" /\ interruptions' = interruptions + 1
   /\ failures' = IF CountTransient THEN failures + 1 ELSE failures
   /\ UNCHANGED <<cursor, saved, received, result, crashed, savedThrough, askedSaved, realFailures>>
@@ -60,7 +62,7 @@ TypeOK == /\ phase \in {"ask", "received", "publish", "interrupted", "paused", "
           /\ saved \in Seq(1..Parts) /\ result \in Seq(1..Parts)
           /\ failures \in 0..(MaxAttempts + 1) /\ crashed \in BOOLEAN
           /\ savedThrough \in 0..Parts /\ askedSaved \in BOOLEAN
-          /\ realFailures \in 0..(MaxAttempts + 1) /\ interruptions \in 0..2
+          /\ realFailures \in 0..(MaxAttempts + 1) /\ interruptions \in 0..(MaxAttempts + 1)
 \* Each saved answer contributes once, in the same order as an uninterrupted day.
 PortionsAppliedOnce == saved = [i \in 1..Len(saved) |-> i]
 SameResult == phase = "done" => result = [i \in 1..Parts |-> i]

@@ -885,7 +885,7 @@ void test("открытый фенс и чужой файл на месте но
   ]);
 });
 
-void test("предел ночи: большой расход на A — B не начат, попытка cut, код 1; без usage следующий вызов закрыт", async (t) => {
+void test("предел ночи: большой расход на A — B не начат, попытки сохранены, код 1; без usage следующий вызов закрыт", async (t) => {
   const fx = await fixture(t);
   day(fx, "## 10:00 [text]\nАврора\n");
   card(fx, "cards/projects/аврора", aurora);
@@ -908,7 +908,7 @@ void test("предел ночи: большой расход на A — B не 
   assert.equal(cut.code, 1);
   assert.equal(fx.model.prompts.length, 1);
   assert.match(cut.stderr, /обрез пределом ночи/u);
-  assert.match(read(join(fx.data, "rollup-attempts.json")), /"cut"/u);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
   assert.equal(existsSync(summary(fx)), false);
   fx.model.replies = [
     { usage: null, value: B({ card: "cards/projects/аврора" }) },
@@ -1388,7 +1388,10 @@ for (const closed of ["skip", "pause"] as const)
     );
     if (closed === "pause") {
       const at = "2026-09-20T00:00:00.000Z";
-      const tries = Array.from({ length: 3 }, () => ({ at, reason: "cut" }));
+      const tries = Array.from({ length: 3 }, () => ({
+        at,
+        reason: "no-report",
+      }));
       writeFileSync(
         join(fx.data, "rollup-attempts.json"),
         JSON.stringify({ [days[6]]: tries }),
@@ -1465,7 +1468,7 @@ void test("поздняя выжимка дня пересобирает нед�
   const at = "2026-12-21T00:00:00.000Z";
   writeFileSync(
     join(fx.data, "rollup-attempts.json"),
-    JSON.stringify({ [week[6]]: Array(3).fill({ at, reason: "cut" }) }),
+    JSON.stringify({ [week[6]]: Array(3).fill({ at, reason: "no-report" }) }),
   );
   fx.model.replies = [
     periodReply("неделя"),
@@ -1506,7 +1509,9 @@ void test("существующая неделя вне окна пересоб�
   const at = "2026-08-21T00:00:00.000Z";
   writeFileSync(
     join(fx.data, "rollup-attempts.json"),
-    JSON.stringify({ "2026-08-20": Array(3).fill({ at, reason: "cut" }) }),
+    JSON.stringify({
+      "2026-08-20": Array(3).fill({ at, reason: "no-report" }),
+    }),
   );
   fx.model.replies = [periodReply("неделя 34"), periodReply("август")];
   const first = await night(fx, null, now);
@@ -2997,7 +3002,7 @@ void test("#309: night ceiling preserves a completed portion for the next night"
   ];
   const cut = await night(fx);
   assert.equal(cut.code, 1, cut.stderr);
-  assert.match(read(join(fx.data, "rollup-attempts.json")), /"cut"/u);
+  assert.equal(existsSync(join(fx.data, "rollup-attempts.json")), false);
   assert.equal(fx.model.prompts.length, 1);
   fx.model.replies = [
     A({
@@ -3077,3 +3082,103 @@ void test("#341: genuine day failures still exhaust the three day attempts", asy
   );
   assert.equal(existsSync(summary(fx)), false);
 });
+
+// Стас, 23.10: настоящий процесс с обычным пределом 40 вызовов / 300k.
+// 52k повторяет расход из отчёта; 150k даёт больше трёх обрезов за день.
+for (const [scenario, usage, legacy] of [
+  ["a: 11 частей за несколько ночей", 52_000, false],
+  ["b: сохранённый прогресс переживает больше трёх обрезов", 150_000, false],
+  ["c: три старых cut возвращают день в очередь", 52_000, true],
+] as const)
+  void test(`Стас: ${scenario}`, async (t) => {
+    const fx = await fixture(t);
+    const raw = Array.from(
+      { length: 11 },
+      (_, i) =>
+        `## ${String(i + 1).padStart(2, "0")}:00 [text]\n${String.fromCharCode(97 + i).repeat(30_000)}\n`,
+    ).join("\n");
+    const daily = day(fx, raw);
+    const answers = Array.from({ length: 11 }, (_, i) =>
+      A({
+        gist: `saved-part-${i + 1}`,
+        points: Array.from({ length: i + 1 }, (_, j) => ({
+          text: `point-${j + 1}`,
+          src: [`e${j + 1}`],
+        })),
+      }),
+    );
+    const attemptFile = join(fx.data, "rollup-attempts.json");
+    const before = JSON.stringify({
+      [DATE]: Array.from({ length: 3 }, () => ({ at: NOW, reason: "cut" })),
+    });
+    if (legacy) writeFileSync(attemptFile, before);
+    fx.model.replies = answers.map((value) => ({ usage, value }));
+    const cacheFile = join(fx.data, "memory/night", `${DATE}.json`);
+    let saved = 0;
+    let cuts = 0;
+    for (let n = 0; n < 12; n++) {
+      const called = fx.model.prompts.length;
+      // Каждый запуск заново выбирает очередь, как следующая ночь по расписанию.
+      const result = await night(fx, null);
+      assert.ok(fx.model.prompts.length > called, result.stderr);
+      assert.doesNotMatch(result.stderr, /rollup-day-paused/u);
+      if (existsSync(summary(fx))) {
+        assert.equal(result.code, 0, result.stderr);
+        break;
+      }
+      assert.equal(result.code, 1, result.stderr);
+      assert.match(result.stderr, /обрез пределом ночи/u);
+      cuts++;
+      const cache = JSON.parse(read(cacheFile)) as {
+        pass: { progress: { answers: unknown[] } };
+      };
+      const progress = cache.pass.progress.answers;
+      assert.ok(progress.length > saved);
+      assert.deepEqual(progress, answers.slice(0, progress.length));
+      saved = progress.length;
+      // Обрез сохраняет прежний файл, включая читаемые при откате cut.
+      assert.equal(existsSync(attemptFile), legacy);
+      if (legacy) assert.equal(read(attemptFile), before);
+      assert.equal(read(daily), raw);
+    }
+    assert.ok(cuts >= (usage === 150_000 ? 4 : 1));
+    assert.equal(
+      fx.model.prompts.length,
+      11,
+      "каждая часть A вызвана один раз",
+    );
+    assert.equal(fx.model.replies.length, 0);
+    for (let i = 0; i < 11; i++) {
+      for (let j = 0; j < i; j++)
+        assert.ok(fx.model.prompts[i].includes(`saved-part-${j + 1}`));
+      for (let j = 0; j < 11; j++)
+        assert.equal(
+          fx.model.prompts[i].includes(String.fromCharCode(97 + j).repeat(100)),
+          i === j,
+          `вызов ${i + 1} читает только свою часть ${j + 1}`,
+        );
+    }
+    const text = read(summary(fx));
+    for (let i = 0; i < 11; i++)
+      assert.ok(text.includes(`- point-${i + 1} · [[daily/${DATE}]]`));
+    assert.equal(readdirSync(join(fx.vault, "summaries/daily")).length, 1);
+    assert.equal((read(daily).match(/<!-- processed:/gu) ?? []).length, 1);
+    const reference = await fixture(t);
+    day(reference, raw);
+    reference.model.replies = answers;
+    const uninterrupted = await night(reference, null);
+    assert.equal(uninterrupted.code, 0, uninterrupted.stderr);
+    assert.equal(
+      text,
+      read(summary(reference)),
+      "полная выжимка совпадает с цельным разбором",
+    );
+    if (existsSync(attemptFile))
+      assert.deepEqual(JSON.parse(read(attemptFile)), {});
+    const head = git(fx.vault, "rev-parse", "HEAD");
+    const repeated = await night(fx, null);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    assert.equal(fx.model.prompts.length, 11);
+    assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
+    t.diagnostic(`11 частей, ${cuts + 1} ночей, ${cuts} обрезов, 11 вызовов A`);
+  });
