@@ -22,5 +22,6 @@ Iva is a self-hosted Telegram AI assistant with layered memory that turns your m
 - [philosophy.md](philosophy.md) — skill over code, the thin harness, the wheel principle (Russian only)
 - [adr/](adr/) — the decisions that bind the code: what was chosen, why, and what was rejected (Russian only)
 - [tech-debt.md](tech-debt.md) — known gaps and deferred decisions, tracked in the open
+- [brand.md](brand.md) — the IVA logo: colors, variants, clear space and what not to do
 
 Документация на русском: [ru/](ru/)

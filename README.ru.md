@@ -2,7 +2,12 @@
 
 <div align="center">
 
-<img src="assets/iva-header.webp" alt="Iva - персональный AI-ассистент в Telegram. Многослойная память. Ваш сервер." width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-dark.svg">
+  <img src="docs/brand/logo-light.svg" alt="IVA" width="320">
+</picture>
+
+**Персональный AI-ассистент в Telegram. Многослойная память. Ваш сервер.**
 
 [![Release](https://img.shields.io/github/v/release/smixs/iva-agent?color=brightgreen)](https://github.com/smixs/iva-agent/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
