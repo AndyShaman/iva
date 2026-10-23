@@ -7,7 +7,7 @@
   <img src="docs/brand/logo-light.svg" alt="IVA" width="320">
 </picture>
 
-**Your personal AI in Telegram. Layered memory. Your server.**
+**Your personal AI assistant in Telegram.**
 
 [![Release](https://img.shields.io/github/v/release/smixs/iva-agent?color=brightgreen)](https://github.com/smixs/iva-agent/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
