@@ -949,14 +949,14 @@ test("/compact в группах адресуется как /new; постор�
   assert.equal(manualRequests.length, 0);
 });
 
-test("/compact есть в /help и синем меню на проводе setMyCommands", async () => {
+test("/compact скрыта в /help и синем меню на проводе setMyCommands", async () => {
   await handleControl(compactUpdate(705, "/help"));
-  assert.match(sentText(), /\/compact/);
+  assert.doesNotMatch(sentText(), /\/compact/);
   await registerBotCommands();
   const menus = apiCalls.filter((call) => call.method === "setMyCommands");
   assert.equal(menus.length, 2);
   for (const menu of menus)
-    assert.match(JSON.stringify(menu.body), /"command":"compact"/);
+    assert.doesNotMatch(JSON.stringify(menu.body), /"command":"compact"/);
 });
 
 test("роут /compact проверяет секрет и формат до захвата чата", async () => {

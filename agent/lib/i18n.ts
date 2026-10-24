@@ -84,7 +84,6 @@ export const COMMANDS: ReadonlyArray<Command> = [
     en: "start over (reset the current conversation)",
     ru: "начать диалог заново",
   },
-  { command: "compact", en: "compress the conversation", ru: "сжать разговор" },
   {
     command: "restart",
     en: "restart the agent if it's stuck",

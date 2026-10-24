@@ -106,7 +106,7 @@ test("unknown settings.language falls through to env then default", () => {
   assert.equal(probe({ language: "de" }).lang, "ru");
 });
 
-test("COMMANDS is the single source: menu first, all control commands present", () => {
+test("COMMANDS is the single source: menu first, advertised commands present", () => {
   const { commands } = probe();
   assert.equal(commands[0], "menu");
   const expected = [
@@ -115,7 +115,6 @@ test("COMMANDS is the single source: menu first, all control commands present", 
     "start",
     "stop",
     "new",
-    "compact",
     "restart",
     "update",
     "model",
@@ -137,8 +136,8 @@ test("helpText renders /menu and respects the language", () => {
   assert.match(ru, /^Команды Iva:/);
   assert.match(ru, /\/menu — меню настроек/);
   assert.match(ru, /\/help — этот список/);
-  assert.match(ru, /\/compact — сжать разговор/);
-  assert.match(en, /\/compact — compress the conversation/);
+  assert.doesNotMatch(ru, /\/compact/);
+  assert.doesNotMatch(en, /\/compact/);
 });
 
 test("helpText keeps the argument hints from the original help", () => {
@@ -154,7 +153,7 @@ test("helpText keeps the argument hints from the original help", () => {
 
 test("botCommands returns Telegram command objects per language", () => {
   const { botEn, botRu } = probe();
-  assert.equal(botEn.length, 14);
+  assert.equal(botEn.length, 13);
   assert.equal(botEn[0].command, "menu");
   assert.equal(botEn[0].description, "settings menu");
   assert.equal(botRu[0].description, "меню настроек");
