@@ -12,6 +12,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -184,6 +185,71 @@ function spawnNight(
     HOOKS,
     "--import",
     CLOCK,
+    ...(env.IVA_TEST_NIGHT_TRACE || env.IVA_TEST_NIGHT_CRASH
+      ? [
+          "--import",
+          `data:text/javascript,${encodeURIComponent(`
+      import fs from "node:fs";
+      import cp from "node:child_process";
+      import { relative } from "node:path";
+      import { syncBuiltinESMExports } from "node:module";
+      const append = fs.appendFileSync;
+      const rename = fs.renameSync;
+      const exec = cp.execFile;
+      const counts = new Map();
+      const dataRoot = fs.realpathSync(process.env.ASSISTANT_DATA_DIR);
+      const vaultRoot = fs.realpathSync(process.env.ASSISTANT_VAULT_DIR);
+      const count = (key) => {
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
+        return key + "#" + n;
+      };
+      const point = (key) => {
+        if (process.env.IVA_TEST_NIGHT_TRACE)
+          append(process.env.IVA_TEST_NIGHT_TRACE, key + "\\n");
+        if (key === process.env.IVA_TEST_NIGHT_CRASH) {
+          fs.writeSync(2, "NIGHT_CRASH " + key + "\\n");
+          process.kill(process.pid, "SIGKILL");
+        }
+      };
+      const pathKey = (file) => {
+        const path = fs.existsSync(file) ? fs.realpathSync(file) : String(file);
+        if (path.startsWith(dataRoot + "/memory/night/"))
+          return "cache:" + relative(dataRoot, path);
+        if (path.startsWith(vaultRoot + "/") && path.endsWith(".md"))
+          return "vault:" + relative(vaultRoot, path);
+        return null;
+      };
+      fs.renameSync = (from, to) => {
+        const path = pathKey(to);
+        const key = path ? count("rename:" + path) : null;
+        if (key) point(key + ":before");
+        const result = rename(from, to);
+        if (key) point(key + ":after");
+        return result;
+      };
+      fs.appendFileSync = (file, ...args) => {
+        const path = pathKey(file);
+        const key = path ? count("append:" + path) : null;
+        if (key) point(key + ":before");
+        const result = append(file, ...args);
+        if (key) point(key + ":after");
+        return result;
+      };
+      cp.execFile = (file, args, options, callback) => {
+        if (file !== "git" || !args.includes("commit"))
+          return exec(file, args, options, callback);
+        const key = count("commit:" + args[args.indexOf("-m") + 1]);
+        point(key + ":before");
+        return exec(file, args, options, (...result) => {
+          point(key + ":after");
+          callback(...result);
+        });
+      };
+      syncBuiltinESMExports();
+    `)}`,
+        ]
+      : []),
     ...(env.IVA_TEST_SUMMARY_CRASH
       ? [
           "--import",
@@ -222,7 +288,7 @@ function spawnNight(
     `)}`,
         ]
       : []),
-    NIGHT,
+    env.IVA_TEST_NIGHT_ENTRY ?? NIGHT,
     ...(date ? [date] : []),
   ];
   const child: ChildProcess = spawn(process.execPath, args, {
@@ -250,8 +316,12 @@ function spawnNight(
   child
     .stderr!.setEncoding("utf8")
     .on("data", (chunk: string) => (stderr += chunk));
-  const result = new Promise<{ code: number | null; stderr: string }>(
-    (accept) => child.once("close", (code) => accept({ code, stderr })),
+  const result = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    stderr: string;
+  }>((accept) =>
+    child.once("close", (code, signal) => accept({ code, signal, stderr })),
   );
   return { child, result };
 }
@@ -394,8 +464,10 @@ for (const tracked of [false, true]) {
     assert.equal(git(fx.vault, "ls-files", `summaries/daily/${DATE}.md`), "");
     const cache = JSON.parse(
       read(join(fx.data, "memory/night", `${DATE}.json`)),
-    ) as { completedAt?: string };
-    assert.ok(cache.completedAt);
+    ) as { pass?: unknown; through: number; writtenSummaryHash: string };
+    assert.equal(cache.pass, undefined);
+    assert.equal(cache.through, 1);
+    assert.match(cache.writtenSummaryHash, /^[a-f0-9]{64}$/u);
     if (tracked)
       assert.match(
         git(fx.vault, "show", `HEAD:daily/${DATE}.md`),
@@ -1262,6 +1334,140 @@ for (const accepted of [false, true])
     );
   });
 
+void test("night clean: retention uses completedAt after mtime changes", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nПросто день\n");
+  fx.model.replies = [A()];
+  const first = await night(fx);
+  assert.equal(first.code, 0, first.stderr);
+  const file = join(fx.data, "memory/night", `${DATE}.json`);
+  const cache = JSON.parse(read(file)) as Record<string, unknown>;
+  assert.equal(
+    new Date(String(cache.completedAt)).toISOString().slice(0, 10),
+    TODAY,
+  );
+  const old = new Date(Date.parse(NOW) - 15 * 86_400_000);
+  utimesSync(file, old, old);
+  const again = await night(fx, null);
+  assert.equal(again.code, 0, again.stderr);
+  assert.ok(existsSync(file), "copied mtime cannot expire a fresh completion");
+  cache.completedAt = old.toISOString();
+  writeFileSync(file, JSON.stringify(cache));
+  const expired = await night(fx, null);
+  assert.equal(expired.code, 0, expired.stderr);
+  assert.equal(existsSync(file), false);
+  assert.equal(fx.model.prompts.length, 1);
+  assert.ok(existsSync(summary(fx)), "expiry preserves the published result");
+});
+
+// The acceptance command supplies the frozen 0.5.6 executable from the evidence
+// tree. Ordinary installs and source archives need no git history to run tests.
+if (process.env.IVA_NIGHT_ROLLBACK_ENTRY) {
+  const oldNight = {
+    IVA_TEST_NIGHT_ENTRY: process.env.IVA_NIGHT_ROLLBACK_ENTRY,
+  };
+  void test("night clean: 0.5.6 reads a completed new cache and preserves its results", async (t) => {
+    const fx = await fixture(t);
+    const daily = day(fx, "## 10:00 [text]\nЛюблю чай\n");
+    fx.model.replies = [
+      A({ core: [{ text: "Любит чай", src: "e1" }] }),
+      { sections: [{ section: "Предпочтения", text: "- Любит чай" }] },
+    ];
+    const first = await night(fx);
+    assert.equal(first.code, 0, first.stderr);
+    const files = [daily, summary(fx), join(fx.vault, "CORE.md")];
+    const before = files.map(read);
+    const file = join(fx.data, "memory/night", `${DATE}.json`);
+    const old = new Date(Date.parse(NOW) - 15 * 86_400_000);
+    utimesSync(file, old, old);
+    const rolledBack = await night(fx, null, oldNight);
+    assert.equal(rolledBack.code, 0, rolledBack.stderr);
+    assert.deepEqual(files.map(read), before);
+    assert.equal(
+      fx.model.prompts.length,
+      2,
+      "0.5.6 does not repeat completed A or C",
+    );
+    assert.ok(
+      existsSync(file),
+      "0.5.6 also ignores mtime for a fresh completion",
+    );
+    const cache = JSON.parse(read(file)) as Record<string, unknown>;
+    cache.completedAt = old.toISOString();
+    writeFileSync(file, JSON.stringify(cache));
+    const expired = await night(fx, null, oldNight);
+    assert.equal(expired.code, 0, expired.stderr);
+    assert.equal(
+      existsSync(file),
+      false,
+      "0.5.6 retains its normal cleanup semantics",
+    );
+    assert.deepEqual(files.map(read), before);
+  });
+
+  void test("night clean: 0.5.6 resumes a saved A portion produced by the new night", async (t) => {
+    const fx = await fixture(t);
+    day(
+      fx,
+      `## 10:00 [text]\n${"a".repeat(30_000)}\n\n## 11:00 [text]\n${"b".repeat(30_000)}\n`,
+    );
+    fx.model.replies = [A({ gist: "saved first portion" }), { status: 401 }];
+    const stopped = await night(fx);
+    assert.equal(stopped.code, 1, stopped.stderr);
+    const file = join(fx.data, "memory/night", `${DATE}.json`);
+    const cache = JSON.parse(read(file)) as {
+      pass: { progress: { answers: unknown[] } };
+    };
+    assert.equal(cache.pass.progress.answers.length, 1);
+    fx.model.replies = [A({ gist: "0.5.6 finished the day" })];
+    const rolledBack = await night(fx, DATE, oldNight);
+    assert.equal(rolledBack.code, 0, rolledBack.stderr);
+    assert.equal(
+      fx.model.prompts.length,
+      3,
+      "the saved first A is not requested again",
+    );
+    assert.match(fx.model.prompts[2], /saved first portion/u);
+    assert.match(read(summary(fx)), /0\.5\.6 finished the day/u);
+    assert.equal(
+      (JSON.parse(read(file)) as { pass?: unknown }).pass,
+      undefined,
+    );
+  });
+}
+
+for (const waiting of ["pass", "pending", "core"] as const)
+  void test(`night clean: retention never expires waiting ${waiting}`, async (t) => {
+    const fx = await fixture(t);
+    day(fx, "## 10:00 [text]\nПросто день\n");
+    fx.model.replies = [A()];
+    assert.equal((await night(fx)).code, 0);
+    const cache = JSON.parse(
+      read(join(fx.data, "memory/night", `${DATE}.json`)),
+    ) as Record<string, unknown>;
+    cache.date = "2026-09-01";
+    cache.completedAt = "2026-09-01T12:00:00.000Z";
+    if (waiting === "pass")
+      cache.pass = { from: 0, upto: 1, created: {}, b: {} };
+    if (waiting === "pending") cache.pending = { "cards/missing": ["- факт"] };
+    if (waiting === "core") {
+      cache.core = [
+        { id: "waiting", text: "Любит чай", source: "[[daily/2026-09-01]]" },
+      ];
+      const overlong = {
+        sections: [{ section: "Предпочтения", text: "x".repeat(4000) }],
+      };
+      fx.model.replies = [overlong, overlong];
+    }
+    const file = join(fx.data, "memory/night/2026-09-01.json");
+    writeFileSync(file, JSON.stringify(cache));
+    const old = new Date(Date.parse(NOW) - 15 * 86_400_000);
+    utimesSync(file, old, old);
+    const again = await night(fx, null);
+    assert.equal(again.code, 0, again.stderr);
+    assert.deepEqual(JSON.parse(read(file)), cache);
+  });
+
 for (const coreDone of [false, true])
   void test(`night clean: reads 0.5.6 candidates with coreDone=${coreDone}`, async (t) => {
     const fx = await fixture(t);
@@ -1581,6 +1787,85 @@ void test("поздняя выжимка дня пересобирает нед�
   assert.equal(second.code, 0, second.stderr);
   assert.equal(fx.model.prompts.length, 6, second.stderr);
 });
+
+void test(
+  "night clean: SIGKILL matrix for week, month and year publication",
+  { timeout: 60_000 },
+  async (t) => {
+    const env = pinned("2027-01-06T12:00:00.000Z");
+    const files = [
+      "weekly/2026-W51.md",
+      "monthly/2026-12.md",
+      "yearly/2026.md",
+    ];
+    const answers = [
+      periodReply("неделя"),
+      periodReply("декабрь"),
+      periodReply("год"),
+    ];
+    const setup = async (context: TestContext) => {
+      const fx = await fixture(context);
+      daySummaries(
+        fx,
+        ["14", "15", "16", "17", "18", "19", "20"].map((d) => `2026-12-${d}`),
+        "h1",
+      );
+      commit(fx.vault, "period inputs");
+      fx.model.replies = [...answers];
+      return fx;
+    };
+    const reference = await setup(t);
+    const trace = join(reference.data, "period-boundaries.txt");
+    const complete = await night(reference, null, {
+      ...env,
+      IVA_TEST_NIGHT_TRACE: trace,
+    });
+    assert.equal(complete.code, 0, complete.stderr);
+    const points = read(trace).trim().split("\n");
+    assert.equal(
+      points.length,
+      12,
+      "rename and commit before/after each of three periods",
+    );
+    const expected = files.map((file) => read(join(reference.vault, file)));
+    const outcomes: string[] = [];
+    for (const point of points)
+      await t.test(point, { timeout: 10_000 }, async (part) => {
+        const fx = await setup(part);
+        const run = spawnNight(fx, null, {
+          ...env,
+          IVA_TEST_NIGHT_CRASH: point,
+        });
+        part.after(() => run.child.kill("SIGKILL"));
+        const stopped = await run.result;
+        assert.equal(stopped.signal, "SIGKILL", stopped.stderr);
+        assert.ok(stopped.stderr.includes(`NIGHT_CRASH ${point}`));
+        fx.model.replies = answers.filter(
+          (_answer, index) => !existsSync(join(fx.vault, files[index])),
+        );
+        const resumed = await night(fx, null, env);
+        assert.equal(resumed.code, 0, resumed.stderr);
+        assert.deepEqual(
+          files.map((file) => read(join(fx.vault, file))),
+          expected,
+        );
+        assert.equal(
+          git(fx.vault, "status", "--porcelain", "--", ...files),
+          "",
+        );
+        const count = fx.model.prompts.length;
+        const repeated = await night(fx, null, env);
+        assert.equal(repeated.code, 0, repeated.stderr);
+        assert.equal(fx.model.prompts.length, count);
+        outcomes.push(point);
+        if (process.env.IVA_NIGHT_MATRIX_EVIDENCE)
+          writeFileSync(
+            `${process.env.IVA_NIGHT_MATRIX_EVIDENCE}.periods.json`,
+            JSON.stringify({ points, outcomes }, null, 2),
+          );
+      });
+  },
+);
 
 // Ремонт (Sol r2b P1): неделя старше окна уже собрана без дня на паузе, месяц тоже; день
 // получил выжимку позже. Зависимый обход берёт и существующих детей, due() по хешу решает:
@@ -3273,6 +3558,153 @@ for (const [scenario, usage, legacy] of [
     assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
     t.diagnostic(`11 частей, ${cuts + 1} ночей, ${cuts} обрезов, 11 вызовов A`);
   });
+
+void test(
+  "night clean: SIGKILL matrix at every durable day and CORE boundary",
+  { timeout: 180_000 },
+  async (t) => {
+    const answerA = A({
+      new_cards: [newAurora],
+      facts: [
+        {
+          card: "Аврора",
+          text: "Проект запущен",
+          src: "e1",
+          quote: "Запустил проект Аврора",
+        },
+        {
+          card: "cards/projects/вега",
+          text: "Вега запущена",
+          src: "e1",
+          quote: "Вега",
+        },
+      ],
+      aliases: [{ card: "Аврора", alias: "Аврора", src: "e1" }],
+      links: [{ a: "Аврора", b: "cards/projects/вега", src: "e1" }],
+      core: [{ text: "Любит чай", src: "e1" }],
+    });
+    const answerB = B(
+      { card: "cards/projects/аврора", truth: "Проект запущен" },
+      { card: "cards/projects/вега", truth: "Вега связана с Авророй" },
+    );
+    const answerC = {
+      sections: [{ section: "Предпочтения", text: "- Любит чай" }],
+    };
+    const setup = async (context: TestContext) => {
+      const fx = await fixture(context);
+      day(fx, "## 10:00 [text]\nЗапустил проект Аврора и Вега. Люблю чай\n");
+      card(
+        fx,
+        "cards/projects/вега",
+        aurora.map((line) => line.replace("Аврора", "Вега")),
+      );
+      fx.model.replies = [answerA, answerB, answerC];
+      return fx;
+    };
+    const reference = await setup(t);
+    const trace = join(reference.data, "boundaries.txt");
+    const complete = await night(reference, DATE, {
+      IVA_TEST_NIGHT_TRACE: trace,
+    });
+    assert.equal(complete.code, 0, complete.stderr);
+    const points = read(trace).trim().split("\n");
+    assert.equal(new Set(points).size, points.length);
+    for (const family of [
+      "rename:cache:",
+      "rename:vault:cards/",
+      "rename:vault:summaries/",
+      "append:vault:daily/",
+      "rename:vault:CORE.md",
+      "commit:",
+    ])
+      assert.ok(
+        points.some((point) => point.startsWith(family)),
+        family,
+      );
+    const files = [
+      `daily/${DATE}.md`,
+      `summaries/daily/${DATE}.md`,
+      "cards/projects/аврора.md",
+      "cards/projects/вега.md",
+      "CORE.md",
+    ];
+    const expected = files.map((file) => read(join(reference.vault, file)));
+    const outcomes: Array<{ point: string; calls: number }> = [];
+    for (const point of points)
+      await t.test(point, { timeout: 15_000 }, async (part) => {
+        const fx = await setup(part);
+        const run = spawnNight(fx, DATE, { IVA_TEST_NIGHT_CRASH: point });
+        part.after(() => run.child.kill("SIGKILL"));
+        const stopped = await run.result;
+        assert.equal(stopped.signal, "SIGKILL", stopped.stderr);
+        assert.ok(
+          stopped.stderr.includes(`NIGHT_CRASH ${point}`),
+          stopped.stderr,
+        );
+        const file = join(fx.data, "memory/night", `${DATE}.json`);
+        const cache = existsSync(file)
+          ? (JSON.parse(read(file)) as {
+              core: unknown[];
+              pass?: {
+                a?: unknown[];
+                progress?: { answers: unknown[] };
+                b: Record<string, unknown>;
+              };
+            })
+          : null;
+        const replies: unknown[] = [];
+        if (!cache || cache.pass) {
+          if (!cache?.pass?.a && !cache?.pass?.progress?.answers.length)
+            replies.push(answerA);
+          if (!cache?.pass?.b["cards/projects/аврора"]) replies.push(answerB);
+        }
+        if (!cache || cache.pass || cache.core.length) replies.push(answerC);
+        fx.model.replies = replies;
+        // The killed holder is gone. Age its real lock directory past the normal
+        // 15-second grace without sleeping or changing the lock implementation.
+        const lock = join(fx.vault, "cards/.write_card.lock");
+        if (existsSync(lock)) {
+          const stale = new Date(Date.parse(NOW) - 30_000);
+          utimesSync(lock, stale, stale);
+        }
+        const resumed = await night(fx);
+        assert.equal(resumed.code, 0, resumed.stderr);
+        assert.deepEqual(
+          files.map((file) => read(join(fx.vault, file))),
+          expected,
+        );
+        assert.equal(
+          git(fx.vault, "status", "--porcelain", "--", ...files),
+          "",
+        );
+        const final = JSON.parse(read(file)) as Record<string, unknown>;
+        assert.equal(final.pass, undefined);
+        assert.equal(Object.hasOwn(final, "coreDone"), false);
+        assert.equal(
+          new Date(String(final.completedAt)).toISOString().slice(0, 10),
+          TODAY,
+        );
+        assert.deepEqual(final.core, []);
+        const count = fx.model.prompts.length;
+        const repeated = await night(fx, null);
+        assert.equal(repeated.code, 0, repeated.stderr);
+        assert.equal(
+          fx.model.prompts.length,
+          count,
+          "settled results never call the model again",
+        );
+        outcomes.push({ point, calls: count });
+        if (process.env.IVA_NIGHT_MATRIX_EVIDENCE)
+          writeFileSync(
+            process.env.IVA_NIGHT_MATRIX_EVIDENCE,
+            JSON.stringify({ points, outcomes }, null, 2),
+          );
+      });
+    t.diagnostic(
+      `${outcomes.length} durable boundaries: SIGKILL, resume, identical results, no repeat after completion`,
+    );
+  },
+);
 
 for (const boundary of ["before", "after"] as const)
   for (const previous of [false, true])

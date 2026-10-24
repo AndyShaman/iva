@@ -10,10 +10,10 @@ CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash, Re
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
-VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass
+VARIABLES summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryHasResult
 
 cardVars == <<phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce>>
-summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+summaryVars == <<summaryFile, summarySeen, summaryExpected, summaryPhase, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryHasResult>>
 vars == <<cardVars, summaryVars>>
 
 Init ==
@@ -29,10 +29,11 @@ Init ==
   /\ crashedOnce = FALSE
   /\ summaryFile \in {"absent", "old"}
   /\ summarySeen = summaryFile /\ summaryExpected = summaryFile
-  \* Night 2 also starts from a closed 0.5.5 cache with no publication hash.
+  \* A closed legacy cache has no publication hash. completedAt remembers its
+  \* publication independently of the current file mtime (ADR-0002).
   /\ summaryNight \in {1, 2}
   /\ summaryPhase = IF summaryNight = 2 THEN "done" ELSE "idle"
-  /\ summaryHuman = FALSE /\ summaryLatePass = (summaryNight = 2)
+  /\ summaryHuman = FALSE /\ summaryHasResult = (summaryNight = 2)
   /\ summaryWritten = "absent" /\ summaryOutput = "new"
 
 Keep(v) == UNCHANGED <<v, summaryVars>>
@@ -42,14 +43,14 @@ OpenSummaryPass ==
   /\ summaryPhase = "idle"
   /\ summaryPhase' = "open"
   /\ summarySeen' = summaryFile /\ summaryExpected' = summaryFile
-  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+  /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryHasResult>>
 
 EditSummary ==
   /\ summaryPhase \in {"idle", "open", "prepared", "published", "done"} /\ ~summaryHuman
   /\ (summaryPhase # "prepared" \/ ~HumanPublishStable)
   /\ (summaryPhase # "idle" \/ summaryNight > 1)
   /\ summaryFile' = "human" /\ summaryHuman' = TRUE
-  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight, summaryWritten, summaryOutput, summaryHasResult>>
 
 \* Two durable writes, with a restart possible between them.
 \* SummaryFileFirst = FALSE is the old hash-before-file ordering mutant.
@@ -60,30 +61,30 @@ PublishSummary ==
                         /\ ~CompareRecomputedSummary THEN summaryWritten ELSE seen
          conflict == summaryFile # summaryOutput /\
                        ((RememberWrittenSummaryHash /\ summaryWritten = "absent"
-                          /\ summaryLatePass /\ summaryFile # "absent")
+                          /\ summaryHasResult /\ summaryFile # "absent")
                          \/ summaryFile # expected)
      IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "prepared"
         /\ summaryFile' = IF conflict \/ ~SummaryFileFirst THEN summaryFile ELSE summaryOutput
         /\ summaryWritten' = IF conflict \/ SummaryFileFirst \/ ~RememberWrittenSummaryHash
                                 THEN summaryWritten ELSE summaryOutput
-  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryLatePass>>
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryHasResult>>
 
 CacheSummaryHash ==
   /\ summaryPhase = "prepared" /\ summaryPhase' = "published"
   /\ summaryFile' = IF SummaryFileFirst THEN summaryFile ELSE summaryOutput
   /\ summaryWritten' = IF SummaryFileFirst /\ RememberWrittenSummaryHash
                           THEN summaryOutput ELSE summaryWritten
-  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryLatePass>>
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryHasResult>>
 
 CommitSummary ==
   /\ summaryPhase = "published" /\ summaryPhase' = "done"
-  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
+  /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryHasResult>>
 
 \* Publication followed by interruption or refused commit; the input may change.
 \* A closed day may also acquire a late entry, opening another pass after an owner edit.
 NextSummaryNight ==
   /\ summaryPhase \in {"waiting", "prepared", "published", "done"} /\ summaryNight < 3
-  /\ summaryLatePass' = (summaryLatePass \/ (summaryPhase = "done"))
+  /\ summaryHasResult' = (summaryHasResult \/ (summaryPhase = "done"))
   /\ summaryNight' = summaryNight + 1
   /\ summaryPhase' = IF summaryPhase = "done" THEN "idle" ELSE "open"
   \* A new pass has a different input_hash; an interrupted pass may retain its output.
@@ -195,7 +196,7 @@ TypeOK ==
   /\ summaryPhase \in {"idle", "open", "waiting", "prepared", "published", "done"}
   /\ summaryWritten \in {"absent", "new", "changed", "later"} /\ summaryOutput \in {"new", "changed", "later"}
   /\ summaryHuman \in BOOLEAN /\ summaryNight \in 1..3
-  /\ summaryLatePass \in BOOLEAN
+  /\ summaryHasResult \in BOOLEAN
   /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
   /\ file \in {"old", "new", "human"}
   /\ answer \in BOOLEAN /\ committed \in BOOLEAN /\ human \in BOOLEAN
