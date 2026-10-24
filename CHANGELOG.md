@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- 🔧 **Цитаты при отказе rich-сообщений**: запасная HTML-отправка сохраняет текст цитат и подписи кнопок с символами разметки. HTML fallback preserves quoted text and button labels containing markup characters when rich messages are rejected.
+
 ## [0.5.6] - 2026-10-24
 
 - 🧠 **Длинный день разбирается за несколько ночей**: обрез пределом сохраняет прогресс, а дни с тремя старыми обрезами сами возвращаются в очередь. Спасибо Стасу (@stan_is_love) за отчёт. Long days continue across nights with saved progress, and days paused after three earlier ceiling cuts automatically return to the queue. Thanks to Stas (@stan_is_love) for the report.
