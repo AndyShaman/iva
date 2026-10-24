@@ -184,6 +184,25 @@ function spawnNight(
     HOOKS,
     "--import",
     CLOCK,
+    ...(env.IVA_TEST_SUMMARY_CRASH
+      ? [
+          "--import",
+          `data:text/javascript,${encodeURIComponent(`
+      import fs from "node:fs";
+      import { syncBuiltinESMExports } from "node:module";
+      const rename = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        const summary = String(to).endsWith(${JSON.stringify(`/summaries/daily/${DATE}.md`)});
+        const crash = () => { process.stderr.write("SUMMARY_CRASH\\n"); process.exit(86); };
+        if (summary && process.env.IVA_TEST_SUMMARY_CRASH === "before") crash();
+        const result = rename(from, to);
+        if (summary && process.env.IVA_TEST_SUMMARY_CRASH === "after") crash();
+        return result;
+      };
+      syncBuiltinESMExports();
+    `)}`,
+        ]
+      : []),
     ...(env.IVA_TEST_OWNER_TRIGGER
       ? ["--import", join(ROOT, "scripts/fixtures/night-owner-edit.ts")]
       : []),
@@ -3182,3 +3201,88 @@ for (const [scenario, usage, legacy] of [
     assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
     t.diagnostic(`11 частей, ${cuts + 1} ночей, ${cuts} обрезов, 11 вызовов A`);
   });
+
+for (const boundary of ["before", "after"] as const)
+  for (const previous of [false, true])
+    void test(`R1: crash ${boundary} summary rename, previous=${previous}, resumes cached A`, async (t) => {
+      const fx = await fixture(t);
+      const daily = day(fx, "## 10:00 [text]\nЗапустили Аврору\n");
+      let old: string | null = null;
+      if (previous) {
+        fx.model.replies = [A()];
+        const initial = await night(fx);
+        assert.equal(initial.code, 0, initial.stderr);
+        old = read(summary(fx));
+        appendFileSync(daily, "\n## 11:00 [text]\nПоздняя реплика\n");
+      }
+      const cacheFile = join(fx.data, "memory/night", `${DATE}.json`);
+      const oldHash = existsSync(cacheFile)
+        ? (JSON.parse(read(cacheFile)) as { writtenSummaryHash?: string })
+            .writtenSummaryHash
+        : undefined;
+      fx.model.replies = [A({ gist: "Recovered summary" })];
+      const crashed = await night(fx, DATE, {
+        IVA_TEST_SUMMARY_CRASH: boundary,
+      });
+      assert.equal(crashed.code, 86, crashed.stderr);
+      assert.match(crashed.stderr, /SUMMARY_CRASH/u);
+      if (boundary === "before")
+        assert.equal(existsSync(summary(fx)) ? read(summary(fx)) : null, old);
+      else assert.match(read(summary(fx)), /Recovered summary/u);
+      const pending = JSON.parse(read(cacheFile)) as {
+        writtenSummaryHash?: string;
+        pass?: unknown;
+      };
+      assert.equal(
+        pending.writtenSummaryHash,
+        oldHash,
+        "file is published before its hash is cached",
+      );
+      assert.ok(pending.pass);
+      const recovered = await night(fx);
+      assert.equal(recovered.code, 0, recovered.stderr);
+      assert.match(read(summary(fx)), /Recovered summary/u);
+      assert.doesNotMatch(recovered.stderr, /день ждёт владельца/u);
+      assert.equal(fx.model.prompts.length, previous ? 2 : 1);
+      const finished = JSON.parse(read(cacheFile)) as { pass?: unknown };
+      assert.equal(finished.pass, undefined);
+      const repeated = await night(fx);
+      assert.equal(repeated.code, 0, repeated.stderr);
+      assert.equal(fx.model.prompts.length, previous ? 2 : 1);
+    });
+
+for (const boundary of ["before", "after"] as const)
+  for (const legacySnapshot of [false, true])
+    void test(`R1: owner text after crash ${boundary} summary rename, legacy=${legacySnapshot}, survives retries`, async (t) => {
+      const fx = await fixture(t);
+      const daily = day(fx, "## 10:00 [text]\nЗапустили Аврору\n");
+      if (legacySnapshot) {
+        fx.model.replies = [A()];
+        const initial = await night(fx);
+        assert.equal(initial.code, 0, initial.stderr);
+        appendFileSync(daily, "\n## 11:00 [text]\nПоздняя реплика\n");
+      }
+      fx.model.replies = [A()];
+      const crashed = await night(fx, DATE, {
+        IVA_TEST_SUMMARY_CRASH: boundary,
+      });
+      assert.equal(crashed.code, 86, crashed.stderr);
+      if (legacySnapshot) {
+        const cacheFile = join(fx.data, "memory/night", `${DATE}.json`);
+        const cache = JSON.parse(read(cacheFile)) as {
+          pass: { summaryHash?: string | null };
+        };
+        delete cache.pass.summaryHash;
+        writeFileSync(cacheFile, JSON.stringify(cache));
+      }
+      const { summaryText } = await import("./night-input.ts");
+      const owner = summaryText({ description: "Owner" }, "# OWNER_EDIT\n");
+      writeFileSync(summary(fx), owner);
+      for (let n = 0; n < 3; n++) {
+        const repeated = await night(fx);
+        assert.equal(repeated.code, 0, repeated.stderr);
+        assert.match(repeated.stderr, /день ждёт владельца/u);
+        assert.equal(read(summary(fx)), owner);
+      }
+      assert.equal(fx.model.prompts.length, legacySnapshot ? 2 : 1);
+    });

@@ -868,18 +868,20 @@ async function finishDay(
   const currentSummary = readIf(summary);
   // Сверяем с опубликованной выжимкой, даже если вход или модель ночи сменились.
   if (
-    summaryHashOf(currentSummary) !==
+    currentSummary !== nextSummary &&
+    (summaryHashOf(currentSummary) !==
       (cache.writtenSummaryHash ?? expectedSummary) ||
-    (cache.writtenSummaryHash === undefined &&
-      currentSummary !== null &&
-      (cache.completedAt !== undefined || input.summaryEdited(currentSummary)))
+      (cache.writtenSummaryHash === undefined &&
+        currentSummary !== null &&
+        (cache.completedAt !== undefined ||
+          input.summaryEdited(currentSummary))))
   )
     throw new OwnerEditConflict(
       `выжимка ${date} изменена вручную; день ждёт владельца: верни выжимку или выполни iva jobs skip memory-night ${date}`,
     );
+  writeAtomic(summary, nextSummary);
   cache.writtenSummaryHash = textHash(nextSummary);
   writeCache(cache);
-  writeAtomic(summary, nextSummary);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
   if (!input.markedDone(readFileSync(daily, "utf8")))

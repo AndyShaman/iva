@@ -6,7 +6,7 @@
 \* только после коммита. Обрыв (kill -9) возможен на любом шаге применения.
 EXTENDS Naturals
 
-CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash, RememberWrittenSummaryHash, CompareRecomputedSummary
+CONSTANTS MaxDays, RecheckAfterSave, HumanPublishStable, RememberSummaryHash, RememberWrittenSummaryHash, CompareRecomputedSummary, SummaryFileFirst
 
 VARIABLES phase, file, answer, committed, calls, lost, queue, human, pending, crashedOnce
 
@@ -45,24 +45,34 @@ OpenSummaryPass ==
   /\ UNCHANGED <<cardVars, summaryFile, summaryHuman, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
 
 EditSummary ==
-  /\ summaryPhase \in {"idle", "open", "done"} /\ ~summaryHuman
+  /\ summaryPhase \in {"idle", "open", "prepared", "published", "done"} /\ ~summaryHuman
+  /\ (summaryPhase # "prepared" \/ ~HumanPublishStable)
   /\ (summaryPhase # "idle" \/ summaryNight > 1)
   /\ summaryFile' = "human" /\ summaryHuman' = TRUE
   /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryPhase, summaryNight, summaryWritten, summaryOutput, summaryLatePass>>
 
+\* Two durable writes, with a restart possible between them.
+\* SummaryFileFirst = FALSE is the old hash-before-file ordering mutant.
 PublishSummary ==
   /\ summaryPhase = "open"
   /\ LET seen == IF RememberSummaryHash THEN summarySeen ELSE summaryExpected
          expected == IF RememberWrittenSummaryHash /\ summaryWritten # "absent"
                         /\ ~CompareRecomputedSummary THEN summaryWritten ELSE seen
-         conflict == (RememberWrittenSummaryHash /\ summaryWritten = "absent"
-                       /\ summaryLatePass /\ summaryFile # "absent")
-                      \/ (summaryFile # expected
-                           /\ ~(CompareRecomputedSummary /\ summaryFile = summaryOutput))
-     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "published"
-        /\ summaryFile' = IF conflict THEN summaryFile ELSE summaryOutput
-        /\ summaryWritten' = IF conflict \/ ~RememberWrittenSummaryHash
+         conflict == summaryFile # summaryOutput /\
+                       ((RememberWrittenSummaryHash /\ summaryWritten = "absent"
+                          /\ summaryLatePass /\ summaryFile # "absent")
+                         \/ summaryFile # expected)
+     IN /\ summaryPhase' = IF conflict THEN "waiting" ELSE "prepared"
+        /\ summaryFile' = IF conflict \/ ~SummaryFileFirst THEN summaryFile ELSE summaryOutput
+        /\ summaryWritten' = IF conflict \/ SummaryFileFirst \/ ~RememberWrittenSummaryHash
                                 THEN summaryWritten ELSE summaryOutput
+  /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryLatePass>>
+
+CacheSummaryHash ==
+  /\ summaryPhase = "prepared" /\ summaryPhase' = "published"
+  /\ summaryFile' = IF SummaryFileFirst THEN summaryFile ELSE summaryOutput
+  /\ summaryWritten' = IF SummaryFileFirst /\ RememberWrittenSummaryHash
+                          THEN summaryOutput ELSE summaryWritten
   /\ UNCHANGED <<cardVars, summarySeen, summaryExpected, summaryHuman, summaryNight, summaryOutput, summaryLatePass>>
 
 CommitSummary ==
@@ -72,11 +82,15 @@ CommitSummary ==
 \* Publication followed by interruption or refused commit; the input may change.
 \* A closed day may also acquire a late entry, opening another pass after an owner edit.
 NextSummaryNight ==
-  /\ summaryPhase \in {"waiting", "published", "done"} /\ summaryNight < 3
+  /\ summaryPhase \in {"waiting", "prepared", "published", "done"} /\ summaryNight < 3
   /\ summaryLatePass' = (summaryLatePass \/ (summaryPhase = "done"))
   /\ summaryNight' = summaryNight + 1
   /\ summaryPhase' = IF summaryPhase = "done" THEN "idle" ELSE "open"
-  /\ summaryOutput' = "changed" /\ summaryExpected' = summaryFile
+  \* A new pass has a different input_hash; an interrupted pass may retain its output.
+  /\ summaryOutput' \in IF summaryPhase = "done"
+        THEN {IF summaryOutput = "new" THEN "changed" ELSE "later"}
+        ELSE {summaryOutput, IF summaryNight = 1 THEN "changed" ELSE "later"}
+  /\ summaryExpected' = summaryFile
   /\ UNCHANGED <<cardVars, summaryFile, summarySeen, summaryHuman, summaryWritten>>
 
 \* Платный вызов модели: только когда ответа в кэше нет.
@@ -165,7 +179,7 @@ Done == queue = 0 /\ UNCHANGED vars
 
 Next ==
   \/ Call \/ SaveAnswer \/ HumanEdit \/ Check \/ SavePost \/ Recheck \/ Replace \/ Conflict \/ Resume
-  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ CommitSummary \/ NextSummaryNight
+  \/ OpenSummaryPass \/ EditSummary \/ PublishSummary \/ CacheSummaryHash \/ CommitSummary \/ NextSummaryNight
   \/ Commit \/ Ready \/ NextDay \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -175,11 +189,11 @@ Spec == Init /\ [][Next]_vars
   /\ WF_vars(Restart)
 
 TypeOK ==
-  /\ summaryFile \in {"absent", "old", "human", "new", "changed"}
-  /\ summarySeen \in {"absent", "old", "human", "new", "changed"}
-  /\ summaryExpected \in {"absent", "old", "human", "new", "changed"}
-  /\ summaryPhase \in {"idle", "open", "waiting", "published", "done"}
-  /\ summaryWritten \in {"absent", "new", "changed"} /\ summaryOutput \in {"new", "changed"}
+  /\ summaryFile \in {"absent", "old", "human", "new", "changed", "later"}
+  /\ summarySeen \in {"absent", "old", "human", "new", "changed", "later"}
+  /\ summaryExpected \in {"absent", "old", "human", "new", "changed", "later"}
+  /\ summaryPhase \in {"idle", "open", "waiting", "prepared", "published", "done"}
+  /\ summaryWritten \in {"absent", "new", "changed", "later"} /\ summaryOutput \in {"new", "changed", "later"}
   /\ summaryHuman \in BOOLEAN /\ summaryNight \in 1..3
   /\ summaryLatePass \in BOOLEAN
   /\ phase \in {"idle", "called", "cached", "checked", "saved", "rechecked", "written", "committed", "done", "crashed"}
@@ -194,6 +208,9 @@ FileNeverPartial == file \in {"old", "new", "human"}
 ReadyOnlyAfterCommit == phase = "done" => committed
 \* (3) Правка человека не перетирается.
 HumanEditWins == (human => file = "human") /\ (summaryHuman => summaryFile = "human")
+\* A cached publication hash with its original file is our interrupted write.
+PendingSummaryResumes == summaryPhase = "waiting" =>
+  ~(summaryWritten = summaryOutput /\ summaryFile = summarySeen)
 PublishedSummaryResumes == summaryPhase = "waiting" => summaryFile # summaryWritten
 \* (2), (4) Повтор ночи не зовёт модель второй раз: лишний вызов — только если обрыв
 \* случился во время самого вызова, до сохранения ответа.
