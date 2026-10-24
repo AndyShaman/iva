@@ -3,6 +3,7 @@
 ## [0.5.6] - 2026-10-24
 
 - 🧠 **Длинный день разбирается за несколько ночей**: обрез пределом сохраняет прогресс, а дни с тремя старыми обрезами сами возвращаются в очередь. Спасибо Стасу (@stan_is_love) за отчёт. Long days continue across nights with saved progress, and days paused after three earlier ceiling cuts automatically return to the queue. Thanks to Stas (@stan_is_love) for the report.
+- 🔧 **Модель помощника видна в кнопке**: в /model имя модели помощника и фона стоит прямо в её кнопке. In /model, the helper and background model name now sits inside its button.
 
 - 🔧 **Ива сообщает о протухшем входе**: Alert приходит с командой починки после тихих часов и повторяется раз в сутки. Успешный вызов модели подтверждает восстановление входа. Iva reports an expired model login with repair instructions after quiet hours, repeats it daily, and confirms recovery after a successful model call.
 
