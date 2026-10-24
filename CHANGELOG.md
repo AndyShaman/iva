@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 🔧 **Цитаты при отказе rich-сообщений**: запасная HTML-отправка сохраняет текст цитат и подписи кнопок с символами разметки. HTML fallback preserves quoted text and button labels containing markup characters when rich messages are rejected.
+- 🔧 **Ива предлагает полезное без запроса**: без запроса Ива присылает любое полезное предложение на своё усмотрение; пределы Watch, Brief и Insight этого не запрещают. Without a request, Iva sends any useful proposal at her discretion; the Watch, Brief and Insight limits do not forbid it.
 
 ## [0.5.6] - 2026-10-24
 

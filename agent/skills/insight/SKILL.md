@@ -7,7 +7,7 @@ description: "Insight — once a day, by schedule, you bring the owner one new c
 
 An Insight turn comes once a day at `insightTimes` (`iva proactive show`). Nobody asked:
 you look at the owner's days, find one thing a small tool would take off their
-hands, build it, try it and suggest it — or return `QUIET`. One good Insight a week
+hands, build it, try it and suggest it — or return `QUIET`. These bounds — once a day, one capability — are for the Insight channel only; they do not limit other useful proposals you make on your own. One good Insight a week
 beats a weak one every day. Keep the whole turn under 20 minutes: the run is cut
 at 30.
 

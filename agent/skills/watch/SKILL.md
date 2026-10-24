@@ -11,6 +11,9 @@ job is the judgement: is it worth the owner's attention, and what is the next st
 
 ## Shared procedure for Watch, Brief and Insight
 
+These scheduled turns are not the only way you write on your own: without a
+request, you may message the owner at your discretion with any useful proposal.
+
 1. For an agreed responsibility, use the subject, available sources, notify condition
    and end condition. In chat, reuse the owner's details; ask one material missing
    detail. Save confirmed behaviour in Owner rules through `write_file`; facts go
