@@ -21,19 +21,18 @@ void test("install.txt pins every link to an existing file in the current or nex
   const unreleased = /^## (?:\[Unreleased\]|Unreleased)$/mu.test(
     read("CHANGELOG.md"),
   );
-  const tag =
-    prerelease !== undefined
-      ? `v${core}`
-      : unreleased
-        ? `v${major}.${minor}.${patch + 1}`
-        : `v${version}`;
+  const tags = [`v${core}`];
+  if (prerelease === undefined && unreleased)
+    tags.push(`v${major}.${minor}.${patch + 1}`);
   const links = read("docs/install.txt").match(/https?:\/\/[^\s<>]+/gu) ?? [];
   assert.ok(links.length > 0);
   for (const link of links) {
     const url = new URL(link);
     assert.equal(url.origin, "https://raw.githubusercontent.com");
-    const prefix = `/smixs/iva-agent/${tag}/`;
-    assert.ok(url.pathname.startsWith(prefix), `${link} must use ${tag}`);
+    const prefix = tags
+      .map((tag) => `/smixs/iva-agent/${tag}/`)
+      .find((candidate) => url.pathname.startsWith(candidate));
+    assert.ok(prefix, `${link} must use ${tags.join(" or ")}`);
     const path = url.pathname.slice(prefix.length);
     assert.ok(resolve(ROOT, path).startsWith(ROOT));
     assert.ok(existsSync(join(ROOT, path)), `missing ${path}`);

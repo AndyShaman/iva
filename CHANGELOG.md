@@ -5,6 +5,7 @@
 - 🔧 **Цитаты при отказе rich-сообщений**: запасная HTML-отправка сохраняет текст цитат и подписи кнопок с символами разметки. HTML fallback preserves quoted text and button labels containing markup characters when rich messages are rejected.
 - 🔧 **Ива предлагает полезное без запроса**: без запроса Ива присылает любое полезное предложение на своё усмотрение; пределы Watch, Brief и Insight этого не запрещают. Without a request, Iva sends any useful proposal at her discretion; the Watch, Brief and Insight limits do not forbid it.
 - 🧠 **Противоречивые события не дают постоянного вывода**: спорные или противоречивые события о человеке не становятся постоянным выводом в CORE или карточке, оба события хранятся с датой. Contradictory events about the owner do not become a permanent conclusion in CORE or a card; both stay dated.
+- 🔧 **Долгие команды помощника ждут результата**: инструкция задаёт bash `timeoutMs` по ожидаемой длительности команды. Helpers are instructed to set bash `timeoutMs` to cover the expected command duration.
 
 ## [0.5.6] - 2026-10-24
 
