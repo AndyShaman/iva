@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.6] - 2026-10-24
 
 - 🧠 **Длинный день разбирается за несколько ночей**: обрез пределом сохраняет прогресс, а дни с тремя старыми обрезами сами возвращаются в очередь. Спасибо Стасу (@stan_is_love) за отчёт. Long days continue across nights with saved progress, and days paused after three earlier ceiling cuts automatically return to the queue. Thanks to Stas (@stan_is_love) for the report.
 
@@ -55,6 +55,8 @@
 - 🔐 **Полномочия с границами и сроком**: Ива записывает, кому и что разрешено подтверждать или отправлять самостоятельно, до какой даты или до отмены, и называет правило при действии; истёкшее разрешение прекращает действовать. Standing authority records its scope and term, is cited when used, and expires as agreed.
 - 🧩 **Ключи и сайты видны до установки плагина**: раньше предложение показывало только команды и число файлов. Теперь в предложении нового плагина видно, какие ключи и сайты ему нужны. New plugin proposals show the required key names and network hosts declared in the draft README before installation.
 - 📊 **Ива может объяснить, почему подорожал ход**: журнал расхода сохраняет короткие отпечатки инструкций, блоков кэша и инструментов, чтобы отличить смену запроса от обычного продолжения разговора. Request fingerprints help explain fresh cache writes and increased token use without storing prompt text.
+
+[0.5.6]: https://github.com/smixs/iva-agent/releases/tag/v0.5.6
 
 ## [0.5.5] - 2026-10-19
 

@@ -198,7 +198,20 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.5 · 19.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.6 · 24.10.2026 — expand the latest releases</b></summary>
+
+### 24.10.2026
+
+#### v0.5.6
+
+- 🧠 **Long days continue across nights**: Iva saves completed portions and resumes after a connection drop or the night's ceiling. Days paused after three earlier ceiling cuts return to the queue. Your edits to daily summaries are preserved. Thanks to Stas (@stan_is_love) for the feedback.
+- ⏰ **Iva manages scheduled tasks**: ask Iva to add, move, remove or run a reminder or a script. Scripts can run for up to 60 minutes, and failures produce an alert.
+- 🔧 **Helpers take long work**: Iva hands off work needing many steps, gives an estimated return time and runs up to three helpers concurrently. Select the helper model in `/menu`; Watch, Brief and Insight use it too.
+- 📲 **The userbot finds all accounts and downloads large files**: saved accounts and files over 20 MB, including voice messages and audio, work without manual patches.
+- 🔎 **Memory search understands Russian word forms**: names match across cases, and ё and е match each other. Permanent memory accepts your own words; superseded facts are searched when you ask about the past.
+- 🧠 **Iva learns from repeated work**: Insight reviews two weeks of turns and offers to save a repeated procedure as a skill. Iva also offers to follow up when you are waiting on someone or a deadline.
+- 🔧 **An interrupted answer offers a Try again button**: after a restart, Iva quotes your question and offers to send it again. Resend attachments yourself.
+- 🧹 **Automatic compaction starts at 110,000 tokens**: `/compact` is temporarily hidden from the command menu and `/help`.
 
 ### 19.10.2026
 
@@ -214,16 +227,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 #### v0.5.4
 
 - ✨ **Iva runs on Mac**: the installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
-
-### 16.10.2026
-
-#### v0.5.3
-
-- 🔧 **A tapped stop no longer halts incoming messages**: when Telegram sent an update Iva could not parse (it happened with the ■ button on a reply draft), the whole intake stalled and later messages never arrived. Now such an update is skipped with a log entry and the rest go through; a stop with unexpected fields is checked by the stop handler.
-- 🔧 **One broken record no longer stops intake**: if the inbox or a chat queue held a record Iva could not read, the bridge crashed and crashed again on every start, and a regular queue load quarantined the whole file. Now the broken record is copied to a separate file next to it and skipped, and the other messages are delivered.
-- 🔧 **One damaged record is kept aside**: reminders, helpers, goals and queues keep processing the healthy records; the deduplication and usage ledgers skip damaged entries.
-- 🔎 **Watch skips what you already read, Brief counts from the previous Brief**: right before sending, Iva rechecks chats and mail, and an item you read during the turn is dropped. Brief covers the window since the previous Brief, names an unreadable source in one line and carries over an item still waiting for your reply with the days waited.
-- 🔧 **Installs on Node newer than 24**: Iva accepts Node 24 and newer, and installs on Node 26 no longer warn with EBADENGINE.
 
 </details>
 
