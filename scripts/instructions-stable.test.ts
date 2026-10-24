@@ -30,10 +30,13 @@ test("long commands stay in the helper turn; later Reminders require the owner's
     .replace(/\s+/gu, " ");
   assert.doesNotMatch(
     skills,
-    /in the background|background work|scheduled check/iu,
+    /\bbackground\b(?!-check)|nohup|setsid|disown|detach|\s&\s|scheduled check/iu,
   );
   assert.match(skills, /Delegate commands[^.]*to a helper/u);
-  assert.match(skills, /helper waits[^.]*45-minute/u);
+  assert.match(
+    skills,
+    /helper waits[^.]*with bash `timeoutMs` covering the expected duration[^.]*45-minute/u,
+  );
   assert.match(skills, /Reminder[^.]*only[^.]*owner asks/u);
 });
 

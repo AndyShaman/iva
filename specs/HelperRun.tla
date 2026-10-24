@@ -17,7 +17,7 @@ Empty == [status |-> "pending", run |-> FALSE, claimed |-> FALSE,
   stop |-> "none", stops |-> <<>>, stopOnEnd |-> FALSE, missedCancel |-> FALSE,
   outcome |-> "none", saved |-> 0, steps |-> 0, work |-> 0,
   attempts |-> 0, delivered |-> FALSE, resetQueued |-> FALSE, commits |-> <<>>]
-\* Four candidates test the running guard separately from HELPER_MAX_OPEN admission (three pending rows in code).
+\* Capacity configs use four candidates to test the running guard separately from HELPER_MAX_OPEN admission (three pending rows in code).
 Init == s = [rows |-> [h \in Helpers |-> Empty], owner |-> 1, now |-> 0,
   lastTick |-> -1, phase |-> "idle", todo |-> {}, reminderBusy |-> TRUE]
 Running == {h \in Helpers : s.rows[h].run}
