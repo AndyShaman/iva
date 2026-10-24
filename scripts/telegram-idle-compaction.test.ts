@@ -48,13 +48,13 @@ const COMPACT_URL =
 globalThis.fetch = async (url, init = {}) => {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the double reads whatever the caller passes.
   const href = String(url);
-  if (href === "http://127.0.0.1:8723/eve/v1/telegram/compact") {
+  if (href === `http://127.0.0.1:8723${TELEGRAM_COMPACT_ROUTE}`) {
     const request = new Request(href, init);
     manualRequests.push({
       body: await request.clone().json(),
       auth: request.headers.get("x-telegram-bot-api-secret-token"),
     });
-    return route("/eve/v1/telegram/compact").handler(request, {
+    return route(TELEGRAM_COMPACT_ROUTE).handler(request, {
       attachSession: (id) => ({ id }) as Session,
       resolveSession: async () =>
         manualSessionId ? ({ id: manualSessionId } as Session) : undefined,
@@ -116,6 +116,7 @@ type Adapter = {
 const channelModule = "../agent/channels/telegram.ts?idle-compaction-test";
 const [
   { default: channel },
+  { TELEGRAM_COMPACT_ROUTE },
   { default: usageHook },
   { providerConfig },
   { idleCompactionLimit },
@@ -128,6 +129,7 @@ const [
   import(channelModule) as Promise<
     typeof import("../agent/channels/telegram.ts")
   >,
+  import("../agent/lib/telegram-compact-route.ts"),
   import("../agent/hooks/usage.ts"),
   import("../agent/provider.ts"),
   import("../agent/lib/compaction.ts"),
