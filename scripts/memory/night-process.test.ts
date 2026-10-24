@@ -361,10 +361,10 @@ void test("обычный день: A и B, Card, выжимка, отметка
     `- ${DATE}: Проект запущен · [[daily/${DATE}]] 10:00`,
   ]);
   assert.match(text, /# Аврора\n\nПроект запуска\n\n## Log/u);
-  assert.match(
-    read(summary(fx)),
-    /source: "night"[\s\S]*body_hash: "[0-9a-f]{64}"/u,
-  );
+  assert.match(read(summary(fx)), /body_hash: "[0-9a-f]{64}"/u);
+  const fields = parseFrontmatter(read(summary(fx))).fields!;
+  assert.equal(Object.hasOwn(fields, "source"), false);
+  assert.equal(Object.hasOwn(fields, "through"), false);
   assert.match(read(summary(fx)), /- \[\[cards\/projects\/аврора\]\]/u);
   assert.equal(git(fx.vault, "status", "--porcelain"), "");
   const head = git(fx.vault, "rev-parse", "HEAD");
@@ -1559,6 +1559,16 @@ void test("поздняя выжимка дня пересобирает нед�
   const first = await night(fx, null, now);
   assert.equal(first.code, 0, first.stderr);
   assert.equal(fx.model.prompts.length, 3, first.stderr);
+  for (const file of [
+    "weekly/2026-W51.md",
+    "monthly/2026-12.md",
+    "yearly/2026.md",
+  ]) {
+    const fields = parseFrontmatter(read(join(fx.vault, file))).fields!;
+    assert.equal(Object.hasOwn(fields, "source"), false);
+    assert.match(String(fields.input_hash), /^[a-f0-9]{64}$/u);
+    assert.match(String(fields.body_hash), /^[a-f0-9]{64}$/u);
+  }
   daySummaries(fx, [week[6]], "late");
   rmSync(join(fx.data, "rollup-attempts.json"));
   commit(fx.vault, "late day");

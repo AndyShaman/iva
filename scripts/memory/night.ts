@@ -850,9 +850,7 @@ function summaryOf(cache: DayCache, entries: DayEntry[], raw: string): string {
     description: last?.gist || `Нет своих реплик за ${date}`,
     topics,
     tags: topics.length ? topics : ["daily"],
-    source: "night",
     input_hash: input.stepHash("A", call.nightModelName, skill("day"), inputs),
-    through: String(pass.upto),
   };
   const text = [...body, ...listed, ...attached, ""].join("\n");
   return input.summaryText(fields, text);
