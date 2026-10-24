@@ -1230,6 +1230,68 @@ void test("CORE над лимитом: повтор с «освободи», о�
   assert.match(read(join(fx.vault, "CORE.md")), /- Любит чай/u);
 });
 
+for (const accepted of [false, true])
+  void test(`night clean: C consumes candidates, accepted=${accepted}`, async (t) => {
+    const fx = await fixture(t);
+    day(fx, "## 10:00 [text]\nЛюблю чай\n");
+    fx.model.replies = [
+      A({ core: [{ text: "Любит чай", src: "e1" }] }),
+      {
+        sections: accepted
+          ? [{ section: "Предпочтения", text: "- Любит чай" }]
+          : [],
+      },
+    ];
+    const first = await night(fx);
+    assert.equal(first.code, 0, first.stderr);
+    const cache = JSON.parse(
+      read(join(fx.data, "memory/night", `${DATE}.json`)),
+    ) as { core: unknown[]; coreDone?: boolean };
+    assert.deepEqual(
+      cache.core,
+      [],
+      "C consumes accepted and declined candidates",
+    );
+    assert.equal(Object.hasOwn(cache, "coreDone"), false);
+    const again = await night(fx, null);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(
+      fx.model.prompts.length,
+      2,
+      "consumed C is never requested again",
+    );
+  });
+
+for (const coreDone of [false, true])
+  void test(`night clean: reads 0.5.6 candidates with coreDone=${coreDone}`, async (t) => {
+    const fx = await fixture(t);
+    const daily = day(fx, "## 10:00 [text]\nЛюблю чай\n");
+    fx.model.replies = [A()];
+    assert.equal((await night(fx)).code, 0);
+    const file = join(fx.data, "memory/night", `${DATE}.json`);
+    const cache = JSON.parse(read(file)) as Record<string, unknown>;
+    cache.core = [
+      {
+        id: `${DATE}:0:1`,
+        text: "Любит чай",
+        source: `[[daily/${DATE}]] 10:00`,
+      },
+    ];
+    cache.coreDone = coreDone;
+    writeFileSync(file, JSON.stringify(cache));
+    fx.model.replies = coreDone ? [] : [{ sections: [] }];
+    const again = await night(fx, null);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(fx.model.prompts.length, coreDone ? 1 : 2);
+    appendFileSync(daily, "\n## 11:00 [text]\nПоздняя реплика\n");
+    fx.model.replies = [A()];
+    const late = await night(fx);
+    assert.equal(late.code, 0, late.stderr);
+    const rewritten = JSON.parse(read(file)) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(rewritten, "coreDone"), false);
+    assert.deepEqual(rewritten.core, []);
+  });
+
 void test("догон: из четырёх дней ночь берёт три старых по порядку", async (t) => {
   const fx = await fixture(t);
   const dates = ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"];

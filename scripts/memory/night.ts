@@ -121,7 +121,6 @@ interface DayCache {
   prefixHash: string;
   touched: string[];
   core: Candidate[];
-  coreDone?: boolean;
   /** Факты неписуемых Card: дописываются, когда Card поправили. */
   pending?: Record<string, string[]>;
   pass?: Pass;
@@ -145,7 +144,11 @@ function readCache(date: string): DayCache | null {
   try {
     const value = JSON.parse(readFileSync(file, "utf8")) as DayCache | null;
     const valid = value?.v === 1 && value.date === date;
-    if (valid && Number.isSafeInteger(value.through)) return value;
+    if (valid && Number.isSafeInteger(value.through)) {
+      // 0.5.6 оставлял применённых кандидатов рядом с отдельным флагом.
+      const { coreDone, ...cache } = value as DayCache & { coreDone?: boolean };
+      return { ...cache, core: coreDone ? [] : cache.core };
+    }
   } catch (error) {
     throw new Error(`${broken}: ${String(error)}`, { cause: error });
   }
@@ -895,7 +898,6 @@ async function finishDay(
       const id = `${date}:${pass.from}:${index + 1}`;
       const source = `[[daily/${date}]] ${time.get(item.src[0])}`;
       cache.core.push({ id, text: item.text, source });
-      cache.coreDone = false;
     });
   cache.through = pass.upto;
   cache.prefixHash = input.prefixHash(entries, pass.upto);
@@ -921,8 +923,7 @@ function openPass(
   };
   const from = base.through;
   const pass = { from, upto: entries.length, summaryHash, created: {}, b: {} };
-  const core = base.coreDone ? [] : base.core;
-  const next: DayCache = { ...base, core, coreDone: undefined, pass };
+  const next: DayCache = { ...base, pass };
   // Кэш пишется до вызова: не пишется — вызова нет (иначе обрыв дал бы второй вызов).
   writeCache(next);
   return next;
@@ -1090,7 +1091,7 @@ async function askCore(before: string, candidates: Candidate[]) {
 const coreWaiting = () =>
   cacheDates()
     .flatMap((date) => readCache(date) ?? [])
-    .filter((cache) => !cache.pass && !cache.coreDone && cache.core.length);
+    .filter((cache) => !cache.pass && cache.core.length);
 
 async function runCore(lastDay: string | undefined): Promise<void> {
   const waiting = coreWaiting();
@@ -1100,7 +1101,7 @@ async function runCore(lastDay: string | undefined): Promise<void> {
   const asked = candidates.length ? await askCore(base, candidates) : null;
   const written = await writeNightCore(before, asked ?? base, lastDay);
   if (!written || asked === null) return;
-  for (const cache of waiting) writeCache({ ...cache, coreDone: true });
+  for (const cache of waiting) writeCache({ ...cache, core: [] });
 }
 
 /** CORE ночи с указателем «Последний день»; пустой шаблон без правок не создаётся. */
@@ -1223,8 +1224,7 @@ function cleanupCaches(): void {
   for (const cache of cacheDates().flatMap((date) => readCache(date) ?? [])) {
     const age = Date.now() - Date.parse(cache.completedAt ?? "");
     const pending = Object.keys(cache.pending ?? {}).length;
-    const waiting =
-      cache.pass || pending || (cache.core.length && !cache.coreDone);
+    const waiting = cache.pass || pending || cache.core.length;
     if (waiting || !(age >= limits.CACHE_DAYS * DAY_MS)) continue;
     try {
       rmSync(cacheFile(cache.date));
