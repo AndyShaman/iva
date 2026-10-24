@@ -439,7 +439,10 @@ async function handleModelCmd(
       "| --- | --- | --- |",
       `| ${escapeRichText(providerLabel)} | ${escapeRichText(model)} | ${escapeRichText(effortLabel(effort))} |`,
     ].join("\n"),
-    `${button(tr("Helper and background model", "Модель помощника и фона"), "iva_model:helper")}: ${escapeRichText(helperModel)}`,
+    button(
+      `${tr("Helper and background model", "Модель помощника и фона")}: ${escapeRichText(helperModel)}`,
+      "iva_model:helper",
+    ),
     tr(
       "Used by helpers, Watch, Brief and Insight.",
       "Для помощников, Watch, Brief и Insight.",
