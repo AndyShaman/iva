@@ -283,7 +283,11 @@ export const MAIL_QUERY =
 export type GwsRun = (
   args: readonly string[],
   timeoutMs: number,
-) => Promise<{ code: number | "missing" | "timeout"; stdout: string }>;
+) => Promise<{
+  code: number | "missing" | "timeout";
+  stdout: string;
+  stderr?: string;
+}>;
 
 function exitCode(
   error: (Error & { code?: unknown; killed?: boolean }) | null,
@@ -294,11 +298,15 @@ function exitCode(
   return typeof error.code === "number" ? error.code : 1;
 }
 
-const runGws: GwsRun = (args, timeoutMs) =>
+export const runGws: GwsRun = (args, timeoutMs) =>
   new Promise((resolve) => {
     const options = { timeout: timeoutMs, env: childEnv(), maxBuffer: 4 << 20 };
-    execFile(gwsBin(), [...args], options, (error, stdout) =>
-      resolve({ code: exitCode(error), stdout: String(stdout) }),
+    execFile(gwsBin(), [...args], options, (error, stdout, stderr) =>
+      resolve({
+        code: exitCode(error),
+        stdout: String(stdout),
+        stderr: String(stderr),
+      }),
     );
   });
 
