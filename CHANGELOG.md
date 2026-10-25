@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-25
+
 - 🔧 **Цитаты при отказе rich-сообщений**: запасная HTML-отправка сохраняет текст цитат и подписи кнопок с символами разметки. HTML fallback preserves quoted text and button labels containing markup characters when rich messages are rejected.
 - 🔧 **Ива предлагает полезное без запроса**: без запроса Ива присылает любое полезное предложение на своё усмотрение; пределы Watch, Brief и Insight этого не запрещают. Without a request, Iva sends any useful proposal at her discretion; the Watch, Brief and Insight limits do not forbid it.
 - 🧠 **Противоречивые события не дают постоянного вывода**: спорные или противоречивые события о человеке не становятся постоянным выводом в CORE или карточке, оба события хранятся с датой. Contradictory events about the owner do not become a permanent conclusion in CORE or a card; both stay dated.
@@ -63,6 +65,8 @@
 - 🔐 **Полномочия с границами и сроком**: Ива записывает, кому и что разрешено подтверждать или отправлять самостоятельно, до какой даты или до отмены, и называет правило при действии; истёкшее разрешение прекращает действовать. Standing authority records its scope and term, is cited when used, and expires as agreed.
 - 🧩 **Ключи и сайты видны до установки плагина**: раньше предложение показывало только команды и число файлов. Теперь в предложении нового плагина видно, какие ключи и сайты ему нужны. New plugin proposals show the required key names and network hosts declared in the draft README before installation.
 - 📊 **Ива может объяснить, почему подорожал ход**: журнал расхода сохраняет короткие отпечатки инструкций, блоков кэша и инструментов, чтобы отличить смену запроса от обычного продолжения разговора. Request fingerprints help explain fresh cache writes and increased token use without storing prompt text.
+
+[0.5.7]: https://github.com/smixs/iva-agent/releases/tag/v0.5.7
 
 [0.5.6]: https://github.com/smixs/iva-agent/releases/tag/v0.5.6
 
