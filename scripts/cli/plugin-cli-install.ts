@@ -741,10 +741,10 @@ export function createPluginInstallCommands(
       // здесь, до сборки версии и до юнитов.
       next = await grantPortsToTrusted(data, next);
       await writePluginsState(data, next);
-      const cycled = await reconcileUnits(data, next);
+      const cycled = await reconcileUnits(data, next, moved);
       // Новое содержимое плагина — старый процесс за неизменившимся юнитом: тело
       // юнита могло совпасть байт в байт (та же команда, тот же порт), а сервер за ним
-      // приехал другой. Рестарт делают только те, кого не перезапустил reconcile.
+      // приехал другой. Новый restart запрашивают только если reconcile ещё не пытался.
       restartMoved(data, next, moved, cycled);
     });
     // Одна сборка на весь прогон: версия собирается со всеми плагинами сразу, и
