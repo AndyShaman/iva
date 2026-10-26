@@ -1,3 +1,4 @@
+/// <reference lib="es2024.string" />
 // Один read-only вход Google для Brief и Watch; доставка и seen остаются прежними.
 import {
   BIRTHDAY_LOOKAHEAD_DAYS,
@@ -6,7 +7,7 @@ import {
   BIRTHDAY_TIMEOUT_MS,
 } from "#lib/proactive-config.ts";
 import { addDaysToDate, zonedParts, zonedToUtcMs } from "#lib/zoned-time.ts";
-import { runGws, type GwsRun, type Source } from "./precheck.ts";
+import { runGws, type Birthday, type GwsRun, type Source } from "./precheck.ts";
 
 const BIRTHDAY_KEY_PREFIX = "birthday:contact:";
 
@@ -14,12 +15,6 @@ const BIRTHDAY_KEY_PREFIX = "birthday:contact:";
 export const isContactBirthdayKey = (key: string): boolean =>
   key.startsWith(BIRTHDAY_KEY_PREFIX);
 
-export type Birthday = {
-  readonly key: string;
-  readonly name: string;
-  readonly date: string;
-  readonly daysUntil: number;
-};
 export type Birthdays = {
   readonly status: "ready" | "not-connected" | "missing" | "unavailable";
   readonly items: readonly Birthday[];
@@ -58,16 +53,25 @@ function dateEpoch(date: string): number | null {
     : null;
 }
 
+/** Контактный id непрозрачен; некорректный UTF-16 исключает только эту строку. */
+function linkedContact(row: Record<string, unknown>): string | null {
+  const properties = object(row.birthdayProperties);
+  const contact = properties.contact;
+  return row.eventType === "birthday" &&
+    properties.type === "birthday" &&
+    typeof contact === "string" &&
+    /^people\/[^\s<>/]+$/u.test(contact) &&
+    contact.isWellFormed()
+    ? contact
+    : null;
+}
+
 function birthday(value: unknown, today: number): Birthday | null {
   const row = object(value);
   const date = object(row.start).date;
-  const properties = object(row.birthdayProperties);
-  const contact = properties.contact;
+  const contact = linkedContact(row);
   if (
-    row.eventType !== "birthday" ||
-    properties.type !== "birthday" ||
-    typeof contact !== "string" ||
-    !/^people\/[^\s<>/]+$/u.test(contact) ||
+    contact === null ||
     row.status === "cancelled" ||
     typeof row.summary !== "string" ||
     typeof date !== "string"

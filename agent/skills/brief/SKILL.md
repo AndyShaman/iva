@@ -63,7 +63,7 @@ a year boundary and for Google-expanded February 29 occurrences. Accept only
 `eventType="birthday"`, `birthdayProperties.type="birthday"`, and a nonempty
 `birthdayProperties.contact` matching `^people/[^\s<>/]+$`. Treat the contact id as
 an opaque segment. Skip self, custom, anniversary, manual, cancelled events and
-dates outside that window. This read path is private-chat only; a group `/digest`
+dates outside that window. This read path is private-chat only; a group review request
 keeps Gather's tasks-only boundary.
 Extract only the final `'s birthday` or `’s birthday`, or the initial
 `День рождения:`. Preserve the rest of the name, including Unicode and apostrophes.

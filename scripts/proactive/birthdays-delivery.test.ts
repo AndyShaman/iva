@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { PROACTIVE_DEFAULTS } from "#lib/proactive-config.ts";
+import type { ReminderTurn } from "../lib/reminder-turn.ts";
 import { birthdaySource, readBirthdays, type Birthdays } from "./birthdays.ts";
 import {
   initialState,
@@ -275,7 +276,7 @@ test("PR382 P2: failed generated Brief and QUIET Watch retain a retry after rest
 });
 
 const SEED = Number(process.env.FC_SEED ?? 20261026);
-const turn = (message: string) =>
+const turn = (message: string): Promise<ReminderTurn> =>
   Promise.resolve({
     status: "completed",
     message,
@@ -312,9 +313,13 @@ function watchData(prompt: string) {
   };
 }
 
-test(`Contacts ids are opaque segments, seed=${SEED}`, async () => {
+test(`Contacts ids are opaque UTF-16 segments, seed=${SEED}`, async () => {
+  const segment = fc
+    .array(fc.integer({ min: 0, max: 0xffff }), { minLength: 1 })
+    .map((units) => String.fromCharCode(...units))
+    .filter((id) => !/[\s<>/]/u.test(id));
   await fc.assert(
-    fc.asyncProperty(fc.stringMatching(/^[a-zA-Z0-9.+_-]+$/), async (id) => {
+    fc.asyncProperty(segment, async (id) => {
       const result = await readBirthdays(NOW, ZONE, () =>
         Promise.resolve({
           code: 0,
@@ -330,13 +335,48 @@ test(`Contacts ids are opaque segments, seed=${SEED}`, async () => {
           }),
         }),
       );
-      assert.equal(result.items.length, 1);
-      assert.equal(
-        result.items[0].key,
-        `birthday:contact:${encodeURIComponent(`people/${id}`)}:2026-10-26:0`,
-      );
+      assert.equal(result.status, "ready");
+      assert.equal(result.items.length, id.isWellFormed() ? 1 : 0);
+      if (id.isWellFormed())
+        assert.equal(
+          result.items[0].key,
+          `birthday:contact:${encodeURIComponent(`people/${id}`)}:2026-10-26:0`,
+        );
     }),
-    { seed: SEED, numRuns: 40 },
+    { seed: SEED, numRuns: 200 },
+  );
+});
+
+test("mixed Contacts keep valid opaque Unicode ids and skip lone-surrogate rows", async () => {
+  const contacts = [
+    "people/valid",
+    "people/\uD800",
+    "people/\uDC00",
+    "people/😀",
+  ];
+  const result = await readBirthdays(NOW, ZONE, () =>
+    Promise.resolve({
+      code: 0,
+      stdout: JSON.stringify({
+        items: contacts.map((contact, n) =>
+          event(`person${n}`, {
+            birthdayProperties: { type: "birthday", contact },
+          }),
+        ),
+      }),
+    }),
+  );
+  assert.equal(result.status, "ready");
+  assert.deepEqual(
+    result.items.map((item) => item.name),
+    ["person0", "person3"],
+  );
+  assert.deepEqual(
+    result.items.map((item) => item.key),
+    [
+      "birthday:contact:people%2Fvalid:2026-10-26:0",
+      "birthday:contact:people%2F%F0%9F%98%80:2026-10-26:0",
+    ],
   );
 });
 

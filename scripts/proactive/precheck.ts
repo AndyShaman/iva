@@ -26,7 +26,14 @@ import {
 import { openFailures } from "#lib/open-failures.ts";
 import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
 import { alertDue, alertResolved } from "../lib/notice-policy.ts";
-import type { Birthday } from "./birthdays.ts";
+
+/** ДР Google Контактов: общие поля источника и metadata пункта Watch. */
+export type Birthday = {
+  readonly key: string;
+  readonly name: string;
+  readonly date: string;
+  readonly daysUntil: number;
+};
 
 /** Пункт Watch: ключ в `seen`, счётчик, кто прислал; у `check:` и сбоя — что сломалось (строка промпта). */
 export type WatchItem = {

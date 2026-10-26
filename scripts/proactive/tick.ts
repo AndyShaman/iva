@@ -53,7 +53,6 @@ import {
   birthdaySource,
   isContactBirthdayKey,
   readBirthdays,
-  type Birthday,
   type Birthdays,
 } from "./birthdays.ts";
 import {
@@ -61,6 +60,7 @@ import {
   mailSource,
   telegramSource,
   unfixedFailures,
+  type Birthday,
   type Source,
   type SourceResult,
   type WatchItem,
@@ -463,9 +463,7 @@ function birthdayDelivery(
       const seen = { ...current.state.seen };
       for (const key of keys)
         seen[key] = {
-          firstSeenMs: now,
-          unread: 1,
-          ...seen[key],
+          ...(seen[key] ?? { firstSeenMs: now, unread: 1 }),
           reported: true,
         };
       const next = { ...current.state, seen };
