@@ -26,6 +26,7 @@ import {
 import { openFailures } from "#lib/open-failures.ts";
 import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
 import { alertDue, alertResolved } from "../lib/notice-policy.ts";
+import type { Birthday } from "./birthdays.ts";
 
 /** Пункт Watch: ключ в `seen`, счётчик, кто прислал; у `check:` и сбоя — что сломалось (строка промпта). */
 export type WatchItem = {
@@ -33,6 +34,8 @@ export type WatchItem = {
   readonly unread: number;
   readonly from: Sender;
   readonly note?: string;
+  /** Поля ДР до обработки промпта; в seen не сохраняются. */
+  readonly birthday?: Birthday;
   readonly message_id?: number;
   readonly topic_id?: number;
   /**

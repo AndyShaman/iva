@@ -21,6 +21,11 @@ const NOW = Date.parse("2026-12-29T03:30:00Z");
 const ZONE = "Asia/Tashkent";
 const event = (name: string, date: string, id = name) => ({
   id,
+  eventType: "birthday",
+  birthdayProperties: {
+    type: "birthday",
+    contact: `people/c${encodeURIComponent(id)}`,
+  },
   summary: name,
   start: { date },
 });
@@ -89,7 +94,8 @@ test("gws wire uses Contacts, expanded events and the complete inclusive window 
     "--params",
   ]);
   assert.deepEqual(JSON.parse(calls[0].args[4]), {
-    calendarId: "addressbook#contacts@group.v.calendar.google.com",
+    calendarId: "primary",
+    eventTypes: ["birthday"],
     singleEvents: true,
     orderBy: "startTime",
     timeZone: ZONE,
@@ -226,11 +232,14 @@ async function scenario(
     config: () => config,
     sources: [birthdaySource(read, NOW, ZONE)],
     birthdays: read,
-    runTurn: (prompt) => {
+    runTurn: async (prompt) => {
       prompts.push(prompt);
       return Promise.resolve({
         status: "completed",
-        message: "QUIET",
+        message:
+          (await read()).items
+            .map((item) => `<!-- iva:item ${item.key} -->\n${item.name}`)
+            .join("\n<!-- iva:next -->\n") || "QUIET",
         feedback: () => Promise.resolve(),
       });
     },
@@ -249,7 +258,7 @@ async function scenario(
   }
 }
 
-test("Watch wakes for day three and today without unread mail or Telegram; repeats stay claimed", async () => {
+test("Watch wakes for day three and today without unread mail or Telegram; repeats stay confirmed", async () => {
   const data = await readBirthdays(
     NOW,
     ZONE,

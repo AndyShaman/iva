@@ -8,8 +8,11 @@ import {
 import { addDaysToDate, zonedParts, zonedToUtcMs } from "#lib/zoned-time.ts";
 import { runGws, type GwsRun, type Source } from "./precheck.ts";
 
-export const BIRTHDAY_CALENDAR =
-  "addressbook#contacts@group.v.calendar.google.com";
+const BIRTHDAY_KEY_PREFIX = "birthday:contact:";
+
+/** Только новый ключ ДР означает подтверждение доставки, старый мог быть заявкой. */
+export const isContactBirthdayKey = (key: string): boolean =>
+  key.startsWith(BIRTHDAY_KEY_PREFIX);
 
 export type Birthday = {
   readonly key: string;
@@ -58,7 +61,13 @@ function dateEpoch(date: string): number | null {
 function birthday(value: unknown, today: number): Birthday | null {
   const row = object(value);
   const date = object(row.start).date;
+  const properties = object(row.birthdayProperties);
+  const contact = properties.contact;
   if (
+    row.eventType !== "birthday" ||
+    properties.type !== "birthday" ||
+    typeof contact !== "string" ||
+    !/^people\/[^\s<>/]+$/u.test(contact) ||
     row.status === "cancelled" ||
     typeof row.summary !== "string" ||
     typeof date !== "string"
@@ -70,9 +79,8 @@ function birthday(value: unknown, today: number): Birthday | null {
   const name = birthdayName(row.summary);
   if (!name || daysUntil < 0 || daysUntil > BIRTHDAY_LOOKAHEAD_DAYS)
     return null;
-  const id = typeof row.id === "string" ? row.id : name;
   return {
-    key: `birthday:${encodeURIComponent(id)}:${date}:${daysUntil}`,
+    key: `${BIRTHDAY_KEY_PREFIX}${encodeURIComponent(contact)}:${date}:${daysUntil}`,
     name,
     date,
     daysUntil,
@@ -86,7 +94,8 @@ function windowOf(now: number, timeZone: string) {
   return {
     today: Date.UTC(y, m - 1, d),
     params: {
-      calendarId: BIRTHDAY_CALENDAR,
+      calendarId: "primary",
+      eventTypes: ["birthday"],
       singleEvents: true,
       orderBy: "startTime",
       timeZone,
@@ -200,6 +209,7 @@ export function birthdaySource(
             key: item.key,
             unread: 1,
             from: {},
+            birthday: item,
             note: `Birthday from Google Contacts (data): ${JSON.stringify(item)}`,
           })),
         error:
