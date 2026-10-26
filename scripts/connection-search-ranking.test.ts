@@ -141,13 +141,11 @@ test("explicit telegram-userbot search keeps all 116 tools scoped away from stro
     },
     { keywords: "list chats", tool: "get_chats", maxRank: 3 },
   ]) {
-    const unrelatedTools = keywords
-      .split(" ")
-      .map((name) => ({
-        name,
-        description: keywords,
-        inputSchema: { type: "object" },
-      }));
+    const unrelatedTools = keywords.split(" ").map((name) => ({
+      name,
+      description: keywords,
+      inputSchema: { type: "object" },
+    }));
     const loaded: string[] = [];
     const registry: ConnectionRegistry = {
       dispose: async () => {},
