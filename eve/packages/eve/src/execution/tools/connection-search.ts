@@ -118,14 +118,24 @@ function tokenize(text: string): string[] {
   ];
 }
 
-type MatchScore = readonly [exactName: number, nameCoverage: number, descriptionCoverage: number];
+type MatchScore = readonly [
+  exactName: number,
+  nameDirectCoverage: number,
+  nameReversePrefixCoverage: number,
+  descriptionDirectCoverage: number,
+  descriptionReversePrefixCoverage: number,
+];
 
-function tokenCoverage(queryTokens: readonly string[], text: string): number {
+function tokenCoverage(
+  queryTokens: readonly string[],
+  text: string,
+): readonly [direct: number, reversePrefix: number] {
   const tokens = tokenize(text);
-  return tokens.length === 0
-    ? 0
-    : tokens.filter((token) => queryTokens.some((query) => token.includes(query))).length /
-        tokens.length;
+  if (tokens.length === 0) return [0, 0];
+  return [
+    tokens.filter((token) => queryTokens.some((query) => token.includes(query))).length / tokens.length,
+    tokens.filter((token) => queryTokens.some((query) => query.startsWith(token))).length / tokens.length,
+  ];
 }
 
 function scoreMatch(
@@ -135,8 +145,8 @@ function scoreMatch(
 ): MatchScore {
   return [
     Number(queryWords.has(tool.name.toLowerCase())),
-    tokenCoverage(queryTokens, tool.name),
-    tokenCoverage(queryTokens, tool.description),
+    ...tokenCoverage(queryTokens, tool.name),
+    ...tokenCoverage(queryTokens, tool.description),
   ];
 }
 
@@ -346,7 +356,13 @@ async function executeConnectionSearch(
     throw new Error(terminalFailures.map((failure) => failure.error).join("\n"));
   }
 
-  results.sort((a, b) => b.score[0] - a.score[0] || b.score[1] - a.score[1] || b.score[2] - a.score[2]);
+  results.sort((a, b) =>
+    b.score[0] - a.score[0] ||
+    b.score[1] - a.score[1] ||
+    b.score[2] - a.score[2] ||
+    b.score[3] - a.score[3] ||
+    b.score[4] - a.score[4],
+  );
   const matched = results.slice(0, limit).map((r) => r.item);
 
   if (matched.length > 0) {

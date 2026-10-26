@@ -272,6 +272,34 @@ test("literal tool names stay first despite repeated competing descriptions", as
   );
 });
 
+test("direct name coverage outranks reverse-prefix coverage with the same description", async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 0, max: 100000 }), async (suffix) => {
+      const stem = `record${suffix}`;
+      const result = await search(
+        [
+          { name: `lookup_${stem}`, description: "" },
+          { name: `lookup_${stem}s`, description: "" },
+        ],
+        `${stem}s`,
+      );
+      assert.equal(result[0]?.tool, `lookup_${stem}s`);
+    }),
+    { seed: 380, numRuns: 30 },
+  );
+});
+
+test("reverse-prefix name coverage outranks a direct description-only match", async () => {
+  const result = await search(
+    [
+      { name: "archive", description: "records" },
+      { name: "get_record", description: "" },
+    ],
+    "records",
+  );
+  assert.equal(result[0]?.tool, "get_record");
+});
+
 for (const { keywords, tools, expected } of [
   {
     keywords: "GET_HISTORY records",
@@ -295,6 +323,34 @@ for (const { keywords, tools, expected } of [
     keywords: "issue",
     tools: [{ name: "archive", description: "Search issues" }],
     expected: ["archive"],
+  },
+  {
+    keywords: "records",
+    tools: [{ name: "get_record", description: "Read entries" }],
+    expected: ["get_record"],
+  },
+  {
+    keywords: "records",
+    tools: [
+      { name: "archive", description: "record" },
+      { name: "library", description: "records" },
+    ],
+    expected: ["library", "archive"],
+  },
+  {
+    keywords: "issues",
+    tools: [{ name: "archive", description: "Read issue" }],
+    expected: ["archive"],
+  },
+  {
+    keywords: "issu",
+    tools: [{ name: "archive", description: "Read issues" }],
+    expected: ["archive"],
+  },
+  {
+    keywords: "history",
+    tools: [{ name: "archive", description: "is" }],
+    expected: [undefined],
   },
   {
     keywords: "history",

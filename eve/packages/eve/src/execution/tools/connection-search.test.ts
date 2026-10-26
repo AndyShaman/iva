@@ -203,6 +203,34 @@ describe("connection dynamic tools", () => {
 
 describe("connection_search", () => {
   it.each([
+    {
+      keywords: "records",
+      name: "get_record",
+      description: "Read entries",
+      expected: "get_record",
+    },
+    { keywords: "issues", name: "archive", description: "Read issue", expected: "archive" },
+    { keywords: "issu", name: "archive", description: "Read issues", expected: "archive" },
+    { keywords: "history", name: "is", description: "or to id", expected: undefined },
+    { keywords: "history", name: "archive", description: "is", expected: undefined },
+  ])(
+    "preserves useful partial matches without reverse infixes: $keywords / $name / $description",
+    async ({ keywords, name, description, expected }) => {
+      const result = (await executeConnectionSearch(
+        registry({
+          connections: [connection("fixture")],
+          loadTools: {
+            fixture: async () => [{ name, description, inputSchema: { type: "object" } }],
+          },
+        }),
+        { keywords },
+      )) as { tool?: string }[];
+
+      expect(result[0]?.tool).toBe(expected);
+    },
+  );
+
+  it.each([
     "get_history read chat messages history",
     "telegram history read messages chat get_history",
   ])("ranks the literal tool name first on all pinned metadata: %s", async (keywords) => {
