@@ -1920,6 +1920,9 @@ for (const [status, verdict] of [
         await makeClaudeCliModel(MODEL, {
           silenceTimeoutMs: 10_000,
           upstream: upstream.url,
+          // This matrix checks classification after a current-turn effect; recovery has
+          // its own first-step fixtures and bounded-window tests.
+          turn: { turnId: "status-classification", step: 1 },
         }).doStream({ prompt: userPrompt(), tools: [WEATHER] }),
       ),
     );

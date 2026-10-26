@@ -29,6 +29,11 @@
 // CLAUDE_SILENCE_TIMEOUT_MS считается смертью хода; таймер сбрасывается на КАЖДОМ событии,
 // потому что думающая модель молчит между дельтами дольше, чем между кадрами.
 
+import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
+import {
+  claudeAuthRotationStream,
+  type ClaudeTurn,
+} from "./claude-auth-rotation.ts";
 import {
   spawn,
   type ChildProcess,
@@ -308,9 +313,14 @@ process.stdin.on("data", (chunk) => {
 export class ClaudeCliError extends Error {
   override readonly name = "ClaudeCliError";
   readonly isRetryable: boolean;
-  constructor(message: string, { retryable = false } = {}) {
+  readonly authRotation: boolean;
+  constructor(
+    message: string,
+    { retryable = false, authRotation = false } = {},
+  ) {
     super(message);
     this.isRetryable = retryable;
+    this.authRotation = authRotation;
   }
 }
 
@@ -1167,6 +1177,9 @@ async function* silentFor(
 // ─── Шаг модели ─────────────────────────────────────────────────────────────────────────
 
 type ClaudeSettings = {
+  /** The provider's existing deadline, applied inside recovery to each attempt. */
+  readonly attemptMiddleware?: LanguageModelMiddleware;
+  readonly turn?: ClaudeTurn;
   /** Тишина CLI до отказа; в тестах — доли секунды, в бою CLAUDE_SILENCE_TIMEOUT_MS. */
   readonly silenceTimeoutMs?: number;
   /**
@@ -1196,16 +1209,34 @@ export function makeClaudeCliModel(
     upstream: settings.upstream ?? CLAUDE_UPSTREAM,
     sessionId: settings.sessionId,
   };
-  return {
+  const single: LanguageModelV4 = {
     specificationVersion: "v4",
     provider: CLAUDE_PROVIDER_ID,
     modelId: model,
     // Картинки едут только base64: URL пришлось бы скачивать, а у CLI нет для этого канала.
     supportedUrls: {},
     doStream: (options: LanguageModelV4CallOptions) =>
-      Promise.resolve(streamCall(model, options, run)),
+      Promise.resolve(attemptStream(model, options, run)),
     doGenerate: (options: LanguageModelV4CallOptions) =>
-      generateCall(model, options, run),
+      generateCall(options, (options) => attemptStream(model, options, run)),
+  };
+  const attempt = settings.attemptMiddleware
+    ? wrapLanguageModel({
+        model: single,
+        middleware: settings.attemptMiddleware,
+      })
+    : single;
+  const recovered = (options: LanguageModelV4CallOptions) =>
+    claudeAuthRotationStream(
+      options,
+      settings.turn,
+      (options) => attempt.doStream(options),
+      (error) => error instanceof ClaudeCliError && error.authRotation,
+    );
+  return {
+    ...single,
+    doStream: (options) => Promise.resolve(recovered(options)),
+    doGenerate: (options) => generateCall(options, recovered),
   };
 }
 
@@ -1215,7 +1246,7 @@ export function makeClaudeCliModel(
  * срабатывает никогда, и ход оплачивал бы запрос к API, а `claude -p` висел бы до таймаута
  * тишины (QA: 8116 мс при пороге 8 с, в бою было бы 180 с).
  */
-function streamCall(
+function attemptStream(
   model: string,
   options: LanguageModelV4CallOptions,
   run: ClaudeRun,
@@ -1245,8 +1276,8 @@ function streamCall(
           options.abortSignal?.removeEventListener("abort", onAbort),
         );
     },
-    cancel() {
-      session.abort();
+    async cancel() {
+      await session.close();
     },
   });
   return { stream };
@@ -1676,7 +1707,10 @@ function capturedMessage(
     said === undefined || said.includes(ADMISSION_CONSUMED) ? "" : `: ${said}`;
   throw new ClaudeCliError(
     `api.anthropic.com did not finish the response (${relayWitness(admission)})${detail}`,
-    { retryable: connectionBroke(admission.status) },
+    {
+      retryable: connectionBroke(admission.status),
+      authRotation: admission.status === 401,
+    },
   );
 }
 
@@ -1879,11 +1913,10 @@ function report(
 
 /** doGenerate — это тот же поход, только собранный в один результат: второй дороги нет. */
 async function generateCall(
-  model: string,
   options: LanguageModelV4CallOptions,
-  run: ClaudeRun,
+  call: (options: LanguageModelV4CallOptions) => LanguageModelV4StreamResult,
 ): Promise<LanguageModelV4GenerateResult> {
-  const { stream } = streamCall(model, options, run);
+  const { stream } = call(options);
   const reader = stream.getReader();
   const content: LanguageModelV4Content[] = [];
   const warnings: SharedV4Warning[] = [];
