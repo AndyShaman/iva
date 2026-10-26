@@ -296,7 +296,7 @@ await test("button tap archives a short quote while the model keeps its full con
           "claude",
         );
         const shown = notice
-          .split("\n\n<tg-button-row>")[0]!
+          .split("\n\n<tg-button-row>")[0]
           .replace(/\\(.)/gu, "$1");
         const retry = language === "en" ? "Try again" : "Повторить";
         const callback = {
@@ -324,7 +324,7 @@ await test("button tap archives a short quote while the model keeps its full con
         assert.ok(update.message!.text!.endsWith(`«${question}»)`));
         const written = dailyText()
           .slice(before.length)
-          .split("[text]\n")[1]!
+          .split("[text]\n")[1]
           .trimEnd();
         assert.ok(written.startsWith(`${retry}\n\n(${label}: «`));
         if (language === "ru")
@@ -333,6 +333,72 @@ await test("button tap archives a short quote while the model keeps its full con
         assert.ok(!written.includes("END-OF-QUESTION"));
       },
     );
+    for (const variant of ["long", "empty", "ordinary data"]) {
+      await t.test(`${language}: interrupted retry ${variant}`, async () => {
+        const token = "123e4567-e89b-12d3-a456-426614174000";
+        const retry = language === "en" ? "Try again" : "Повторить";
+        const data =
+          variant === "ordinary data"
+            ? `Reply: ${token} 🚀`
+            : `${retry}:${token}`;
+        const expectedData = variant === "ordinary data" ? data : retry;
+        const question = `${"Original request ".repeat(40)}END-OF-REQUEST`;
+        const source =
+          variant === "empty"
+            ? ""
+            : `${language === "en" ? "previous turn was interrupted" : "Предыдущий ход оборвался"}${" q".repeat(1000)}`;
+        const callback = {
+          id: "interrupted-daily",
+          data,
+          from: { id: 42, is_bot: false },
+          message: {
+            message_id: 504,
+            chat: { id: 77, type: "private" },
+            text: source,
+          },
+        };
+        const update: Parameters<typeof applyTelegramButtonTap>[0] = {
+          update_id: 504,
+          callback_query: callback,
+        };
+        assert.equal(applyTelegramButtonTap(update, callback, question), true);
+        assert.equal(callback.data, data, "claim data stays unchanged");
+        const raw = update.message;
+        assert.ok(raw);
+        assert.ok(typeof raw.text === "string");
+        const before = dailyText();
+        const result = await inbound.runTelegramInbound(
+          message(raw),
+          harness().effects,
+        );
+        assert.ok(result);
+        assert.equal(result.context, undefined);
+        const written = dailyText()
+          .slice(before.length)
+          .split("[text]\n")[1]
+          ?.trimEnd();
+        assert.ok(written);
+        if (variant === "empty") {
+          assert.equal(raw.text, retry);
+          assert.equal(written, retry);
+        } else {
+          assert.ok(raw.text.startsWith(`${expectedData}\n\n(${label}: «`));
+          assert.equal(
+            written,
+            `${expectedData}\n\n(${label}: «${source.slice(0, 199).trimEnd()}…»)`,
+          );
+          if (variant === "long")
+            assert.ok(raw.text.endsWith(`«${question}»)`));
+        }
+        if (variant === "ordinary data") {
+          assert.ok(raw.text.includes(data));
+          assert.ok(written.includes(data));
+        } else {
+          assert.ok(!raw.text.includes(token));
+          assert.ok(!written.includes(token));
+        }
+      });
+    }
   }
 });
 
@@ -360,8 +426,10 @@ await test("button tap keeps Gate findings from omitted quote lines", async (t) 
     message(update.message!),
     harness().effects,
   );
+  assert.ok(result);
+  assert.ok(result.context);
   assert.ok(
-    result?.context?.some((text) => text.includes("This message was flagged")),
+    result.context.some((text) => text.includes("This message was flagged")),
   );
   assert.ok(
     result.context.some((text) =>

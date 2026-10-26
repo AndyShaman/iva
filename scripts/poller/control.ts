@@ -289,6 +289,9 @@ export function applyTelegramButtonTap(
   const from = callback.from;
   if (message === undefined || chat === undefined || from === undefined)
     return false;
+  const data = isInterruptedTap(callback.data)
+    ? callback.data.split(":", 1)[0]
+    : callback.data;
   const context = tapContextText(message);
   const tap: TelegramUpdate = {
     update_id: update.update_id,
@@ -296,19 +299,14 @@ export function applyTelegramButtonTap(
       message_id: message.message_id,
       chat: { ...chat },
       from: { ...from, is_bot: false },
-      text: tapTurnText(
-        callback.data,
-        context,
-        chatKey(update),
-        acceptedQuestion,
-      ),
+      text: tapTurnText(data, context, chatKey(update), acceptedQuestion),
       ...(message.date === undefined ? {} : { date: message.date }),
       ...(message.message_thread_id === undefined
         ? {}
         : { message_thread_id: message.message_thread_id }),
       [TELEGRAM_BUTTON_TAP_FIELD]: true,
       [TELEGRAM_BUTTON_TAP_DAILY_TEXT_FIELD]: tapText(
-        callback.data,
+        data,
         dailyTapContext(context),
       ),
     },
@@ -326,7 +324,7 @@ export const TAP_CONTEXT_LIMIT = 1500;
 const TAP_DAILY_CONTEXT_LIMIT = 200;
 
 function dailyTapContext(context: string): string {
-  const firstLine = context.split(/\r\n|[\n\r\u0085\u2028\u2029]/u, 1)[0]!;
+  const firstLine = context.split(/\r\n|[\n\r\u0085\u2028\u2029]/u, 1)[0];
   const chars = Array.from(firstLine);
   if (firstLine === context && chars.length <= TAP_DAILY_CONTEXT_LIMIT)
     return context;
@@ -365,7 +363,6 @@ function tapTurnText(
   key: string | null,
   acceptedQuestion?: string,
 ): string {
-  if (isInterruptedTap(data)) data = data.split(":", 1)[0]!;
   if (context === "") return data;
   return `${tapText(data, context)}${fullQuestion(data, context, key, acceptedQuestion)}`;
 }

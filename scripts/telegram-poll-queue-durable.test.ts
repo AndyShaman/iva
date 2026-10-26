@@ -729,7 +729,7 @@ test("button tap daily text survives durable queue reload and materialization", 
   const loaded = await loadQueueFile(file, { strict: true });
   const materialized = materializeQueueItem(
     "42:",
-    loaded.document.queues["42:"]![0]!,
+    loaded.document.queues["42:"][0],
   );
   assert.deepEqual(materialized, update);
   assert.equal(
