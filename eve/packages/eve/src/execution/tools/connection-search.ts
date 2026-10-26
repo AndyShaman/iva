@@ -108,31 +108,36 @@ interface ConnectionSearchResultItem {
 }
 
 function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[\s_\-./]+/)
-    .filter((t) => t.length > 1);
+  return [
+    ...new Set(
+      text
+        .toLowerCase()
+        .split(/[\s_\-./]+/)
+        .filter((t) => t.length > 1),
+    ),
+  ];
 }
 
-function scoreMatch(queryTokens: string[], tool: ConnectionToolMetadata): number {
-  const nameTokens = tokenize(tool.name);
-  const descTokens = tokenize(tool.description);
-  let score = 0;
+type MatchScore = readonly [exactName: number, nameCoverage: number, descriptionCoverage: number];
 
-  for (const qt of queryTokens) {
-    for (const nt of nameTokens) {
-      if (nt.includes(qt) || qt.includes(nt)) {
-        score += 3;
-      }
-    }
-    for (const dt of descTokens) {
-      if (dt.includes(qt) || qt.includes(dt)) {
-        score += 1;
-      }
-    }
-  }
+function tokenCoverage(queryTokens: readonly string[], text: string): number {
+  const tokens = tokenize(text);
+  return tokens.length === 0
+    ? 0
+    : tokens.filter((token) => queryTokens.some((query) => token.includes(query))).length /
+        tokens.length;
+}
 
-  return score;
+function scoreMatch(
+  queryTokens: readonly string[],
+  queryWords: ReadonlySet<string>,
+  tool: ConnectionToolMetadata,
+): MatchScore {
+  return [
+    Number(queryWords.has(tool.name.toLowerCase())),
+    tokenCoverage(queryTokens, tool.name),
+    tokenCoverage(queryTokens, tool.description),
+  ];
 }
 
 async function resolveInteractiveAuth(
@@ -194,7 +199,8 @@ async function executeConnectionSearch(
 
   const limit = input.limit ?? 10;
   const queryTokens = tokenize(input.keywords);
-  const results: Array<{ item: ConnectionSearchResultItem; score: number }> = [];
+  const queryWords = new Set(input.keywords.toLowerCase().split(/\s+/));
+  const results: Array<{ item: ConnectionSearchResultItem; score: MatchScore }> = [];
   const failedConnections: ConnectionSearchResultItem[] = [];
 
   const targetConnections =
@@ -311,8 +317,8 @@ async function executeConnectionSearch(
     }
 
     for (const tool of tools) {
-      const score = scoreMatch(queryTokens, tool);
-      if (score > 0) {
+      const score = scoreMatch(queryTokens, queryWords, tool);
+      if (score.some((value) => value > 0)) {
         results.push({
           item: {
             connection: conn.connectionName,
@@ -340,7 +346,7 @@ async function executeConnectionSearch(
     throw new Error(terminalFailures.map((failure) => failure.error).join("\n"));
   }
 
-  results.sort((a, b) => b.score - a.score);
+  results.sort((a, b) => b.score[0] - a.score[0] || b.score[1] - a.score[1] || b.score[2] - a.score[2]);
   const matched = results.slice(0, limit).map((r) => r.item);
 
   if (matched.length > 0) {

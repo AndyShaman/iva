@@ -20,6 +20,7 @@ import type { ResolvedConnectionDefinition } from "#runtime/types.js";
 import { isBrandedToolEntry, type DynamicToolSet } from "#tools/dynamic.js";
 import type { DynamicResolveContext } from "#dynamic/definition.js";
 import { readDurableDynamicToolCallbacks } from "#tools/durable-callbacks.js";
+import telegramCatalog from "./fixtures/telegram-tools-catalog.json" with { type: "json" };
 
 function connection(name: string): ResolvedConnectionDefinition {
   return {
@@ -201,6 +202,44 @@ describe("connection dynamic tools", () => {
 });
 
 describe("connection_search", () => {
+  it.each([
+    "get_history read chat messages history",
+    "telegram history read messages chat get_history",
+  ])("ranks the literal tool name first on all pinned metadata: %s", async (keywords) => {
+    const tools = telegramCatalog.tools.map(({ name, description }) => ({
+      name,
+      description,
+      inputSchema: { type: "object" },
+    }));
+    const result = (await executeConnectionSearch(
+      registry({
+        connections: [connection("telegram-userbot")],
+        loadTools: { "telegram-userbot": async () => tools },
+      }),
+      { connection: "telegram-userbot", keywords, limit: 5 },
+    )) as { tool: string }[];
+
+    expect(tools).toHaveLength(116);
+    expect(result[0]?.tool).toBe("get_history");
+  });
+
+  it("finds get_chats in the first three results for expanded list chats", async () => {
+    const tools = telegramCatalog.tools.map(({ name, description }) => ({
+      name,
+      description,
+      inputSchema: { type: "object" },
+    }));
+    const result = (await executeConnectionSearch(
+      registry({
+        connections: [connection("telegram-userbot")],
+        loadTools: { "telegram-userbot": async () => tools },
+      }),
+      { connection: "telegram-userbot", keywords: "list chats", limit: 3 },
+    )) as { tool: string }[];
+
+    expect(result.map((item) => item.tool)).toContain("get_chats");
+  });
+
   it("fails when every targeted connection fails to load", async () => {
     const incident = connection("incident");
     const connectionRegistry = registry({
