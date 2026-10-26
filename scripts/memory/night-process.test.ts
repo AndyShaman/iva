@@ -100,7 +100,18 @@ class ModelDouble {
         error: { message: `double ${reply.status}` },
       });
     const own = "usage" in reply;
-    const usage = own ? (reply.usage as number | null) : 100;
+    const promptContent = messages.at(-1)?.content;
+    const prompt =
+      typeof promptContent === "string"
+        ? promptContent
+        : JSON.stringify(promptContent ?? "");
+    const cyrillic = prompt.match(/[\u0400-\u04ff]/gu)?.length ?? 0;
+    const usage =
+      reply.usage === "russian"
+        ? Math.ceil(cyrillic / 2 + (prompt.length - cyrillic) / 4)
+        : own
+          ? (reply.usage as number | null)
+          : 100;
     const value = own ? reply.value : reply;
     const text = typeof reply.text === "string" ? reply.text : null;
     // Модель отвечает текстом: JSON в markdown-ограде, как делают настоящие модели.
@@ -978,6 +989,10 @@ void test("открытый фенс и чужой файл на месте но
 
 void test("предел ночи: большой расход на A — B не начат, попытки сохранены, код 1; без usage следующий вызов закрыт", async (t) => {
   const fx = await fixture(t);
+  writeFileSync(
+    join(fx.data, "settings.json"),
+    JSON.stringify({ night: { raisesPerNight: 0 } }),
+  );
   day(fx, "## 10:00 [text]\nАврора\n");
   card(fx, "cards/projects/аврора", aurora);
   fx.model.replies = [
@@ -3369,6 +3384,10 @@ void test("#309: saved prefix is reused for every generated interruption point",
 
 void test("#309: night ceiling preserves a completed portion for the next night", async (t) => {
   const fx = await fixture(t);
+  writeFileSync(
+    join(fx.data, "settings.json"),
+    JSON.stringify({ night: { raisesPerNight: 0 } }),
+  );
   day(
     fx,
     `## 10:00 [text]\n${"а".repeat(30_000)}\n\n## 11:00 [text]\n${"б".repeat(30_000)}\n`,
@@ -3468,6 +3487,10 @@ for (const [scenario, usage, legacy] of [
 ] as const)
   void test(`Стас: ${scenario}`, async (t) => {
     const fx = await fixture(t);
+    writeFileSync(
+      join(fx.data, "settings.json"),
+      JSON.stringify({ night: { raisesPerNight: 0 } }),
+    );
     const raw = Array.from(
       { length: 11 },
       (_, i) =>
@@ -3790,3 +3813,229 @@ for (const boundary of ["before", "after"] as const)
       }
       assert.equal(fx.model.prompts.length, legacySnapshot ? 2 : 1);
     });
+
+// 800 КБ UTF-8: накопительные выжимки также входят в реальный вход следующей части.
+function russianLongDay() {
+  const raw = Array.from(
+    { length: 10 },
+    (_, i) =>
+      `## ${String(i + 1).padStart(2, "0")}:00 [text]\n${String.fromCharCode(0x430 + i).repeat(40_000)}\n`,
+  ).join("\n");
+  const answers = Array.from({ length: 10 }, (_, i) =>
+    A({
+      gist: `часть-${i + 1} ` + "я".repeat(3_000 * (i + 1)),
+      points: Array.from({ length: i + 1 }, (_, j) => ({
+        text: `итог-${j + 1}`,
+        src: [`e${j + 1}`],
+      })),
+    }),
+  );
+  return { raw, answers };
+}
+
+void test("self-heal: 800 KB Russian day resumes after ceiling with raises disabled", async (t) => {
+  const fx = await fixture(t);
+  writeFileSync(
+    join(fx.data, "settings.json"),
+    JSON.stringify({ night: { raisesPerNight: 0 } }),
+  );
+  const { raw, answers } = russianLongDay();
+  assert.ok(
+    Buffer.byteLength(raw) >= 800_000 && Buffer.byteLength(raw) < 810_000,
+  );
+  day(fx, raw);
+  fx.model.replies = answers.map((value) => ({ usage: "russian", value }));
+  const first = await night(fx, null);
+  assert.equal(first.code, 1, first.stderr);
+  const cache = JSON.parse(
+    read(join(fx.data, "memory/night", `${DATE}.json`)),
+  ) as {
+    pass: { progress: { answers: unknown[] } };
+  };
+  const k = cache.pass.progress.answers.length;
+  assert.ok(k > 0 && k < answers.length);
+  assert.deepEqual(cache.pass.progress.answers, answers.slice(0, k));
+  const second = await night(fx, null);
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(fx.model.prompts.length, answers.length);
+  for (let i = 0; i < answers.length; i++) {
+    assert.ok(
+      fx.model.prompts[i].includes(String.fromCharCode(0x430 + i).repeat(100)),
+    );
+    for (let j = 0; j < i; j++)
+      assert.ok(
+        !fx.model.prompts[i].includes(
+          String.fromCharCode(0x430 + j).repeat(100),
+        ),
+      );
+    assert.ok(read(summary(fx)).includes(`итог-${i + 1}`));
+  }
+  assert.equal(readdirSync(join(fx.vault, "summaries/daily")).length, 1);
+  t.diagnostic(
+    `800 KB: night 1 saved ${k}, night 2 starts at ${k + 1}; ${answers.length} total calls`,
+  );
+});
+
+void test("self-heal: 800 KB Russian day finishes in one night and reports a persisted raise", async (t) => {
+  const fx = await fixture(t);
+  reportsOn(fx, "ru");
+  const { raw, answers } = russianLongDay();
+  day(fx, raw);
+  fx.model.replies = answers.map((value) => ({ usage: "russian", value }));
+  const result = await night(fx, null);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(fx.model.prompts.length, answers.length);
+  const settings = JSON.parse(read(join(fx.data, "settings.json"))) as {
+    language: string;
+    memoryReports: { enabled: boolean };
+    night: { inputTokens: number };
+  };
+  assert.equal(settings.night.inputTokens, 600_000);
+  assert.equal(settings.language, "ru");
+  assert.equal(settings.memoryReports.enabled, true);
+  assert.match(reportOf(result.stderr) ?? "", /подняла до 600000/u);
+  assert.match(reportOf(result.stderr) ?? "", /свёрнуто дней 1, в очереди 0/u);
+  for (let i = 0; i < answers.length; i++)
+    assert.ok(read(summary(fx)).includes(`итог-${i + 1}`));
+});
+
+void test("self-heal: hard ceiling sends one alert across repeated nights and a language change", async (t) => {
+  const fx = await fixture(t);
+  const sent = join(fx.data, "sent.jsonl");
+  const preload = `const real = fetch; globalThis.fetch = async (url, init) => {
+    if (!String(url).includes("api.telegram.org")) return real(url, init);
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(${JSON.stringify(sent)}, String(init?.body ?? "") + "\\n");
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }));
+  };`;
+  const env = {
+    TELEGRAM_BOT_TOKEN: "123:abc",
+    TELEGRAM_DIGEST_CHAT_ID: "42",
+    NODE_OPTIONS: `--import data:text/javascript,${encodeURIComponent(preload)}`,
+  };
+  const { raw, answers } = russianLongDay();
+  day(fx, raw);
+  const putSettings = (language: string) =>
+    writeFileSync(
+      join(fx.data, "settings.json"),
+      JSON.stringify({
+        language,
+        night: { inputTokens: 300_000, maxInputTokens: 300_000 },
+      }),
+    );
+  putSettings("ru");
+  fx.model.replies = answers.map((value) => ({ usage: "russian", value }));
+  const first = await night(fx, null, env);
+  assert.equal(first.code, 1, first.stderr);
+  const k = fx.model.prompts.length;
+  const cacheFile = join(fx.data, "memory/night", `${DATE}.json`);
+  // Тот же исчерпанный вход во второй процесс: alertOnce помнит доставку, а не процесс.
+  const cache = read(cacheFile);
+  const preloadUsage = `import fs from "node:fs"; const real = fetch;
+    globalThis.fetch = async (url, init) => {
+      if (!String(url).includes("api.telegram.org")) return real(url, init);
+      fs.appendFileSync(${JSON.stringify(sent)}, String(init?.body ?? "") + "\\n");
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }));
+    };`;
+  // Сохранённые ответы остаются; потолок первого запроса второй ночи достигается
+  // расходом модели на первой продолженной части.
+  putSettings("en");
+  fx.model.replies = answers
+    .slice(k)
+    .map((value) => ({ usage: 300_000, value }));
+  const second = await night(fx, null, {
+    ...env,
+    NODE_OPTIONS: `--import data:text/javascript,${encodeURIComponent(preloadUsage)}`,
+    IVA_TEST_NOW: new Date(Date.parse(NOW) + 3_600_000).toISOString(),
+  });
+  assert.equal(second.code, 1, second.stderr);
+  assert.notEqual(read(cacheFile), cache);
+  const messages = read(sent)
+    .split("\n")
+    .filter((row) => row.includes("maxInputTokens"));
+  assert.equal(messages.length, 1, read(sent));
+  assert.match(messages[0], /300000/u);
+});
+
+void test("self-heal: a previous day can exhaust the budget before the first saved A of its neighbour", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nПервый день\n", "2026-09-25");
+  day(fx, "## 10:00 [text]\nВторой день\n");
+  fx.model.replies = [{ usage: 300_000, value: A() }];
+  writeFileSync(
+    join(fx.data, "settings.json"),
+    JSON.stringify({ night: { raisesPerNight: 0 } }),
+  );
+  const cut = await night(fx, null);
+  assert.equal(cut.code, 1, cut.stderr);
+  const file = join(fx.data, "memory/night", `${DATE}.json`);
+  const cache = JSON.parse(read(file)) as { pass: { progress?: unknown } };
+  assert.ok(cache.pass);
+  assert.equal(cache.pass.progress, undefined);
+  assert.equal(fx.model.prompts.length, 1);
+  writeFileSync(join(fx.data, "settings.json"), "{}");
+  fx.model.replies = [A({ gist: "Второй день продолжен" })];
+  const resumed = await night(fx, null);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(fx.model.prompts.length, 2);
+  assert.match(read(summary(fx)), /Второй день продолжен/u);
+});
+
+void test("self-heal: reaching a raised hard ceiling alerts once when the next night starts at that ceiling", async (t) => {
+  const fx = await fixture(t);
+  const sent = join(fx.data, "raised-ceiling-sent.jsonl");
+  const preload = `import { appendFileSync } from "node:fs";
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (!String(url).includes("api.telegram.org")) return real(url, init);
+      appendFileSync(${JSON.stringify(sent)}, String(init?.body ?? "") + "\\n");
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }));
+    };`;
+  const env = {
+    TELEGRAM_BOT_TOKEN: "123:abc",
+    TELEGRAM_DIGEST_CHAT_ID: "42",
+    NODE_OPTIONS: `--import data:text/javascript,${encodeURIComponent(preload)}`,
+  };
+  const alerts = () =>
+    (existsSync(sent) ? read(sent).trim().split("\n") : [])
+      .map((row) => JSON.parse(row) as { text?: string })
+      .filter((row) => row.text?.includes("iva night set maxInputTokens"));
+  const { raw, answers } = russianLongDay();
+  day(fx, raw);
+  const file = join(fx.data, "settings.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      language: "ru",
+      night: {
+        maxInputTokens: 600_000,
+        raisesPerNight: 1,
+      },
+    }),
+  );
+  fx.model.replies = answers.map((value) => ({ usage: 100_000, value }));
+  const first = await night(fx, null, env);
+  assert.equal(first.code, 1, first.stderr);
+  const saved = JSON.parse(read(file)) as {
+    language: string;
+    night: { inputTokens: number };
+  };
+  assert.equal(saved.night.inputTokens, 600_000);
+  const k = fx.model.prompts.length;
+  assert.equal(k, 6);
+  assert.equal(alerts().length, 1, read(sent));
+  assert.match(alerts()[0].text!, /поднимала пределы 1 раз/u);
+  // Сохранённый мягкий предел уже равен потолку: у нового процесса ноль поднятий.
+  writeFileSync(file, JSON.stringify({ ...saved, language: "en" }));
+  fx.model.replies = answers
+    .slice(k)
+    .map((value) => ({ usage: 600_000, value }));
+  const second = await night(fx, null, {
+    ...env,
+    IVA_TEST_NOW: new Date(Date.parse(NOW) + 3_600_000).toISOString(),
+  });
+  assert.equal(second.code, 1, second.stderr);
+  assert.equal(fx.model.prompts.length, k + 1);
+  assert.doesNotMatch(second.stderr, /raised it to/u);
+  assert.equal(alerts().length, 1, read(sent));
+});

@@ -62,6 +62,10 @@ function makeVault(
     sh(["commit", "-q", "-m", "vault"], dir);
   }
   process.env.ASSISTANT_VAULT_DIR = dir;
+  const data = `${dir}-data`;
+  mkdirSync(data);
+  process.env.ASSISTANT_DATA_DIR = data;
+  t.after(() => rmSync(data, { recursive: true, force: true }));
   return dir;
 }
 
@@ -604,11 +608,21 @@ test("vault внутри чужого репозитория: память не 
 });
 test("git не ответил за таймаут: причина - таймаут, а не «нет в PATH»", async (t) => {
   const vault = makeVault(t);
-  hook(vault, "sleep 40");
-  process.env.IVA_VAULT_GIT_TIMEOUT_MS = "1500";
+  const pidFile = join(process.env.ASSISTANT_DATA_DIR!, "hook.pid");
+  hook(vault, `echo $$ > "${pidFile}"; exec sleep 40`);
   t.after(() => {
-    delete process.env.IVA_VAULT_GIT_TIMEOUT_MS;
+    if (existsSync(pidFile)) {
+      try {
+        process.kill(Number(readFileSync(pidFile, "utf8")), "SIGTERM");
+      } catch (error) {
+        assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+      }
+    }
   });
+  writeFileSync(
+    join(process.env.ASSISTANT_DATA_DIR!, "settings.json"),
+    JSON.stringify({ night: { gitTimeoutMs: 1500, raisesPerNight: 0 } }),
+  );
   const started = Date.now();
   const { logged, value: result } = await journal(() =>
     tool.card(card({ title: "Тишина" })),
@@ -1096,3 +1110,103 @@ test("vaultShow отдаёт текст пути, null на отсутствую
   drop(head);
   await assert.rejects(vaultShow(vault, head, "CORE.md"), /ls-tree/u);
 });
+
+// Настоящий fake git получает те же аргументы и окружение, зависает без дочернего sleep.
+// Проба только ускоряет таймер раннера; исходный срок 12/24 с сохраняется в трассе.
+for (const hangs of [1, 2])
+  test(`self-heal git: hangs ${hangs} time(s), exactly one retry`, async (t) => {
+    const vault = makeVault(t);
+    const data = process.env.ASSISTANT_DATA_DIR!;
+    const bin = join(data, "bin");
+    mkdirSync(bin);
+    const count = join(data, "hang-count");
+    const fake = join(bin, "git");
+    writeFileSync(
+      fake,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const cp = require("node:child_process");
+const args = process.argv.slice(2);
+const countFile = ${JSON.stringify(count)};
+let count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;
+if (args.includes("commit") && count < ${hangs}) {
+  fs.writeFileSync(countFile, String(count + 1));
+  setInterval(() => {}, 1000);
+} else {
+  const result = cp.spawnSync("/usr/bin/git", args, { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
+`,
+    );
+    chmodSync(fake, 0o755);
+    const file = join(vault, "pending.md");
+    writeFileSync(file, "owner bytes\n");
+    const trace = join(data, "timeouts.jsonl");
+    const preload = `import cp from "node:child_process";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const original = cp.execFile;
+cp.execFile = (file, args, options, callback) => {
+  fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ args, timeout: options.timeout }) + "\\n");
+  return original(file, args, { ...options, timeout: args.includes("commit") && (!fs.existsSync(${JSON.stringify(count)}) || Number(fs.readFileSync(${JSON.stringify(count)}, "utf8")) < ${hangs}) ? options.timeout / 20 : options.timeout }, callback);
+};
+syncBuiltinESMExports();`;
+    const seam = join(REPO, "agent/lib/vault-commit.ts");
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        join(REPO, "scripts/lib/ts-esm-hooks.ts"),
+        "--import",
+        `data:text/javascript,${encodeURIComponent(preload)}`,
+        "--input-type=module",
+        "-e",
+        `
+      const { commitVaultWrite } = await import(${JSON.stringify(seam)});
+      console.log(JSON.stringify(await commitVaultWrite("night test", [${JSON.stringify(file)}], ${JSON.stringify(vault)})));
+    `,
+      ],
+      {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const exit = await new Promise<number | null>((accept) =>
+      child.once("close", accept),
+    );
+    assert.equal(exit, 0, stderr);
+    const result = JSON.parse(stdout) as {
+      ok: boolean;
+      reason?: string;
+      committed?: boolean;
+    };
+    assert.equal(result.ok, hangs === 1, stderr);
+    if (hangs === 1) {
+      assert.equal(result.committed, true);
+      assert.equal(sh(["show", "HEAD:pending.md"], vault), "owner bytes");
+    } else assert.equal(result.reason, "git не ответил за 24 с");
+    const settings = JSON.parse(
+      readFileSync(join(data, "settings.json"), "utf8"),
+    ) as { night: { gitTimeoutMs: number } };
+    assert.equal(settings.night.gitTimeoutMs, 24_000);
+    const calls = readFileSync(trace, "utf8")
+      .trim()
+      .split("\n")
+      .map((row) => JSON.parse(row) as { args: string[]; timeout: number });
+    assert.deepEqual(
+      calls
+        .filter((row) => row.args.includes("commit"))
+        .map((row) => row.timeout),
+      [12_000, 24_000],
+    );
+    assert.equal(readFileSync(count, "utf8"), String(hangs));
+    assert.equal(readFileSync(file, "utf8"), "owner bytes\n");
+  });

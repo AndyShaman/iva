@@ -4,7 +4,15 @@ import type { ZodType } from "zod";
 import { makeTextModel, providerConfig, providerName } from "#provider.ts";
 import { appendUsage, usageRecord } from "#lib/usage.ts";
 import { sdkUsageTokens } from "#lib/usage-tap.ts";
-import { NIGHT_CEILING } from "#lib/memory-night-constants.ts";
+import {
+  NIGHT_DEFAULTS,
+  NIGHT_MAX,
+  setNightSetting,
+  nightRaised,
+  nightSaveFailed,
+  type NightSettings,
+  type NightNotice,
+} from "#lib/memory-night-constants.ts";
 import { parseJson } from "./night-input.ts";
 
 // Один способ вызова модели для всей ночи у всех провайдеров: формат ответа словами и
@@ -92,6 +100,13 @@ export const ceiling = {
   usageLost: "",
 };
 
+export const nightCeiling = {
+  limits: { ...NIGHT_DEFAULTS } as NightSettings,
+  raises: 0,
+  notices: [] as NightNotice[],
+  blocked: new Set<"calls" | "inputTokens">(),
+};
+
 /** validate бросает с текстом, который уйдёт модели в повторе. */
 export type SchemaCall<T> = {
   skill: string;
@@ -130,18 +145,45 @@ function recordUsage(
 }
 
 function checkCeiling(estimate: number): void {
-  if (
-    ceiling.unknownUsage ||
-    ceiling.calls + 1 > NIGHT_CEILING.calls ||
-    ceiling.inputTokens + estimate > NIGHT_CEILING.inputTokens
-  )
+  if (ceiling.unknownUsage)
     throw new NightCeilingError("memory night ceiling reached");
+  for (const [key, needed] of [
+    ["calls", ceiling.calls + 1],
+    ["inputTokens", ceiling.inputTokens + estimate],
+  ] as const) {
+    const limits = nightCeiling.limits;
+    while (
+      needed > limits[key] &&
+      limits[key] < limits[NIGHT_MAX[key]] &&
+      nightCeiling.raises < limits.raisesPerNight
+    ) {
+      const before = limits[key];
+      limits[key] = Math.min(
+        limits[NIGHT_MAX[key]],
+        before + NIGHT_DEFAULTS[key],
+      );
+      nightCeiling.raises++;
+      nightCeiling.notices.push(nightRaised(key, before, limits[key]));
+      try {
+        setNightSetting(key, limits[key]);
+      } catch {
+        nightCeiling.notices.push(nightSaveFailed(key));
+      }
+    }
+    if (needed > limits[key]) {
+      nightCeiling.blocked.add(key);
+      throw new NightCeilingError("memory night ceiling reached");
+    }
+  }
   ceiling.calls++;
 }
 
+export const estimateInputTokens = (prompt: string) =>
+  Math.ceil(Buffer.byteLength(prompt, "utf8") / 3);
+
 async function oneCall<T>(call: SchemaCall<T>, hint: string): Promise<T> {
   const prompt = `${call.skill}${hint ? `\nОшибка прошлого ответа: ${hint}` : ""}\nВход:\n${JSON.stringify(call.input)}`;
-  const estimate = Math.ceil(prompt.length / 3);
+  const estimate = estimateInputTokens(prompt);
   checkCeiling(estimate);
   let result;
   let streamError: unknown;
