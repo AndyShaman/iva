@@ -1,7 +1,7 @@
 import "../fixtures/no-host-anthropic.ts";
 // Настоящий ночной шов через SDK и codexFetch, без сетевого доступа и живых токенов.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, beforeEach } from "node:test";
@@ -26,12 +26,23 @@ const {
   NightCeilingError,
   NightSchemaError,
   NightTransientError,
+  nightCeiling,
+  estimateInputTokens,
 } = await import("./night-call.ts");
+const { NIGHT_DEFAULTS } =
+  await import("../../agent/lib/memory-night-constants.ts");
+const { acquireFileLockSync, releaseFileLock } =
+  await import("../../agent/lib/fs-atomic.ts");
 const { codexProviderOptions } = await import("../../agent/provider.ts");
 const { MockLanguageModelV4 } = await import("ai/test");
 
 after(() => rmSync(data, { recursive: true, force: true }));
 beforeEach(() => {
+  Object.assign(nightCeiling.limits, NIGHT_DEFAULTS, { raisesPerNight: 0 });
+  nightCeiling.raises = 0;
+  nightCeiling.notices.length = 0;
+  nightCeiling.blocked.clear();
+  writeFileSync(join(data, "settings.json"), "{}");
   Object.assign(ceiling, {
     calls: 0,
     inputTokens: 0,
@@ -400,4 +411,96 @@ void test("#341: classify every cause level and keep account refusals permanent 
     }),
     { seed, numRuns: 5 },
   );
+});
+
+void test("UTF-8 token estimate covers Russian text and preserves ASCII", () => {
+  const n = 10_000;
+  const estimate = estimateInputTokens("я".repeat(n));
+  assert.ok(estimate >= n / 2 && estimate <= n);
+  assert.equal(estimateInputTokens("a".repeat(n)), Math.ceil(n / 3));
+});
+
+void test("ceiling raises calls and input tokens, persists only soft limits and keeps neighbours", async (t) => {
+  nightCeiling.limits.raisesPerNight = 3;
+  ceiling.calls = 40;
+  ceiling.inputTokens = 300_000;
+  writeFileSync(
+    join(data, "settings.json"),
+    JSON.stringify({ language: "en", night: { maxCalls: 160 } }),
+  );
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(response(['{"text":"done"}'])),
+  );
+  assert.deepEqual(await callBySchema(ask()), { text: "done" });
+  assert.equal(nightCeiling.raises, 2);
+  assert.equal(nightCeiling.limits.calls, 80);
+  assert.equal(nightCeiling.limits.inputTokens, 600_000);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(data, "settings.json"), "utf8")),
+    {
+      language: "en",
+      night: { maxCalls: 160, calls: 80, inputTokens: 600_000 },
+    },
+  );
+});
+
+void test("ceiling clamps a raise to the hard limit and stops when raises run out", async (t) => {
+  Object.assign(nightCeiling.limits, {
+    raisesPerNight: 1,
+    maxInputTokens: 350_000,
+  });
+  ceiling.inputTokens = 300_000;
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(response(['{"text":"done"}'])),
+  );
+  await callBySchema(ask());
+  assert.equal(nightCeiling.limits.inputTokens, 350_000);
+  assert.equal(nightCeiling.raises, 1);
+  ceiling.calls = 40;
+  await assert.rejects(callBySchema(ask()), NightCeilingError);
+  assert.equal(nightCeiling.raises, 1);
+  assert.ok(nightCeiling.blocked.has("calls"));
+});
+
+void test("busy and corrupt settings keep the raised ceiling in memory without stopping the call", async (t) => {
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(response(['{"text":"done"}'])),
+  );
+  for (const corrupt of [false, true]) {
+    Object.assign(nightCeiling.limits, NIGHT_DEFAULTS);
+    nightCeiling.raises = 0;
+    nightCeiling.notices.length = 0;
+    ceiling.calls = 0;
+    ceiling.inputTokens = 300_000;
+    writeFileSync(join(data, "settings.json"), corrupt ? "{broken" : "{}");
+    const lock = corrupt
+      ? null
+      : acquireFileLockSync(join(data, "settings.json.lock"));
+    try {
+      await callBySchema(ask());
+    } finally {
+      if (lock) releaseFileLock(lock);
+    }
+    assert.equal(nightCeiling.limits.inputTokens, 600_000);
+    assert.equal(nightCeiling.raises, 1);
+    assert.equal(
+      readFileSync(join(data, "settings.json"), "utf8"),
+      corrupt ? "{broken" : "{}",
+    );
+    assert.ok(
+      nightCeiling.notices.some((pair) =>
+        pair[0].includes("could not be saved"),
+      ),
+    );
+  }
+});
+
+void test("unknown usage stays latched even when raising is enabled", async (t) => {
+  nightCeiling.limits.raisesPerNight = 3;
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(response(['{"text":"done"}'], false)),
+  );
+  await callBySchema(ask());
+  await assert.rejects(callBySchema(ask()), NightCeilingError);
+  assert.equal(nightCeiling.raises, 0);
 });
