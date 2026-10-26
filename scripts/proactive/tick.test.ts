@@ -44,6 +44,8 @@ const HOUR = 60 * MIN;
 /** 2026-10-05 12:00 UTC — день, не тихий час. */
 const NOON = Date.UTC(2026, 9, 5, 12, 0);
 const DAY = "2026-10-05";
+const noBirthdays: NonNullable<TickDeps["birthdays"]> = () =>
+  Promise.resolve({ status: "not-connected", items: [] });
 
 test("empty-response turn.failed stays quiet in Watch and logs the cause", async () => {
   const { reminderFromEvents } =
@@ -941,6 +943,7 @@ test("IVA_JOB_STOP_AT reaches every turn of the run as one signal; garbage, the 
       {
         sources: [tg],
         timeZone: "UTC",
+        birthdays: noBirthdays,
         config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
         statePath,
         runTurn: (_prompt, _kind, signal) => {
@@ -996,6 +999,7 @@ test(
       {
         sources: [],
         timeZone: "UTC",
+        birthdays: noBirthdays,
         config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
         statePath: join(mkdtempSync(join(ROOT, "hang-")), "proactive.json"),
         runTurn: (_prompt, _kind, signal) => hangsUntil(signal),
@@ -1050,6 +1054,7 @@ test(
         {
           sources: [],
           timeZone: "UTC",
+          birthdays: noBirthdays,
           config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
           statePath: join(mkdtempSync(join(ROOT, "late-")), "proactive.json"),
           runTurn: (prompt, _kind, signal) =>

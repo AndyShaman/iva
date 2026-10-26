@@ -27,12 +27,22 @@ import { openFailures } from "#lib/open-failures.ts";
 import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
 import { alertDue, alertResolved } from "../lib/notice-policy.ts";
 
+/** ДР Google Контактов: общие поля источника и metadata пункта Watch. */
+export type Birthday = {
+  readonly key: string;
+  readonly name: string;
+  readonly date: string;
+  readonly daysUntil: number;
+};
+
 /** Пункт Watch: ключ в `seen`, счётчик, кто прислал; у `check:` и сбоя — что сломалось (строка промпта). */
 export type WatchItem = {
   readonly key: string;
   readonly unread: number;
   readonly from: Sender;
   readonly note?: string;
+  /** Поля ДР до обработки промпта; в seen не сохраняются. */
+  readonly birthday?: Birthday;
   readonly message_id?: number;
   readonly topic_id?: number;
   /**
@@ -283,7 +293,11 @@ export const MAIL_QUERY =
 export type GwsRun = (
   args: readonly string[],
   timeoutMs: number,
-) => Promise<{ code: number | "missing" | "timeout"; stdout: string }>;
+) => Promise<{
+  code: number | "missing" | "timeout";
+  stdout: string;
+  stderr?: string;
+}>;
 
 function exitCode(
   error: (Error & { code?: unknown; killed?: boolean }) | null,
@@ -294,11 +308,15 @@ function exitCode(
   return typeof error.code === "number" ? error.code : 1;
 }
 
-const runGws: GwsRun = (args, timeoutMs) =>
+export const runGws: GwsRun = (args, timeoutMs) =>
   new Promise((resolve) => {
     const options = { timeout: timeoutMs, env: childEnv(), maxBuffer: 4 << 20 };
-    execFile(gwsBin(), [...args], options, (error, stdout) =>
-      resolve({ code: exitCode(error), stdout: String(stdout) }),
+    execFile(gwsBin(), [...args], options, (error, stdout, stderr) =>
+      resolve({
+        code: exitCode(error),
+        stdout: String(stdout),
+        stderr: String(stderr),
+      }),
     );
   });
 
