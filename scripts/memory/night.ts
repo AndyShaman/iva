@@ -8,7 +8,12 @@ import { resolveVaultDir } from "@iva/vault-dir";
 import { resolveDataDir } from "#lib/data-dir.ts";
 import { resolveTimeZone } from "#lib/timezone.ts";
 import { readSettings } from "#lib/settings.ts";
-import { commitVaultSweep, commitVaultWrite } from "#lib/vault-commit.ts";
+import {
+  commitVaultSweep,
+  commitVaultWrite,
+  vaultGitNotices,
+  vaultGitCeiling,
+} from "#lib/vault-commit.ts";
 import { writeFileAtomicSync as writeAtomic } from "#lib/fs-atomic.ts";
 import { imageRefsIn } from "#lib/attachment-ref.ts";
 import { SECTION_KIND, setLastDayPointer } from "#lib/core-clamp.ts";
@@ -33,6 +38,7 @@ import type { DayEntry } from "./night-input.ts";
 const root = process.cwd();
 const dataDir = resolveDataDir(root, process.env.ASSISTANT_DATA_DIR);
 const settings = readSettings(join(dataDir, "settings.json"));
+const nightSettings = limits.readNightSettings(join(dataDir, "settings.json"));
 if ((settings.memory as { night?: unknown } | undefined)?.night === "off") {
   console.error("memory-night: выключено");
   process.exit(0);
@@ -1130,10 +1136,15 @@ function telegram() {
     : null;
 }
 
-/** essence — английский текст: смена языка не делает ту же проблему новой. */
-async function notify(key: string, english: string, russian: string) {
+/** essence — стабильный факт: язык и счётчик поднятий не делают проблему новой. */
+async function notify(
+  key: string,
+  english: string,
+  russian: string,
+  essence = english,
+) {
   const [send, body] = [telegram(), T(english, russian)];
-  await notice.alertOnce(dataDir, key, english, async () => {
+  await notice.alertOnce(dataDir, key, essence, async () => {
     const sent = send ? await send(body) : { ok: false, error: "нет чата" };
     if (!sent.ok)
       console.error(`memory-night alert ${key}: ${body} (${sent.error})`);
@@ -1143,14 +1154,15 @@ async function notify(key: string, english: string, russian: string) {
 
 async function report(done: readonly string[], failedDays: number) {
   const send = telegram();
-  const text = notice.nightReport(T, {
-    days: done.map((date) => ({ date, gist: gistOf(date) })),
-    created: tally.created.size,
-    updated: [...tally.updated].filter((card) => !tally.created.has(card))
-      .length,
-    failedDays,
-    problems: jobs.length > 0,
-  });
+  const text =
+    notice.nightReport(T, {
+      days: done.map((date) => ({ date, gist: gistOf(date) })),
+      created: tally.created.size,
+      updated: [...tally.updated].filter((card) => !tally.created.has(card))
+        .length,
+      failedDays,
+      problems: jobs.length > 0,
+    }) + recoveryText();
   const delivery = await notice.deliverMemoryReport({
     dataDir,
     settings,
@@ -1161,6 +1173,42 @@ async function report(done: readonly string[], failedDays: number) {
   });
   if (delivery.status === "failed")
     console.error(`memory-night: Report: ${delivery.error}\n${text}`);
+}
+
+const recoveryNotices = () => [
+  ...vaultGitNotices,
+  ...(call?.nightCeiling.notices ?? []),
+];
+const recoveryText = () =>
+  recoveryNotices().length
+    ? `\n\n${recoveryNotices()
+        .map((pair) => T(...pair))
+        .join("\n")}`
+    : "";
+
+async function ceilingAlerts() {
+  for (const key of call?.nightCeiling.blocked ?? []) {
+    const state = call.nightCeiling;
+    const atMax = state.limits[key] === state.limits[limits.NIGHT_MAX[key]];
+    const command = `iva night set ${atMax ? limits.NIGHT_MAX[key] : "raisesPerNight"}`;
+    const [en, ru] = limits.nightLimitName(key);
+    await notify(
+      `night-ceiling-${key}`,
+      `Night memory reached its ${en} limit = ${state.limits[key]}; raised limits ${state.raises} time(s). Raise the ceiling with ${command} VALUE or shorten the days.`,
+      `Ночь памяти упёрлась в предел ${ru} = ${state.limits[key]}; поднимала пределы ${state.raises} раз. Подними потолок командой ${command} ЧИСЛО или сократи дни.`,
+      `night ceiling ${key} = ${state.limits[key]}`,
+    );
+  }
+  if (vaultGitCeiling) {
+    const { value, raises, atMax } = vaultGitCeiling;
+    const command = `iva night set ${atMax ? "maxGitTimeoutMs" : "raisesPerNight"}`;
+    await notify(
+      "night-ceiling-git",
+      `Night memory reached the git wait limit = ${value} ms; raised it ${raises} time(s). Raise the ceiling with ${command} VALUE or shorten the days.`,
+      `Ночь памяти упёрлась в предел ожидания git = ${value} мс; поднимала его ${raises} раз. Подними потолок командой ${command} ЧИСЛО или сократи дни.`,
+      `night ceiling gitTimeoutMs = ${value}`,
+    );
+  }
 }
 
 /** Вчера нет сырого дня, а в usage.jsonl есть ходы чата — транскрипт не записался. */
@@ -1277,20 +1325,33 @@ async function runDays(dates: readonly string[]) {
   return { done, code };
 }
 
-async function night(manual: string | undefined): Promise<number> {
-  T = await notice.noticeTranslator();
-  const sweep = await commitVaultSweep("memory-night: до ночи", vault);
-  if (!sweep.ok) {
-    const why = `vault не закоммичен до ночи: ${sweep.reason}`;
+/** У потолка отказ сообщает ceilingAlerts; обычный отказ sweep сохраняет свой Alert. */
+async function failSweep(reason: string): Promise<never> {
+  const why = `vault не закоммичен до ночи: ${reason}`;
+  if (!vaultGitCeiling)
     await notify(
       "night-sweep",
-      `Night memory did not start: the vault is not committed before the night: ${sweep.reason}`,
-      `Ночь памяти не началась: ${why}`,
+      `Night memory did not start: the vault is not committed before the night: ${reason}${recoveryText()}`,
+      `Ночь памяти не началась: ${why}${recoveryText()}`,
+      `night sweep: ${reason}`,
     );
-    throw new Error(why);
-  }
+  throw new Error(why);
+}
+
+async function night(manual: string | undefined): Promise<number> {
+  T = await notice.noticeTranslator();
+  for (const invalid of nightSettings.invalid)
+    jobs.push(
+      T(
+        `Night settings: ${invalid}; using defaults.`,
+        `Настройки ночи: ${invalid}; применены значения по умолчанию.`,
+      ),
+    );
+  const sweep = await commitVaultSweep("memory-night: до ночи", vault);
+  if (!sweep.ok) await failSweep(sweep.reason);
   try {
     call = await import("./night-call.ts");
+    Object.assign(call.nightCeiling.limits, nightSettings.values);
   } catch (error) {
     await notify(
       "night-model",
@@ -1326,11 +1387,25 @@ async function night(manual: string | undefined): Promise<number> {
   fallbacks.push(...(await periods()));
   cleanupCaches();
   await alertsAtEnd(today, queueLeft, fallbacks);
-  if (done.length) await report(done, ready.length - done.length);
+  const recovered = recoveryNotices();
+  if (recovered.length) {
+    const summary = [
+      `Night memory: ${done.length} day(s) folded, ${queueLeft.length} queued; raised model limits ${call.nightCeiling.raises} time(s).`,
+      `Ночь памяти: свёрнуто дней ${done.length}, в очереди ${queueLeft.length}; пределы модели поднимала ${call.nightCeiling.raises} раз.`,
+    ] as const;
+    call.nightCeiling.notices.push(summary);
+  }
+  if (done.length || recovered.length)
+    await report(done, ready.length - done.length);
   const { calls, inputTokens, unknownUsage, usageLost } = call.ceiling;
   if (usageLost) jobs.push(`usage.jsonl не записан: ${usageLost}`);
   const usage = `${calls} call(s), ${inputTokens} input tokens`;
-  const unknown = unknownUsage ? ", usage unknown" : "";
+  const unknown = unknownUsage
+    ? T(
+        ", provider did not return usage (usage unknown)",
+        ", провайдер не отдал usage (usage unknown)",
+      )
+    : "";
   console.error(`memory-night: ${done.length} day(s), ${usage}${unknown}`);
   return code;
 }
@@ -1362,6 +1437,8 @@ async function main(): Promise<number> {
     return 1;
   } finally {
     clearTimeout(timer);
+    await ceilingAlerts();
+    for (const pair of recoveryNotices()) jobs.push(T(...pair));
     for (const row of jobs) console.error(`memory-night: ${row}`);
     reportModelAuthSuccess();
   }

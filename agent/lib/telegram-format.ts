@@ -53,6 +53,8 @@ export function htmlToPlain(html: unknown): string {
 // подделать метку не может ни модель, ни пользователь.
 function inlineHtml(text: unknown): string {
   const spans: string[] = [];
+  const restoreSpans = (value: string) =>
+    value.replace(/\uE000(\d+)\uE001/g, (_m, i) => spans[Number(i)] ?? "");
   let s = String(text)
     .replace(/[\uE000\uE001]/g, "")
     .replace(
@@ -93,7 +95,7 @@ function inlineHtml(text: unknown): string {
     if (end <= link.lastIndex) continue;
     // Открывающий тег хранится в spans, подпись проходит правила разметки.
     spans.push(
-      `<a href="${escAttr(match[2] + s.slice(link.lastIndex, end))}">`,
+      `<a href="${escAttr(restoreSpans(match[2] + s.slice(link.lastIndex, end)))}">`,
     );
     linked +=
       s.slice(cursor, match.index) +
@@ -117,7 +119,7 @@ function inlineHtml(text: unknown): string {
     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<i>$1</i>")
     .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
   // restore protected spans
-  return s.replace(/\uE000(\d+)\uE001/g, (_m, i) => spans[Number(i)] ?? "");
+  return restoreSpans(s);
 }
 
 // GFM table separator: |---|:--:|---|

@@ -1,4 +1,5 @@
 // One classifier and one human text for calls, schedule stderr, doctor and Notices.
+import { readClaudeAuthSnapshot } from "./claude-auth-rotation.ts";
 export const MODEL_AUTH_REPEAT_MS = 24 * 60 * 60 * 1000;
 export type AuthLanguage = "ru" | "en";
 const PROVIDERS: Readonly<Record<string, string>> = {
@@ -151,18 +152,46 @@ function authRepair(provider: string): string | null {
   if (provider === "claude") return "claude auth login";
   return provider === "codex" ? "iva login" : null;
 }
+function authImpact(facts: AuthTextFacts, lang: AuthLanguage): string {
+  const effects = authEffects(facts, lang);
+  const when = authSince(facts, lang);
+  const affected = effects.length
+    ? lang === "ru"
+      ? `, поэтому сейчас недоступны ${effects.join(", ")}`
+      : `, so these are currently unavailable: ${effects.join(", ")}`
+    : "";
+  const since = when
+    ? lang === "ru"
+      ? ` (с ${when})`
+      : ` (since ${when})`
+    : "";
+  return affected + since;
+}
+function externalClaudeAuthText(lang: AuthLanguage, impact: string): string {
+  if (lang === "ru")
+    return `Внешний пропуск Claude, который использует Ива, не принимается${impact}.\nПропуск приходит извне. Проверьте службу синхронизации внешнего пропуска на машине, где стоит Ива, затем напишите мне любое сообщение.`;
+  return `The external Claude access token used by Iva is not accepted${impact}.\nThe token is supplied externally. Check the external access synchronization service on the machine running Iva, then send me any message.`;
+}
+function standardAuthText(
+  provider: string,
+  lang: AuthLanguage,
+  impact: string,
+): string {
+  const name = Object.hasOwn(PROVIDERS, provider) ? PROVIDERS[provider] : "API";
+  const repair = authRepair(provider);
+  if (lang === "ru")
+    return `${repair ? `Вход Ивы в ${name} истёк` : "Ключ API, который использует Ива, не принимается"}${impact}.\nКак починить: на машине, где стоит Ива, ${repair ? `выполните \`${repair}\`` : "замените ключ в /menu → Модель"}, затем напишите мне любое сообщение.`;
+  return `${repair ? `Iva's login to ${name} has expired` : "The API key used by Iva is not accepted"}${impact}.\nHow to fix: on the machine running Iva, ${repair ? `run \`${repair}\`` : "replace the key in /menu → Model"}, then send me any message.`;
+}
 export function modelAuthText(
   provider: string,
   lang: AuthLanguage,
   facts: AuthTextFacts = {},
 ): string {
-  const name = Object.hasOwn(PROVIDERS, provider) ? PROVIDERS[provider] : "API";
-  const effects = authEffects(facts, lang);
-  const when = authSince(facts, lang);
-  const repair = authRepair(provider);
-  if (lang === "ru")
-    return `${repair ? `Вход Ивы в ${name} истёк` : "Ключ API, который использует Ива, не принимается"}${effects.length ? `, поэтому сейчас недоступны ${effects.join(", ")}` : ""}${when ? ` (с ${when})` : ""}.\nКак починить: на машине, где стоит Ива, ${repair ? `выполните \`${repair}\`` : "замените ключ в /menu → Модель"}, затем напишите мне любое сообщение.`;
-  return `${repair ? `Iva's login to ${name} has expired` : "The API key used by Iva is not accepted"}${effects.length ? `, so these are currently unavailable: ${effects.join(", ")}` : ""}${when ? ` (since ${when})` : ""}.\nHow to fix: on the machine running Iva, ${repair ? `run \`${repair}\`` : "replace the key in /menu → Model"}, then send me any message.`;
+  const impact = authImpact(facts, lang);
+  return provider === "claude" && readClaudeAuthSnapshot().source === "external"
+    ? externalClaudeAuthText(lang, impact)
+    : standardAuthText(provider, lang, impact);
 }
 
 export function modelAuthRecoveryText(

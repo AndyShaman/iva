@@ -29,6 +29,11 @@
 // CLAUDE_SILENCE_TIMEOUT_MS считается смертью хода; таймер сбрасывается на КАЖДОМ событии,
 // потому что думающая модель молчит между дельтами дольше, чем между кадрами.
 
+import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
+import {
+  claudeAuthRotationStream,
+  type ClaudeTurn,
+} from "./claude-auth-rotation.ts";
 import {
   spawn,
   type ChildProcess,
@@ -308,9 +313,14 @@ process.stdin.on("data", (chunk) => {
 export class ClaudeCliError extends Error {
   override readonly name = "ClaudeCliError";
   readonly isRetryable: boolean;
-  constructor(message: string, { retryable = false } = {}) {
+  readonly authRotation: boolean;
+  constructor(
+    message: string,
+    { retryable = false, authRotation = false } = {},
+  ) {
     super(message);
     this.isRetryable = retryable;
+    this.authRotation = authRotation;
   }
 }
 
@@ -1057,8 +1067,12 @@ class ClaudeSession {
     if (this.closed) return;
     this.closed = true;
     this.abort();
-    await this.admission?.close();
-    rmSync(this.tempDir, { recursive: true, force: true });
+    try {
+      await this.admission?.close();
+      if (this.child !== undefined) await waitForExit(this.child);
+    } finally {
+      rmSync(this.tempDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -1167,6 +1181,9 @@ async function* silentFor(
 // ─── Шаг модели ─────────────────────────────────────────────────────────────────────────
 
 type ClaudeSettings = {
+  /** The provider's existing deadline, applied inside recovery to each attempt. */
+  readonly attemptMiddleware?: LanguageModelMiddleware;
+  readonly turn?: ClaudeTurn;
   /** Тишина CLI до отказа; в тестах — доли секунды, в бою CLAUDE_SILENCE_TIMEOUT_MS. */
   readonly silenceTimeoutMs?: number;
   /**
@@ -1196,16 +1213,34 @@ export function makeClaudeCliModel(
     upstream: settings.upstream ?? CLAUDE_UPSTREAM,
     sessionId: settings.sessionId,
   };
-  return {
+  const single: LanguageModelV4 = {
     specificationVersion: "v4",
     provider: CLAUDE_PROVIDER_ID,
     modelId: model,
     // Картинки едут только base64: URL пришлось бы скачивать, а у CLI нет для этого канала.
     supportedUrls: {},
     doStream: (options: LanguageModelV4CallOptions) =>
-      Promise.resolve(streamCall(model, options, run)),
+      Promise.resolve(attemptStream(model, options, run)),
     doGenerate: (options: LanguageModelV4CallOptions) =>
-      generateCall(model, options, run),
+      generateCall(options, (options) => attemptStream(model, options, run)),
+  };
+  const attempt = settings.attemptMiddleware
+    ? wrapLanguageModel({
+        model: single,
+        middleware: settings.attemptMiddleware,
+      })
+    : single;
+  const recovered = (options: LanguageModelV4CallOptions) =>
+    claudeAuthRotationStream(
+      options,
+      settings.turn,
+      (options) => attempt.doStream(options),
+      (error) => error instanceof ClaudeCliError && error.authRotation,
+    );
+  return {
+    ...single,
+    doStream: (options) => Promise.resolve(recovered(options)),
+    doGenerate: (options) => generateCall(options, recovered),
   };
 }
 
@@ -1215,38 +1250,44 @@ export function makeClaudeCliModel(
  * срабатывает никогда, и ход оплачивал бы запрос к API, а `claude -p` висел бы до таймаута
  * тишины (QA: 8116 мс при пороге 8 с, в бою было бы 180 с).
  */
-function streamCall(
+function attemptStream(
   model: string,
   options: LanguageModelV4CallOptions,
   run: ClaudeRun,
 ): LanguageModelV4StreamResult {
   if (options.abortSignal?.aborted === true) return abortedStream(options);
+  const cancelled = new AbortController();
+  const signal = options.abortSignal
+    ? AbortSignal.any([options.abortSignal, cancelled.signal])
+    : cancelled.signal;
   const session = new ClaudeSession();
   const onAbort = () => {
     session.abort();
   };
-  options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+  signal.addEventListener("abort", onAbort, { once: true });
+  let completed = Promise.resolve();
   const stream = new ReadableStream<LanguageModelV4StreamPart>({
     start(controller) {
       controller.enqueue({
         type: "stream-start",
         warnings: claudeWarnings(options),
       });
-      void runCall({ model, options, session, controller, run })
+      completed = runCall({
+        model,
+        options: { ...options, abortSignal: signal },
+        session,
+        controller,
+        run,
+      })
         .catch((error: unknown) => {
-          try {
-            controller.error(asClaudeError(error));
-          } catch {
-            // Поток уже закрыт отменой хода: сообщать ошибку некому.
-            return;
-          }
+          if (!cancelled.signal.aborted) controller.error(asClaudeError(error));
         })
-        .finally(() =>
-          options.abortSignal?.removeEventListener("abort", onAbort),
-        );
+        .finally(() => signal.removeEventListener("abort", onAbort));
     },
-    cancel() {
-      session.abort();
+    async cancel(reason) {
+      // runCall owns pending acquire/adopt; its finally must close late resources too.
+      cancelled.abort(reason);
+      await completed;
     },
   });
   return { stream };
@@ -1310,6 +1351,7 @@ async function runCall(context: RunContext): Promise<void> {
       prepared.frames.at(-1)?.message.content,
     );
     session.adopt(admission);
+    assertLive(options.abortSignal);
     const env = claudeEnv(
       process.env,
       admission.url,
@@ -1325,6 +1367,7 @@ async function runCall(context: RunContext): Promise<void> {
       detached: true,
     });
     session.attach(child);
+    assertLive(options.abortSignal);
     if (child.stdout === null)
       throw new ClaudeCliError("Claude CLI started without a stdout pipe");
     const events = silentFor(jsonLines(child.stdout), run.silenceMs);
@@ -1340,6 +1383,7 @@ async function runCall(context: RunContext): Promise<void> {
     // его в /tmp (QA: четыре папки после четырёх пробников). Ответ уже собран: ни реле, ни
     // временная папка дальше не нужны.
     await session.close();
+    assertLive(options.abortSignal);
     emit(completion, step, admission);
     report(model, completion, admission);
     controller.close();
@@ -1676,7 +1720,10 @@ function capturedMessage(
     said === undefined || said.includes(ADMISSION_CONSUMED) ? "" : `: ${said}`;
   throw new ClaudeCliError(
     `api.anthropic.com did not finish the response (${relayWitness(admission)})${detail}`,
-    { retryable: connectionBroke(admission.status) },
+    {
+      retryable: connectionBroke(admission.status),
+      authRotation: admission.status === 401,
+    },
   );
 }
 
@@ -1879,11 +1926,10 @@ function report(
 
 /** doGenerate — это тот же поход, только собранный в один результат: второй дороги нет. */
 async function generateCall(
-  model: string,
   options: LanguageModelV4CallOptions,
-  run: ClaudeRun,
+  call: (options: LanguageModelV4CallOptions) => LanguageModelV4StreamResult,
 ): Promise<LanguageModelV4GenerateResult> {
-  const { stream } = streamCall(model, options, run);
+  const { stream } = call(options);
   const reader = stream.getReader();
   const content: LanguageModelV4Content[] = [];
   const warnings: SharedV4Warning[] = [];

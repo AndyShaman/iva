@@ -833,12 +833,13 @@ export function makeTextModel(options: {
     model: makeBareTextModel(
       options.model ?? providerConfig.textModel,
       options.sessionId,
+      options.usage,
     ),
     middleware: [
       repeatGuardMiddleware,
       attachImagesMiddleware(options.chatModelSeesImages),
       toolSchemaRetryMiddleware,
-      modelFirstChunkDeadlineMiddleware,
+      ...(providerName === "claude" ? [] : [modelFirstChunkDeadlineMiddleware]),
       adjacentUserMessagesMiddleware,
       // Порядок свободен: кодирование идемпотентно, других читателей toolName в цепочке нет.
       toolNameWireMiddleware(MODEL_PROVIDERS[providerName].toolNameMax),
@@ -877,14 +878,22 @@ export function makeOpenCodeModel(
       })(model);
 }
 
-function makeBareTextModel(model: string, sessionId?: string) {
+function makeBareTextModel(
+  model: string,
+  sessionId?: string,
+  usage?: UsageLabel,
+) {
   // Codex-подписка говорит на Responses API — отдельная модель-фабрика (@ai-sdk/openai).
   // Claude-подписка — тоже своя модель: рукописная LanguageModelV4 поверх Claude Code CLI
   // (stream-json), потому что API-адреса у неё нет вовсе.
   // Go выбирает провод явно; остальные API-ключи говорят chat/completions.
   if (providerName === "codex") return makeCodexModel(model, sessionId);
   if (providerName === "claude")
-    return makeClaudeCliModel(model, { sessionId });
+    return makeClaudeCliModel(model, {
+      sessionId,
+      turn: usage,
+      attemptMiddleware: modelFirstChunkDeadlineMiddleware,
+    });
   if (providerName === "opencode")
     return makeOpenCodeModel(
       model,

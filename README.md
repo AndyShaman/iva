@@ -198,7 +198,16 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.6 · 24.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.7 · 25.10.2026 — expand the latest releases</b></summary>
+
+### 25.10.2026
+
+#### v0.5.7
+
+- 🔧 **Quotes survive rich-message rejection**: HTML delivery preserves quoted text and button labels containing markup characters.
+- 🔧 **Iva offers useful next steps on her own**: she can bring a useful proposal without a request.
+- 🧠 **Conflicting events stay dated**: contradictory events about a person remain separate dated facts.
+- 🔧 **Long helper commands wait for results**: helpers set the command timeout to cover the expected duration.
 
 ### 24.10.2026
 
@@ -221,12 +230,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 🔧 **Installation continues after an SSH disconnect**: if the connection drops during setup, repeat the installer command. Completed steps are reused, the wizard offers your saved values, and a hint helps you stop an installer still running. Thanks to Maksim Tigulev for reporting this.
 - 🔧 **Deferred setup completes with autostart**: if setup was postponed, run the installer command again. It completes autostart and sends a confirmation in Telegram. Iva keeps running after you leave the server.
 - 🔧 **Memory changes are saved on a fresh server**: Iva starts tracking changes to your memory right after installation, even when Git has not been configured on the server. Git settings for other projects are preserved.
-
-### 18.10.2026
-
-#### v0.5.4
-
-- ✨ **Iva runs on Mac**: the installer detects your Mac and sets up Iva. The bot works right after installation and starts again after you restart your Mac and log in. Update from Telegram or with `iva update`. Keep your Mac on and awake.
 
 </details>
 
