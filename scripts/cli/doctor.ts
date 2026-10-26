@@ -15,9 +15,12 @@ import { pluginDirectory, pluginMount } from "../lib/plugin-build.ts";
 import { tryLoadPluginCore } from "../lib/plugin-core.ts";
 import { leftoverPluginDirs, pluginReadProblem } from "./plugin-cli-context.ts";
 import {
-  installedPluginUnits,
-  mcpUnitName,
-  serviceUnitName,
+  canonicalPluginScope,
+  inspectPluginUnits,
+  pluginUnitKey,
+  type PluginUnitInventory,
+  type PluginUnitScope,
+  resolvedPluginUnitName,
 } from "../lib/plugin-units.ts";
 import { LEGACY_BRAIN_UNITS } from "../lib/legacy-memory-units.ts";
 import {
@@ -1425,7 +1428,10 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
     : [];
   // Юниты плагинов, которые сейчас на диске: их читаем до раннего выхода, иначе
   // юнит, оставшийся от снятого плагина, на пустой установке никто бы не назвал.
-  const onDisk = ctx.hasSystemd() ? installedPluginUnits(ctx.unitDir) : [];
+  const inspection = pluginInventory(ctx, state);
+  if (!inspection) return;
+  const { inventory } = inspection;
+  const onDisk = [...inventory.actual.values()].map((unit) => unit.unit);
   // Плагинов нет вообще — доктору сказать нечего, и молчание здесь честнее
   // строки «0 плагинов» в отчёте установки, которая их никогда не видела.
   if (
@@ -1435,7 +1441,7 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
     onDisk.length === 0
   )
     return;
-  const expected = await checkPluginEntries(ctx, core, state);
+  const expected = await checkPluginEntries(ctx, core, state, inspection);
   await checkPluginUnits(ctx, expected, onDisk);
   reportPluginFolders(ctx, state, folders, leftovers);
 }
@@ -1447,14 +1453,40 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
  * connection-файле), поэтому список только по нему обещал бы юнит серверу, которого в
  * `mcp.json` больше нет, — и `sync` не смог бы этого починить.
  */
+function pluginInventory(
+  ctx: DoctorContext,
+  state: PluginsState,
+): PluginInspection | null {
+  if (!existsSync(ctx.dataDirectory)) return null;
+  const scope = canonicalPluginScope(ctx.dataDirectory);
+  const inventory: PluginUnitInventory = ctx.hasSystemd()
+    ? inspectPluginUnits({
+        scope,
+        entries: state.plugins,
+        unitDir: ctx.unitDir,
+        manager: ctx.systemd.manager,
+        systemd: ctx.systemd,
+      })
+    : { actual: new Map(), conflicts: new Set<string>(), failures: [] };
+  for (const failure of inventory.failures) ctx.warn(failure);
+  return { scope, inventory };
+}
+type PluginInspection = {
+  scope: PluginUnitScope;
+  inventory: PluginUnitInventory;
+};
+type PluginExpectations = PluginInspection & {
+  expected: Map<string, { plugin: string; port?: number }>;
+};
 async function checkPluginEntries(
   ctx: DoctorContext,
   core: PluginCore,
   state: PluginsState,
+  inspection: PluginInspection,
 ): Promise<Map<string, { plugin: string; port?: number }>> {
   const expected = new Map<string, { plugin: string; port?: number }>();
   for (const entry of state.plugins)
-    await checkPluginEntry(ctx, core, entry, expected);
+    await checkPluginEntry(ctx, core, entry, { ...inspection, expected });
   return expected;
 }
 
@@ -1462,7 +1494,7 @@ async function checkPluginEntry(
   ctx: DoctorContext,
   core: PluginCore,
   entry: PluginsState["plugins"][number],
-  expected: Map<string, { plugin: string; port?: number }>,
+  inspection: PluginExpectations,
 ): Promise<void> {
   const { readPlugin } = core.reader;
   const { readPluginConfigState } = core.config;
@@ -1500,7 +1532,7 @@ async function checkPluginEntry(
     `plugin ${entry.name}${entry.enabled ? "" : " (disabled)"}: ${parts.join(", ")}`,
   );
   if (entry.enabled && entry.trusted)
-    expectPluginUnits(report, entry, expected);
+    expectPluginUnits(report, entry, inspection);
   // Код плагина живёт в версии, а не в папке (ADR-0009): запись «включён» без
   // сборки в работающей версии значит, что тулов плагина у агента нет.
   if (report.code && entry.enabled) {
@@ -1522,20 +1554,56 @@ async function checkPluginEntry(
 function expectPluginUnits(
   report: Awaited<ReturnType<PluginCore["reader"]["readPlugin"]>>,
   entry: PluginsState["plugins"][number],
-  expected: Map<string, { plugin: string; port?: number }>,
+  { expected, scope, inventory }: PluginExpectations,
 ): void {
   for (const [server, ports] of Object.entries(entry.mcp ?? {})) {
     if (report.mcp[server]?.type !== "stdio") continue;
-    expected.set(mcpUnitName(entry.name, server), {
+    const key = pluginUnitKey({
+      kind: "mcp",
       plugin: entry.name,
-      port: ports.port,
+      part: server,
     });
+    if (inventory.conflicts.has(key)) continue;
+    expected.set(
+      resolvedPluginUnitName(
+        {
+          scope,
+          kind: "mcp",
+          plugin: entry.name,
+          part: server,
+          layout: "scoped",
+        },
+        inventory,
+      )!,
+      {
+        plugin: entry.name,
+        port: ports.port,
+      },
+    );
   }
   for (const service of Object.keys(entry.services ?? {})) {
     if (!report.services[service]) continue;
-    expected.set(serviceUnitName(entry.name, service), {
+    const key = pluginUnitKey({
+      kind: "service",
       plugin: entry.name,
+      part: service,
     });
+    if (inventory.conflicts.has(key)) continue;
+    expected.set(
+      resolvedPluginUnitName(
+        {
+          scope,
+          kind: "service",
+          plugin: entry.name,
+          part: service,
+          layout: "scoped",
+        },
+        inventory,
+      )!,
+      {
+        plugin: entry.name,
+      },
+    );
   }
 }
 

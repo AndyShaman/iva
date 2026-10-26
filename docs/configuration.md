@@ -141,3 +141,18 @@ Alerts — problems (memory not backed up, a failed nightly pass) and new versio
 | `AGENT_BROWSER_MAX_OUTPUT` | `24000`                        | Character cap on agent-browser output, so one page dump can't eat the context window.                                                                                                                                                                                                                          |
 
 OpenCode Responses does not forward `THINKING_EFFORT`: arbitrary Go models have no verified reasoning contract; `/think` offers no levels in this mode. Existing installations without either protocol variable retain chat/completions, model IDs, keys and data.
+
+## Plugin service ownership
+
+Plugin services belong to the canonical data directory. Two code checkouts using the
+same data directory share one plugin installation, including `plugins.json`, ports and
+the existing lock. Reconciliation updates scoped MCP executors to the selected checkout. An active
+retained legacy keeps its executor during trust/sync; an explicit plugin update
+may replace its payload only when that plugin source changed.
+A different canonical data directory gets a different scope in new service names.
+
+A proven legacy service keeps its existing name. Adding ownership metadata alone keeps
+a running process uninterrupted. Ownership checks include the loaded data directory;
+foreign content, links and unknown ownership are preserved and reported by `iva doctor`.
+Moving the data directory changes the scope: review preserved old services explicitly.
+Older CLI versions lack these ownership checks, including during a rollback.
