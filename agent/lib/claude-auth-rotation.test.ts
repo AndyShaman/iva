@@ -626,9 +626,8 @@ for (const hangCall of [1, 2])
     await settledIo(() => f.calls().length === hangCall);
     clock.tick(89_999);
     await immediate();
-    assert.ok(
-      f.calls().every((call) => existsSync(call.temp)) || hangCall === 2,
-    );
+    const lastCall = f.calls().at(-1);
+    assert.ok(lastCall && existsSync(lastCall.temp));
     clock.tick(1);
     const result = await pending;
     assert.equal(
