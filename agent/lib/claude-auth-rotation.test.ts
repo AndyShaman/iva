@@ -2,13 +2,15 @@
 import "../../scripts/fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import {
   createServer,
   request as httpRequest,
   type RequestOptions,
 } from "node:http";
 import https from "node:https";
+import { Server } from "node:net";
+import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import {
   existsSync,
@@ -30,7 +32,14 @@ import type {
   LanguageModelV4Prompt,
   LanguageModelV4StreamPart,
 } from "@ai-sdk/provider";
-import { streamText, ToolLoopAgent, isStepCount, jsonSchema, tool } from "ai";
+import {
+  streamText,
+  ToolLoopAgent,
+  isStepCount,
+  jsonSchema,
+  tool,
+  type LanguageModelMiddleware,
+} from "ai";
 import { makeClaudeCliModel } from "./claude-cli.ts";
 import { modelAuthFailure, modelAuthText } from "./model-auth.ts";
 import { humanizeProviderError } from "./error-humanizer.ts";
@@ -238,11 +247,14 @@ async function fixture(
           .filter(Boolean)
           .map((line) => JSON.parse(line) as Call)
       : [];
-  const model = (step?: number) => {
+  const model = (
+    step?: number,
+    attemptMiddleware = modelFirstChunkDeadlineMiddleware,
+  ) => {
     const settings = {
       upstream: `http://127.0.0.1:${address.port}`,
       silenceTimeoutMs: 180_000,
-      attemptMiddleware: modelFirstChunkDeadlineMiddleware,
+      attemptMiddleware,
       ...(step === undefined ? {} : { turn: { turnId: "turn-current", step } }),
     };
     return makeClaudeCliModel(MODEL, settings);
@@ -387,6 +399,166 @@ function rotationClock(t: TestContext) {
     },
   };
 }
+
+/** Hold the real relay's listening notification after its socket exists, before adopt. */
+function holdRelayListening(t: TestContext) {
+  const captured: { server?: Server } = {};
+  let release: () => void = () => undefined;
+  let signalReady!: (server: Server) => void;
+  const ready = new Promise<Server>((resolve) => {
+    signalReady = resolve;
+  });
+  t.mock.method(
+    Server.prototype,
+    "emit",
+    function (this: Server, event: string | symbol, ...args: unknown[]) {
+      const emit = EventEmitter.prototype.emit.bind(this);
+      if (event !== "listening" || captured.server) return emit(event, ...args);
+      captured.server = this;
+      release = () => {
+        release = () => undefined;
+        emit(event, ...args);
+      };
+      signalReady(this);
+      return true;
+    },
+  );
+  t.after(async () => {
+    release();
+    if (captured.server?.listening)
+      await new Promise<void>((resolve) => {
+        captured.server?.close(() => resolve());
+      });
+  });
+  return { ready, release: () => release() };
+}
+
+for (const mode of ["bare", "provider", "delayed-result"])
+  test(`rotation late acquire: ${mode} cancellation cleans late resources without use`, async (t) => {
+    const f = await fixture(t, { waitMs: 120_000 });
+    const configured =
+      mode === "provider" ? await f.configuredModels() : undefined;
+    const clock = rotationClock(t);
+    const relay = holdRelayListening(t);
+    let releaseResult!: () => void;
+    const resultGate = new Promise<void>((resolve) => {
+      releaseResult = resolve;
+    });
+    const middleware: LanguageModelMiddleware = {
+      async wrapStream(context) {
+        assert.ok(modelFirstChunkDeadlineMiddleware.wrapStream);
+        const result =
+          await modelFirstChunkDeadlineMiddleware.wrapStream(context);
+        await resultGate;
+        return result;
+      },
+    };
+    t.after(releaseResult);
+    const model = configured
+      ? configured(0)
+      : f.model(undefined, mode === "delayed-result" ? middleware : undefined);
+    const { stream } = await model.doStream({ prompt: PROMPT });
+    const server = await relay.ready;
+    let completed = false;
+    const cancelling = stream
+      .cancel(new Error("cancel during synthetic admission acquire"))
+      .then(() => {
+        completed = true;
+      });
+    await immediate();
+    const early = completed;
+    releaseResult();
+    await immediate();
+    const beforeAdopt = completed;
+    relay.release();
+    await cancelling;
+    await settledIo(
+      () => !server.listening && f.clean() && clock.pending() === 0,
+    );
+    // Existing outer pipeThrough middleware acknowledges cancellation before
+    // its source finishes cleanup. Only our own wrapper promises that wait.
+    if (mode !== "provider") {
+      assert.equal(
+        early,
+        false,
+        "cancel must wait for its pending result/acquire",
+      );
+      assert.equal(
+        beforeAdopt,
+        false,
+        "cancel must wait until admission can be adopted",
+      );
+    }
+    f.rotate();
+    clock.tick(121_000);
+    await immediate();
+    assert.equal(server.listening, false);
+    assert.ok(f.clean());
+    assert.equal(f.calls().length, 0);
+    assert.equal(f.requests(), 0);
+    assert.equal(clock.pending(), 0);
+  });
+
+test("rotation late spawn: cancel waits for attach and sends no input or API call", async (t) => {
+  const f = await fixture(t);
+  const clock = rotationClock(t);
+  const spawn = childProcess.spawn;
+  let child: ReturnType<typeof spawn> | undefined;
+  let signalReady!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    signalReady = resolve;
+  });
+  let release: () => void = () => undefined;
+  t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
+    child = Reflect.apply(spawn, childProcess, args);
+    const emit = child.emit.bind(child);
+    const captured = child;
+    t.mock.method(
+      child,
+      "emit",
+      function (event: string | symbol, ...values: unknown[]) {
+        if (event !== "spawn")
+          return Reflect.apply(emit, captured, [event, ...values]) as boolean;
+        release = () => {
+          release = () => undefined;
+          Reflect.apply(emit, captured, [event, ...values]);
+        };
+        signalReady();
+        return true;
+      },
+    );
+    return child;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    release();
+    if (child?.pid && child.exitCode === null && child.signalCode === null)
+      process.kill(-child.pid, "SIGKILL");
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const { stream } = await f.model().doStream({ prompt: PROMPT });
+  await ready;
+  let completed = false;
+  const cancelling = stream
+    .cancel(new Error("cancel during synthetic spawn"))
+    .then(() => {
+      completed = true;
+    });
+  await immediate();
+  const early = completed;
+  release();
+  await cancelling;
+  for (let n = 0; n < 10; n++) await immediate();
+  assert.equal(early, false);
+  assert.ok(f.clean());
+  assert.equal(f.calls().length, 0);
+  assert.equal(f.requests(), 0);
+  assert.equal(clock.pending(), 0);
+  assert.ok(child?.pid);
+  const pid = child.pid;
+  assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+});
 
 test("rotation RED: snapshot precedes CLI; atomic access change with same mtime recovers silently", async (t) => {
   const f = await fixture(t, { rotateBefore401: true });

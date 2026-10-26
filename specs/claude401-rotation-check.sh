@@ -35,3 +35,4 @@ check() {
 check Claude401Rotation none || exit 1
 check Claude401Rotation-extra-retry CallsAtMostTwo || exit 1
 check Claude401Rotation-after-effect RepeatIsSafe || exit 1
+check Claude401Rotation-late-adopt CancelAcknowledgedClean || exit 1

@@ -138,6 +138,7 @@ export function claudeAuthRotationStream(
     : cancel.signal;
   let reader:
     ReadableStreamDefaultReader<LanguageModelV4StreamPart> | undefined;
+  let completed = Promise.resolve();
   return {
     stream: new ReadableStream<LanguageModelV4StreamPart>({
       start(controller) {
@@ -145,6 +146,8 @@ export function claudeAuthRotationStream(
         const forwardAttempt = async (call: number) => {
           const result = await attempt({ ...options, abortSignal: signal });
           reader = result.stream.getReader();
+          if (signal.aborted) await reader.cancel(signal.reason);
+          signal.throwIfAborted();
           for (;;) {
             const part = await reader.read();
             signal.throwIfAborted();
@@ -179,7 +182,7 @@ export function claudeAuthRotationStream(
             await waitForRotation(snapshot, waitMs, signal);
           }
         };
-        void pump().catch((error) => {
+        completed = pump().catch((error) => {
           // reader.cancel owns closure; an external abort still reports its reason.
           if (!cancel.signal.aborted) controller.error(error);
         });
@@ -187,6 +190,7 @@ export function claudeAuthRotationStream(
       async cancel(reason) {
         cancel.abort(reason);
         await reader?.cancel(reason).catch(() => undefined);
+        await completed;
       },
     }),
   };
