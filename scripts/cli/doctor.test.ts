@@ -33,6 +33,12 @@ import {
   pluginRoot,
   writePluginsState,
 } from "#lib/plugin-store.ts";
+import {
+  canonicalPluginScope,
+  mcpProxyUnitBody,
+  pluginServiceUnitBody,
+} from "../lib/plugin-units.ts";
+import { markPluginUnit } from "../lib/plugin-unit-scope.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { acquireUpdateLock, createVersionStore } from "../lib/version-store.ts";
 import { authoredTreeMissing, createDoctorCommand } from "./doctor.ts";
@@ -1594,7 +1600,7 @@ test("doctor says whether an enabled plugin's code is in the version that runs",
   ]);
 });
 
-test("a plugin unit left behind is named even when no plugin is installed", async (t) => {
+test("an unknown plugin unit is preserved without claiming its owner", async (t) => {
   const root = await sandbox(t);
   writeFileSync(join(root, ".env"), "present=true\n");
   const unitDir = join(root, "systemd");
@@ -1620,12 +1626,7 @@ test("a plugin unit left behind is named even when no plugin is installed", asyn
 
   assert.deepEqual(
     events.filter(([, message]) => message.startsWith("iva-mcp-")),
-    [
-      [
-        "warn",
-        "iva-mcp-gone-srv.service belongs to no enabled and trusted plugin — run: iva plugin sync",
-      ],
-    ],
+    [],
   );
 });
 
@@ -1698,14 +1699,72 @@ test("doctor checks the plugin units and the health of every MCP proxy", async (
       },
     ],
   });
-  for (const unit of [
-    "iva-mcp-trace-alive.service",
-    "iva-mcp-trace-quiet.service",
-    "iva-plugin-trace-web.service",
-    // Юнит без записи: остался от снятого плагина.
-    "iva-mcp-orphan-srv.service",
-  ])
-    writeFileSync(join(unitDir, unit), "[Service]\n");
+  const proxy = (plugin: string, server: string, port: number) =>
+    mcpProxyUnitBody({
+      plugin,
+      server,
+      port,
+      tokenFile: join(data, "plugin-data", plugin, `mcp-${server}.token`),
+      root,
+      node: process.execPath,
+      nodeBinDir: dirname(process.execPath),
+      dataDirEnvironment: `"ASSISTANT_DATA_DIR=${data}"`,
+    });
+  writeFileSync(
+    join(unitDir, "iva-mcp-trace-alive.service"),
+    proxy("trace", "alive", answering),
+  );
+  writeFileSync(
+    join(unitDir, "iva-mcp-trace-quiet.service"),
+    proxy("trace", "quiet", dead),
+  );
+  writeFileSync(
+    join(unitDir, "iva-plugin-trace-web.service"),
+    pluginServiceUnitBody({
+      plugin: "trace",
+      service: "web",
+      command: "node",
+      args: [],
+      port: 8726,
+      pluginRoot: join(data, "custom/plugins/trace"),
+      pluginData: join(data, "plugin-data/trace"),
+      dataDir: data,
+      nodeBinDir: dirname(process.execPath),
+    }),
+  );
+  writeFileSync(
+    join(unitDir, "iva-mcp-orphan-srv.service"),
+    markPluginUnit(proxy("orphan", "srv", 8787), {
+      scope: canonicalPluginScope(data),
+      kind: "mcp",
+      plugin: "orphan",
+      part: "srv",
+      layout: "legacy",
+    }),
+  );
+  const query = (...args: string[]) => {
+    const [action, unit] = args,
+      file = join(unitDir, unit),
+      body = existsSync(file) ? readFileSync(file, "utf8") : "";
+    if (action === "is-active")
+      return {
+        code: unit === "iva-plugin-trace-web.service" ? 3 : 0,
+        out: unit === "iva-plugin-trace-web.service" ? "inactive" : "active",
+      };
+    const prop = args.find((arg) => arg.startsWith("--property="))?.slice(11);
+    return {
+      code: 0,
+      out:
+        prop === "LoadState"
+          ? body
+            ? "loaded"
+            : "not-found"
+          : (body
+              .split("\n")
+              .find((line) => line.startsWith(`${prop}=`))
+              ?.slice(String(prop).length + 1) ?? ""),
+    };
+  };
 
   const events: Array<[string, string]> = [];
   const runtime: CliRuntime = {
@@ -1719,6 +1778,7 @@ test("doctor checks the plugin units and the health of every MCP proxy", async (
     hasSystemd: () => true,
     systemd: {
       ...createCliRuntime(root).systemd,
+      query,
       isActive: (unit: string) => unit !== "iva-plugin-trace-web.service",
       isEnabled: () => true,
     },

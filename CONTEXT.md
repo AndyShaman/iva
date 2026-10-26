@@ -157,7 +157,7 @@ _Avoid_: мост, bridge (это Telegram-поллер), gateway
 
 **Plugin service (сервис плагина)**:
 Долгоживущий процесс плагина, объявленный в `sh.iva/services/<svc>/service.json`:
-Ива поднимает его юнитом `iva-plugin-<name>-<svc>.service` и сообщает выданный порт
+Ива поднимает его юнитом `iva-plugin-<scope>-<name>-<svc>.service` (scope от canonical dataRoot; retained legacy — `iva-plugin-<name>-<svc>.service`) и сообщает выданный порт
 через `IVA_SERVICE_PORT`. Своего протокола Ива ему не задаёт — этим он и отличается
 от MCP proxy.
 _Avoid_: демон, воркер, sidecar
