@@ -1149,7 +1149,7 @@ for (const kind of ["service", "mcp"] as const)
       unitDir,
       systemd: control,
     });
-    assert.deepEqual(result.removed, []);
+    assert.equal(result.removed.length, 0);
     assert.match(result.failures.join("\n"), /unknown loaded state/u);
     assert.equal(readFileSync(file, "utf8"), body);
     assert.equal(result.removed.includes(unit.unit), false);
