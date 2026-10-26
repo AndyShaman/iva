@@ -5,7 +5,9 @@
     "archiveSha256": "25bc58fe795e05ab66f900e0b160b2c49ecc3a7146e6c9d2d6d655a318a3811d",
     "method": "Python AST parse of @mcp.tool registrations; no imports, no Telegram clients",
     "tools": 116,
-    "catalogSha256": "be67a93880049fcc81395b99be5039fe2945db9ad70f11f1e97ae71143a8f7e0"
+    "catalogSha256": "be67a93880049fcc81395b99be5039fe2945db9ad70f11f1e97ae71143a8f7e0",
+    "license": "Apache-2.0",
+    "licenseUrl": "https://github.com/chigwell/telegram-mcp/blob/f1a2d8e00a7f127bb7702655c58fdfcee7e73a5a/LICENSE"
   },
   "tools": [
     {
