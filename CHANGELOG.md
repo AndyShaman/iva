@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Поиск инструментов учитывает имя первым**: буквальное имя и совпадения в имени идут выше длинных описаний. Прямое совпадение сильнее обратного совпадения по началу слова; поиск сохраняет пары `records` → `record` и `issues` → `issue`. Повторы слов больше не повышают место в выдаче; поиск снова находит `get_history` и `get_chats` Telegram. Connection tool search prioritizes literal names and name matches over long descriptions, ranks direct matches above reverse prefixes, and preserves useful partial matches without rewarding repeated words, restoring discovery of Telegram history and chats.
+
 - 🔧 **Ива переживает смену внешнего пропуска Claude**: после HTTP 401 до начала ответа и действий текущего хода Ива ждёт обновления пропуска и безопасно повторяет вызов один раз. При окончательном отказе внешнего пропуска сообщение направляет к службе синхронизации. Iva waits through external Claude access rotation after an early HTTP 401 and safely repeats the call once; a final access-only failure points to the synchronization service.
 
 - 🧠 **Ночь сама поднимает пределы для длинных дней**: в границах настроенных потолков ночь продолжает разбор и повторяет git после увеличения срока ожидания; `iva night show|set` показывает и меняет пределы. Итог сообщает о поднятиях, завершённых днях и очереди. Night memory raises soft limits within configured ceilings, retries a timed-out Git command once with a longer wait, and reports recovery and remaining days; `iva night show|set` manages the limits.
