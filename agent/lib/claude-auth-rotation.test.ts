@@ -270,7 +270,6 @@ async function fixture(
     );
     syncBuiltinESMExports();
     t.after(() => {
-      t.mock.timers.reset();
       t.mock.restoreAll();
       syncBuiltinESMExports();
     });
@@ -330,6 +329,63 @@ async function settledIo(predicate: () => boolean) {
     await immediate();
   }
   for (let n = 0; n < 10; n++) await immediate();
+}
+
+// Keep HTTP, node:timers/promises and session teardown on real time. Only the
+// three rotation/deadline delays below belong to this test's controlled clock.
+function rotationClock(t: TestContext) {
+  const nativeSet = globalThis.setTimeout;
+  const nativeClear = globalThis.clearTimeout;
+  const timers = new Map<unknown, { at: number; fire: () => void }>();
+  let now = 0;
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (...args: Parameters<typeof setTimeout>) => {
+      const [callback, delay, ...rest] = args;
+      if (delay !== 90_000 && delay !== 120_000 && delay !== 250)
+        return nativeSet(...args);
+      const handle = nativeSet(() => undefined, 2 ** 31 - 1).unref();
+      timers.set(handle, {
+        at: now + delay,
+        fire: () => {
+          Reflect.apply(callback, undefined, rest);
+        },
+      });
+      return handle;
+    },
+  );
+  t.mock.method(
+    globalThis,
+    "clearTimeout",
+    (handle: Parameters<typeof clearTimeout>[0]) => {
+      timers.delete(handle);
+      nativeClear(handle);
+    },
+  );
+  t.after(() => {
+    for (const handle of timers.keys())
+      nativeClear(handle as ReturnType<typeof setTimeout>);
+    timers.clear();
+  });
+  return {
+    pending: () => timers.size,
+    tick(ms: number) {
+      const until = now + ms;
+      for (;;) {
+        const next = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= until)
+          .sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [handle, timer] = next;
+        now = timer.at;
+        timers.delete(handle);
+        nativeClear(handle as ReturnType<typeof setTimeout>);
+        timer.fire();
+      }
+      now = until;
+    },
+  };
 }
 
 test("rotation RED: snapshot precedes CLI; atomic access change with same mtime recovers silently", async (t) => {
@@ -467,14 +523,15 @@ test("rotation RED: abort while waiting ends with its reason, clean sessions and
 
 test("rotation cancel: reader cancellation while waiting cleans up and closes replay", async (t) => {
   const f = await fixture(t, { waitMs: 120_000 });
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clock = rotationClock(t);
   const { stream } = await f.model().doStream({ prompt: PROMPT });
   const reader = stream.getReader();
   await reader.read();
   await settledIo(() => f.requests() === 1 && f.clean());
   await reader.cancel("owner cancelled the synthetic reader");
+  assert.equal(clock.pending(), 0);
   f.rotate();
-  t.mock.timers.tick(121_000);
+  clock.tick(121_000);
   await immediate();
   assert.deepEqual(await reader.read(), { done: true, value: undefined });
   assert.equal(f.requests(), 1);
@@ -490,7 +547,7 @@ test("rotation cancel: reader cancellation while waiting cleans up and closes re
 test("rotation RED: real relay + CLI recover after 100s inside a 120s window", async (t) => {
   const f = await fixture(t, { waitMs: 120_000 });
   const configured = await f.configuredModels();
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clock = rotationClock(t);
   const errors: unknown[] = [];
   const result = streamText({
     model: configured(0),
@@ -502,10 +559,10 @@ test("rotation RED: real relay + CLI recover after 100s inside a 120s window", a
   });
   const pending = result.text;
   await settledIo(() => f.requests() === 1 && f.clean());
-  t.mock.timers.tick(100_000);
+  clock.tick(100_000);
   await immediate();
   f.rotate();
-  t.mock.timers.tick(1000);
+  clock.tick(1000);
   await immediate();
   assert.equal(await pending, "recovered");
   assert.deepEqual(errors, []);
@@ -564,15 +621,15 @@ for (const hangCall of [1, 2])
   test(`rotation deadline: silent attempt ${hangCall} keeps its own 90s bound`, async (t) => {
     const f = await fixture(t, { hangCall, rotateBefore401: true });
     const configured = await f.configuredModels();
-    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const clock = rotationClock(t);
     const pending = consume(configured(0));
     await settledIo(() => f.calls().length === hangCall);
-    t.mock.timers.tick(89_999);
+    clock.tick(89_999);
     await immediate();
     assert.ok(
       f.calls().every((call) => existsSync(call.temp)) || hangCall === 2,
     );
-    t.mock.timers.tick(1);
+    clock.tick(1);
     const result = await pending;
     assert.equal(
       (result.error as { code?: string })?.code,
@@ -584,24 +641,24 @@ for (const hangCall of [1, 2])
 
 test("rotation waiting tolerates missing, unreadable and partial credentials until valid access returns", async (t) => {
   const f = await fixture(t, { waitMs: 120_000 });
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clock = rotationClock(t);
   const pending = consume(f.model());
   await settledIo(() => f.requests() === 1 && f.clean());
   writeFileSync(f.file, '{"claudeAiOauth":');
-  t.mock.timers.tick(1000);
+  clock.tick(1000);
   await immediate();
   assert.equal(f.requests(), 1);
   rmSync(f.file);
-  t.mock.timers.tick(1000);
+  clock.tick(1000);
   await immediate();
   assert.equal(f.requests(), 1);
   mkdirSync(f.file);
-  t.mock.timers.tick(1000);
+  clock.tick(1000);
   await immediate();
   assert.equal(f.requests(), 1);
   rmSync(f.file, { recursive: true });
   writeFileSync(f.file, '{"claudeAiOauth":{"accessToken":"synthetic-B"}}');
-  t.mock.timers.tick(1000);
+  clock.tick(1000);
   assert.equal((await pending).error, undefined);
   assert.equal(f.requests(), 2);
 });

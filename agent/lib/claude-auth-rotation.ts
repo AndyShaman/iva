@@ -141,32 +141,34 @@ export function claudeAuthRotationStream(
   return {
     stream: new ReadableStream<LanguageModelV4StreamPart>({
       start(controller) {
+        let useful = false;
+        const forwardAttempt = async (call: number) => {
+          const result = await attempt({ ...options, abortSignal: signal });
+          reader = result.stream.getReader();
+          for (;;) {
+            const part = await reader.read();
+            signal.throwIfAborted();
+            if (part.done) return;
+            if (
+              part.value.type !== "stream-start" &&
+              part.value.type !== "response-metadata"
+            )
+              useful = true;
+            if (call === 0 || part.value.type !== "stream-start")
+              controller.enqueue(part.value);
+          }
+        };
         const pump = async () => {
           signal.throwIfAborted();
           const snapshot = readClaudeAuthSnapshot();
           const waitMs = claudeAuthRotationWaitMs();
           const safe = claudeAuthReplaySafe(options.prompt, turn);
-          let useful = false;
           for (let call = 0; call < 2; call++) {
             signal.throwIfAborted();
             try {
-              const result = await attempt({ ...options, abortSignal: signal });
-              reader = result.stream.getReader();
-              for (;;) {
-                const part = await reader.read();
-                signal.throwIfAborted();
-                if (part.done) {
-                  controller.close();
-                  return;
-                }
-                if (
-                  part.value.type !== "stream-start" &&
-                  part.value.type !== "response-metadata"
-                )
-                  useful = true;
-                if (call === 0 || part.value.type !== "stream-start")
-                  controller.enqueue(part.value);
-              }
+              await forwardAttempt(call);
+              controller.close();
+              return;
             } catch (error) {
               signal.throwIfAborted();
               if (call !== 0 || useful || !safe || !is401(error)) throw error;
@@ -178,11 +180,8 @@ export function claudeAuthRotationStream(
           }
         };
         void pump().catch((error) => {
-          try {
-            controller.error(error);
-          } catch {
-            /* cancelled stream */
-          }
+          // reader.cancel owns closure; an external abort still reports its reason.
+          if (!cancel.signal.aborted) controller.error(error);
         });
       },
       async cancel(reason) {
