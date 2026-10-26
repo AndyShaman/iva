@@ -40,9 +40,8 @@ import {
 
 /** Сколько ждать освобождения индекса: сосед коммитит за десятки миллисекунд. */
 const INDEX_WAIT_MS = [60, 120, 240, 480];
-/** Замок старше этого возраста - огрызок убитого коммита, а не живой сосед. Порог тот же,
- * что у замка карточки. */
-const INDEX_LOCK_STALE_MS = 15_000;
+/** Запас после потолка времени git: сосед мог поднять срок только в памяти. */
+const INDEX_LOCK_GRACE_MS = 15_000;
 const INDEX_LOCK = "index.lock";
 export const vaultGitNotices: NightNotice[] = [];
 export let vaultGitCeiling:
@@ -240,7 +239,9 @@ const sleep = (ms: number) =>
 function clearStaleIndexLock(vault: string): boolean {
   const lock = join(vault, ".git", INDEX_LOCK);
   try {
-    if (Date.now() - statSync(lock).mtimeMs < INDEX_LOCK_STALE_MS) return false;
+    const staleAfter =
+      readNightSettings().values.maxGitTimeoutMs + INDEX_LOCK_GRACE_MS;
+    if (Date.now() - statSync(lock).mtimeMs < staleAfter) return false;
   } catch {
     return false;
   }

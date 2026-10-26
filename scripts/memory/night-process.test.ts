@@ -4039,3 +4039,91 @@ void test("self-heal: reaching a raised hard ceiling alerts once when the next n
   assert.doesNotMatch(second.stderr, /raised it to/u);
   assert.equal(alerts().length, 1, read(sent));
 });
+
+void test("repair sweep: git timeout at a raised ceiling sends one alert across processes and languages", async (t) => {
+  const fx = await fixture(t);
+  const sent = join(fx.data, "sweep-sent.jsonl");
+  const trace = join(fx.data, "status-timeouts.jsonl");
+  const bin = join(fx.data, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "git"),
+    `#!${process.execPath}
+const cp = require("node:child_process");
+const args = process.argv.slice(2);
+if (args[0] === "status") setInterval(() => {}, 1000);
+else process.exit(cp.spawnSync("/usr/bin/git", args, { stdio: "inherit" }).status ?? 1);
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
+  const preload = `import cp from "node:child_process"; import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const original = cp.execFile;
+cp.execFile = (file, args, options, callback) => {
+  if (file !== "git" || args[0] !== "status") return original(file, args, options, callback);
+  fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ args, timeout: options.timeout }) + "\\n");
+  return original(file, args, { ...options, timeout: options.timeout / 60 }, callback);
+};
+syncBuiltinESMExports();
+const real = fetch;
+globalThis.fetch = async (url, init) => {
+  if (!String(url).includes("api.telegram.org")) return real(url, init);
+  fs.appendFileSync(${JSON.stringify(sent)}, String(init?.body ?? "") + "\\n");
+  return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }));
+};`;
+  const env = {
+    PATH: `${bin}:${process.env.PATH}`,
+    TELEGRAM_BOT_TOKEN: "123:abc",
+    TELEGRAM_DIGEST_CHAT_ID: "42",
+    NODE_OPTIONS: `--import data:text/javascript,${encodeURIComponent(preload)}`,
+  };
+  const file = join(fx.data, "settings.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      language: "ru",
+      night: { gitTimeoutMs: 12_000, maxGitTimeoutMs: 24_000 },
+    }),
+  );
+  const first = await night(fx, null, env);
+  assert.equal(first.code, 1, first.stderr);
+  const saved = JSON.parse(read(file)) as {
+    night: { gitTimeoutMs: number };
+    language: string;
+  };
+  assert.equal(saved.night.gitTimeoutMs, 24_000);
+  const messages = () =>
+    read(sent)
+      .trim()
+      .split("\n")
+      .map((row) => JSON.parse(row) as { text: string });
+  const firstMessages = messages();
+  writeFileSync(file, JSON.stringify({ ...saved, language: "en" }));
+  const second = await night(fx, null, {
+    ...env,
+    IVA_TEST_NOW: new Date(Date.parse(NOW) + 3_600_000).toISOString(),
+  });
+  assert.equal(second.code, 1, second.stderr);
+  const all = messages();
+  const calls = read(trace)
+    .trim()
+    .split("\n")
+    .map((row) => JSON.parse(row) as { args: string[]; timeout: number });
+  t.diagnostic(
+    JSON.stringify({
+      firstMessages,
+      totalMessages: all.length,
+      timeouts: calls.map((row) => row.timeout),
+    }),
+  );
+  assert.equal(firstMessages.length, 1, JSON.stringify(firstMessages));
+  assert.equal(all.length, 1, JSON.stringify(all));
+  assert.match(all[0].text, /предел ожидания git = 24000/u);
+  assert.match(all[0].text, /iva night set maxGitTimeoutMs/u);
+  assert.deepEqual(
+    calls.map((row) => row.timeout),
+    [12_000, 24_000, 24_000],
+  );
+  assert.deepEqual(calls[0].args, calls[1].args);
+  assert.equal(fx.model.prompts.length, 0);
+});

@@ -71,6 +71,8 @@ At 05:00 `scripts/memory/brain.ts` performs deterministic TypeScript maintenance
 
 The vault is a separate git repository. Night writes, direct Card writes, CORE edits and cleanup all leave scoped commits. The streaming cleaner is `scripts/vault-cleanup.ts`; it collapses duplicated `description` growth and caps oversized legacy descriptions without loading a whole damaged vault into memory. The same TypeScript entrypoint is used by `/menu` and the updater.
 
+Cleanup of an abandoned Git index lock starts after `night.maxGitTimeoutMs + 15000` milliseconds: 135000 ms with the default ceiling. The extra 15000 ms is the existing cleanup grace. Using the ceiling protects another writer throughout its permitted Git wait, including a timeout raise kept only in memory after settings could not be saved. A newer lock stays in place; the writer briefly waits for its owner and reports a failure if the index remains busy. A later write can recover an abandoned lock after that horizon.
+
 All memory code and prompts live under `scripts/memory/`; the vault contains data only. Existing legacy `.claude/` or `MOC.md` files may stay, but the night no longer reads or regenerates them.
 
 ## Layout

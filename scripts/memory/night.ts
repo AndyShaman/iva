@@ -1325,6 +1325,19 @@ async function runDays(dates: readonly string[]) {
   return { done, code };
 }
 
+/** У потолка отказ сообщает ceilingAlerts; обычный отказ sweep сохраняет свой Alert. */
+async function failSweep(reason: string): Promise<never> {
+  const why = `vault не закоммичен до ночи: ${reason}`;
+  if (!vaultGitCeiling)
+    await notify(
+      "night-sweep",
+      `Night memory did not start: the vault is not committed before the night: ${reason}${recoveryText()}`,
+      `Ночь памяти не началась: ${why}${recoveryText()}`,
+      `night sweep: ${reason}`,
+    );
+  throw new Error(why);
+}
+
 async function night(manual: string | undefined): Promise<number> {
   T = await notice.noticeTranslator();
   for (const invalid of nightSettings.invalid)
@@ -1335,15 +1348,7 @@ async function night(manual: string | undefined): Promise<number> {
       ),
     );
   const sweep = await commitVaultSweep("memory-night: до ночи", vault);
-  if (!sweep.ok) {
-    const why = `vault не закоммичен до ночи: ${sweep.reason}`;
-    await notify(
-      "night-sweep",
-      `Night memory did not start: the vault is not committed before the night: ${sweep.reason}${recoveryText()}`,
-      `Ночь памяти не началась: ${why}${recoveryText()}`,
-    );
-    throw new Error(why);
-  }
+  if (!sweep.ok) await failSweep(sweep.reason);
   try {
     call = await import("./night-call.ts");
     Object.assign(call.nightCeiling.limits, nightSettings.values);
