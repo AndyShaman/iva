@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Плагины разных установок сохраняют свои службы**: имена служб привязаны к каталогу данных; удаление, синхронизация и обновление одной установки сохраняют службы соседней. Подтверждённые старые службы получают метку владельца без перезапуска. Plugin service names are scoped to the canonical data directory; operations preserve other installations, and proven legacy services receive ownership metadata without restarting.
+
 - 🔧 **Ива переживает смену внешнего пропуска Claude**: после HTTP 401 до начала ответа и действий текущего хода Ива ждёт обновления пропуска и безопасно повторяет вызов один раз. При окончательном отказе внешнего пропуска сообщение направляет к службе синхронизации. Iva waits through external Claude access rotation after an early HTTP 401 and safely repeats the call once; a final access-only failure points to the synchronization service.
 
 - 🧠 **Ночь сама поднимает пределы для длинных дней**: в границах настроенных потолков ночь продолжает разбор и повторяет git после увеличения срока ожидания; `iva night show|set` показывает и меняет пределы. Итог сообщает о поднятиях, завершённых днях и очереди. Night memory raises soft limits within configured ceilings, retries a timed-out Git command once with a longer wait, and reports recovery and remaining days; `iva night show|set` manages the limits.

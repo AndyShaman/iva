@@ -14,7 +14,7 @@ import { dirname } from "node:path";
 import type { PluginReport } from "#lib/plugin-reader.ts";
 import type { PluginsState } from "#lib/plugin-store.ts";
 import {
-  pluginUnitNames,
+  canonicalPluginScope,
   pluginUnitPlan,
   reconcilePluginUnits,
   runningPluginUnits,
@@ -201,13 +201,17 @@ export function createPluginTrustCommands(context: PluginCliContext) {
     data: string,
     state: PluginsState,
   ): Promise<readonly string[]> {
+    const scope = canonicalPluginScope(data);
     const plan = pluginUnitPlan({
-      plugins: await unitSources(data, state),
+      scope,
+      plugins: await unitSources(scope.dataRoot, state),
       root: ROOT,
       node: NODE,
       nodeBinDir: NODE_BIN_DIR,
-      dataDir: data,
-      dataDirEnvironment: systemdExecArgument(`ASSISTANT_DATA_DIR=${data}`),
+      dataDir: scope.dataRoot,
+      dataDirEnvironment: systemdExecArgument(
+        `ASSISTANT_DATA_DIR=${scope.dataRoot}`,
+      ),
     });
     for (const line of plan.diagnostics) warn(line);
     if (!hasSystemd()) {
@@ -259,17 +263,16 @@ export function createPluginTrustCommands(context: PluginCliContext) {
     already: readonly string[],
   ): void {
     if (names.length === 0 || !hasSystemd()) return;
-    const units = state.plugins
-      .filter(
-        (entry) => entry.enabled && entry.trusted && names.includes(entry.name),
-      )
-      .flatMap((entry) => pluginUnitNames(entry))
-      .filter((unit) => !already.includes(unit));
+    const entries = state.plugins.filter(
+      (entry) => entry.enabled && entry.trusted && names.includes(entry.name),
+    );
     const live = runningPluginUnits({
-      units,
+      scope: canonicalPluginScope(data),
+      entries,
       unitDir: UNIT_DIR,
-      isActive: (unit) => systemd.isActive(unit),
-    });
+      manager: systemd.manager,
+      systemd,
+    }).filter((unit) => !already.includes(unit));
     if (live.length === 0) return;
     try {
       systemd.restart(live);

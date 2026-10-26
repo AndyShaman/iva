@@ -39,6 +39,7 @@ import {
   marketplaceCachePath,
   marketplaceSlug,
 } from "../lib/marketplace.ts";
+import { plantCliTree } from "../fixtures/cli-tree.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { pluginConnectionFile } from "../lib/plugin-build.ts";
 import { takenDir, takeProposal } from "../lib/plugin-proposal.ts";
@@ -280,15 +281,38 @@ function buildStub(
 function unitWorld() {
   const dir = join(world("units"), "systemd");
   mkdirSync(dir, { recursive: true });
+  const logical = (value: string) =>
+    value.replace(/(iva-(?:mcp|plugin)-)[0-9a-f]{64}-/gu, "$1");
   const calls: string[] = [];
+  const rawCalls: string[] = [];
   const enabled = new Set<string>();
   const active = new Set<string>();
   const control = createSystemdControl({
     run: (args) => {
-      calls.push(args.join(" "));
+      calls.push(logical(args.join(" ")));
+      rawCalls.push(args.join(" "));
       const [action, ...rest] = args;
       const unit = rest.filter((value) => !value.startsWith("--")).at(0) ?? "";
       switch (action) {
+        case "show": {
+          const file = join(dir, unit),
+            body = existsSync(file) ? readFileSync(file, "utf8") : "";
+          const prop = rest
+            .find((arg) => arg.startsWith("--property="))
+            ?.slice(11);
+          return {
+            code: 0,
+            out:
+              prop === "LoadState"
+                ? body
+                  ? "loaded"
+                  : "not-found"
+                : (body
+                    .split("\n")
+                    .find((line) => line.startsWith(`${prop}=`))
+                    ?.slice(String(prop).length + 1) ?? ""),
+          };
+        }
         case "enable":
           enabled.add(unit);
           if (rest.includes("--now")) active.add(unit);
@@ -313,14 +337,21 @@ function unitWorld() {
   });
   return {
     dir,
+    path: (name: string) =>
+      join(
+        dir,
+        readdirSync(dir).find((file) => logical(file) === name) ?? name,
+      ),
     calls,
+    rawCalls,
     control,
     /** Юниты плагинов на диске, по именам. */
     units: () =>
       readdirSync(dir)
         .filter((name) => /^iva-(?:mcp|plugin)-/u.test(name))
+        .map(logical)
         .sort(),
-    active: () => [...active].sort(),
+    active: () => [...active].map(logical).sort(),
   };
 }
 
@@ -2253,13 +2284,13 @@ test("trust hands out ports and tokens, writes the units and starts them", async
   ]);
   assert.deepEqual(units.active(), units.units());
   const proxy = readFileSync(
-    join(units.dir, "iva-mcp-trace-viewer.service"),
+    units.path("iva-mcp-trace-viewer.service"),
     "utf8",
   );
   assert.match(proxy, /--plugin "trace" --server "viewer" --port 8730/u);
   assert.match(proxy, new RegExp(`--token-file "${token}"`, "u"));
   const service = readFileSync(
-    join(units.dir, "iva-plugin-trace-web.service"),
+    units.path("iva-plugin-trace-web.service"),
     "utf8",
   );
   // Плейсхолдер раскрыт до записи в юнит: systemd его не раскрывает.
@@ -2579,6 +2610,16 @@ test("an update that changes only the plugin's code still restarts its unit", as
   assert.deepEqual(units.units(), ["iva-plugin-svc-web.service"]);
   assert.deepEqual(units.active(), ["iva-plugin-svc-web.service"]);
 
+  const other = commands(home(), undefined, undefined, {}, buildStub(), {
+    units,
+  });
+  await other.cmdPlugin(["add", source.url, "--trust"]);
+  const neighbour = readdirSync(units.dir).find((name) =>
+    readFileSync(join(units.dir, name), "utf8").includes(other.data),
+  )!;
+  const neighbourBody = readFileSync(join(units.dir, neighbour), "utf8");
+  units.rawCalls.length = 0;
+
   // Автор выпустил новую версию сервера. `service.json` не менялся: тело юнита будет
   // байт в байт тем же, а код за ним — другим.
   write(source.work, "sh.iva/services/web/server.mjs", "// v2\n");
@@ -2603,7 +2644,17 @@ test("an update that changes only the plugin's code still restarts its unit", as
   );
   assert.match(
     messages(events, "ok"),
-    /restarted: iva-plugin-svc-web\.service/u,
+    /restarted: iva-plugin-[0-9a-f]{64}-svc-web\.service/u,
+  );
+
+  assert.equal(readFileSync(join(units.dir, neighbour), "utf8"), neighbourBody);
+  assert.ok(
+    !units.rawCalls.some(
+      (call) =>
+        /^(restart|stop|disable|enable) /u.test(call) &&
+        call.includes(neighbour),
+    ),
+    units.rawCalls.join("\n"),
   );
 
   // Второй `update` без нового коммита ничего не перезапускает: содержимое то же.
@@ -3119,3 +3170,157 @@ test("install-proposal without a taken copy or with a bad tree hash argument ins
   assert.match(texts[0].text, /^Plugin cccccccccccc was not installed: /u);
   assert.deepEqual((await readPluginsState(data)).plugins, []);
 });
+
+// Process-level isolation: the real bin/iva dispatcher and real store/reconcile.
+for (const sameName of [false, true])
+  for (const action of ["remove", "sync", "trust"]) {
+    test(`scope CLI ${action} preserves B (${sameName ? "same" : "different"} plugin name)`, async () => {
+      const dir = world("scope-cli");
+      const user = join(dir, "user"),
+        fakebin = join(dir, "fakebin"),
+        state = join(dir, "manager.json");
+      mkdirSync(user);
+      mkdirSync(fakebin);
+      writeFileSync(
+        state,
+        JSON.stringify({ calls: [], active: {}, enabled: {}, loaded: {} }),
+      );
+      const fake = `#!${process.execPath}
+const fs=require("node:fs"),path=require("node:path");
+const args=process.argv.slice(2).filter(x=>x!=="--user"),[verb,...tail]=args;
+const unit=tail.find(x=>!x.startsWith("--"))||"",file=process.env.FAKE_STATE;
+const s=JSON.parse(fs.readFileSync(file,"utf8"));s.calls.push(args);
+const units=path.join(process.env.HOME,".config/systemd/user");
+if(verb==="daemon-reload") { s.loaded={}; if(fs.existsSync(units)) for(const name of fs.readdirSync(units)) if(name.endsWith(".service")) s.loaded[name]=fs.readFileSync(path.join(units,name),"utf8"); }
+if(verb==="enable") {s.enabled[unit]=true;s.active[unit]=true;}
+if(verb==="disable"||verb==="stop") {s.enabled[unit]=false;s.active[unit]=false;}
+if(verb==="restart") s.active[unit]=true;
+fs.writeFileSync(file,JSON.stringify(s));
+if(verb==="show") {
+ const prop=tail.find(x=>x.startsWith("--property="))?.slice(11),body=s.loaded[unit]||"";
+ const key=prop+"=",value=body.split(String.fromCharCode(10)).find(x=>x.startsWith(key))?.slice(key.length)||"";
+ process.stdout.write(prop==="LoadState"?(body?"loaded":"not-found"):value);process.exit(0);
+}
+if(verb==="is-active") {process.stdout.write(s.active[unit]?"active":"inactive");process.exit(s.active[unit]?0:3);}
+if(verb==="is-enabled") {process.stdout.write(s.enabled[unit]?"enabled":"disabled");process.exit(s.enabled[unit]?0:1);}
+`;
+      writeFileSync(join(fakebin, "systemctl"), fake, { mode: 0o755 });
+      for (const command of ["launchctl", "git", "npm", "curl"])
+        writeFileSync(join(fakebin, command), "#!/bin/sh\nexit 97\n", {
+          mode: 0o755,
+        });
+      for (const installation of ["A", "B"]) {
+        const root = join(dir, installation),
+          data = join(root, "data");
+        await plantCliTree(REPO, root);
+        writeFileSync(
+          join(root, ".env"),
+          "ASSISTANT_DATA_DIR=data\nAGENT_LANGUAGE=en\n",
+        );
+        writeFileSync(join(root, ".iva-dev"), "fixture\n");
+        const name = sameName
+          ? "shared"
+          : installation === "A"
+            ? "local"
+            : "neighbour";
+        const plugin = join(data, "custom/plugins", name),
+          service = join(plugin, "sh.iva/services/web");
+        mkdirSync(service, { recursive: true });
+        writeFileSync(
+          join(plugin, "plugin.json"),
+          manifest(name, "1.0.0", { extensions: { "sh.iva": {} } }),
+        );
+        writeFileSync(
+          join(service, "service.json"),
+          JSON.stringify({
+            command: "node",
+            args: ["server.ts"],
+            port: installation === "A" ? 19001 : 19002,
+          }),
+        );
+        writeFileSync(
+          join(service, "server.ts"),
+          "// fake manager never starts this\n",
+        );
+        await writePluginsState(data, {
+          marketplaces: [],
+          plugins: [
+            {
+              name,
+              source: "",
+              ref: "",
+              sha: "",
+              digest: "",
+              enabled: true,
+              trusted: installation === "B" || action !== "trust",
+              installedAt: "2026-10-26T00:00:00.000Z",
+              services: { web: { port: installation === "A" ? 19001 : 19002 } },
+            },
+          ],
+        });
+      }
+      const env = {
+        HOME: user,
+        PATH: [fakebin, dirname(process.execPath), "/usr/bin", "/bin"].join(
+          ":",
+        ),
+        FAKE_STATE: state,
+        NO_COLOR: "1",
+        TMPDIR: dir,
+      };
+      const cli = (installation: string, args: string[]) => {
+        const result = spawnSync(
+          process.execPath,
+          [join(dir, installation, "bin/iva.mjs"), "plugin", ...args],
+          {
+            cwd: join(dir, installation),
+            env,
+            encoding: "utf8",
+            timeout: 10000,
+          },
+        );
+        assert.equal(result.status, 0, result.stderr + result.stdout);
+        assert.doesNotMatch(
+          result.stdout,
+          /ownership unknown|could not|not brought up/u,
+        );
+      };
+      cli("B", ["sync"]);
+      const unitDir = join(user, ".config/systemd/user"),
+        bUnit = readdirSync(unitDir).find((name) => name.endsWith(".service"))!;
+      assert.ok(bUnit, "real B CLI must first create a unit");
+      const before = readFileSync(join(unitDir, bUnit), "utf8");
+      const snapshot = JSON.parse(readFileSync(state, "utf8")) as {
+        calls: string[][];
+      };
+      snapshot.calls = [];
+      writeFileSync(state, JSON.stringify(snapshot));
+      cli(
+        "A",
+        action === "sync" ? ["sync"] : [action, sameName ? "shared" : "local"],
+      );
+      const after = JSON.parse(readFileSync(state, "utf8")) as {
+        calls: string[][];
+        active: Record<string, boolean>;
+        enabled: Record<string, boolean>;
+      };
+      assert.equal(readFileSync(join(unitDir, bUnit), "utf8"), before);
+      assert.equal(after.active[bUnit], true);
+      assert.equal(after.enabled[bUnit], true);
+      assert.deepEqual(
+        after.calls.filter(
+          (call: string[]) =>
+            ["disable", "stop", "enable", "restart", "reset-failed"].includes(
+              call[0],
+            ) && call.includes(bUnit),
+        ),
+        [],
+      );
+      if (action !== "remove")
+        assert.equal(
+          readdirSync(unitDir).filter((name) => name.endsWith(".service"))
+            .length,
+          2,
+        );
+    });
+  }
