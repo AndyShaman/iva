@@ -146,7 +146,9 @@ OpenCode Responses does not forward `THINKING_EFFORT`: arbitrary Go models have 
 
 Plugin services belong to the canonical data directory. Two code checkouts using the
 same data directory share one plugin installation, including `plugins.json`, ports and
-the existing lock. Reconciliation updates the MCP executor to the selected checkout.
+the existing lock. Reconciliation updates scoped MCP executors to the selected checkout. An active
+retained legacy keeps its executor during trust/sync; an explicit plugin update
+may replace its payload only when that plugin source changed.
 A different canonical data directory gets a different scope in new service names.
 
 A proven legacy service keeps its existing name. Adding ownership metadata alone keeps

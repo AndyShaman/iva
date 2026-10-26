@@ -71,19 +71,21 @@ export type PluginUnitPlan = {
   readonly diagnostics: readonly string[];
 };
 
+function scopedIdentity(
+  scope: PluginUnitScope,
+  kind: PluginUnitIdentity["kind"],
+  plugin: string,
+  part: string,
+): PluginUnitIdentity {
+  return { scope, kind, plugin, part, layout: "scoped" };
+}
 /** The unit of the MCP proxy for one server of one plugin. */
 export function mcpUnitName(
   plugin: string,
   server: string,
   scope: PluginUnitScope,
 ): string {
-  return scopedPluginUnitName({
-    scope,
-    kind: "mcp",
-    plugin,
-    part: server,
-    layout: "scoped",
-  });
+  return scopedPluginUnitName(scopedIdentity(scope, "mcp", plugin, server));
 }
 
 /** The unit of one declared service of one plugin. */
@@ -92,13 +94,9 @@ export function serviceUnitName(
   service: string,
   scope: PluginUnitScope,
 ): string {
-  return scopedPluginUnitName({
-    scope,
-    kind: "service",
-    plugin,
-    part: service,
-    layout: "scoped",
-  });
+  return scopedPluginUnitName(
+    scopedIdentity(scope, "service", plugin, service),
+  );
 }
 
 /**
@@ -262,20 +260,7 @@ export type PluginUnitSource = {
   }[];
 };
 
-/**
- * Every unit the installation should have right now. A plugin contributes units only
- * while it is enabled AND trusted: `enabled` is the text in the prompt, `trusted` is a
- * process on the machine, and one switch for both was rejected in ADR-0009.
- */
-export function pluginUnitPlan({
-  scope,
-  plugins,
-  root,
-  node,
-  nodeBinDir,
-  dataDir,
-  dataDirEnvironment,
-}: {
+type PluginUnitPlanOptions = {
   readonly scope: PluginUnitScope;
   readonly plugins: readonly PluginUnitSource[];
   readonly root: string;
@@ -283,7 +268,22 @@ export function pluginUnitPlan({
   readonly nodeBinDir: string;
   readonly dataDir: string;
   readonly dataDirEnvironment: string;
-}): PluginUnitPlan {
+};
+
+function markPlannedUnits(units: readonly PluginUnit[]): PluginUnit[] {
+  return units.map((unit) => ({
+    ...unit,
+    body: markPluginUnit(unit.body, unit.identity),
+  }));
+}
+
+/**
+ * Every unit the installation should have right now. A plugin contributes units only
+ * while it is enabled AND trusted: `enabled` is the text in the prompt, `trusted` is a
+ * process on the machine, and one switch for both was rejected in ADR-0009.
+ */
+export function pluginUnitPlan(options: PluginUnitPlanOptions): PluginUnitPlan {
+  const { scope, plugins } = options;
   const units: PluginUnit[] = [];
   const diagnostics: string[] = [];
   for (const plugin of plugins) {
@@ -308,23 +308,17 @@ export function pluginUnitPlan({
       units.push({
         plugin: plugin.name,
         unit: mcpUnitName(plugin.name, server.server, scope),
-        identity: {
-          scope,
-          kind: "mcp",
-          plugin: plugin.name,
-          part: server.server,
-          layout: "scoped",
-        },
+        identity: scopedIdentity(scope, "mcp", plugin.name, server.server),
         port: server.port,
         body: mcpProxyUnitBody({
           plugin: plugin.name,
           server: server.server,
           port: server.port,
           tokenFile: server.tokenFile,
-          root,
-          node,
-          nodeBinDir,
-          dataDirEnvironment,
+          root: options.root,
+          node: options.node,
+          nodeBinDir: options.nodeBinDir,
+          dataDirEnvironment: options.dataDirEnvironment,
         }),
       });
     }
@@ -343,13 +337,12 @@ export function pluginUnitPlan({
       units.push({
         plugin: plugin.name,
         unit: serviceUnitName(plugin.name, service.service, scope),
-        identity: {
+        identity: scopedIdentity(
           scope,
-          kind: "service",
-          plugin: plugin.name,
-          part: service.service,
-          layout: "scoped",
-        },
+          "service",
+          plugin.name,
+          service.service,
+        ),
         port: service.port,
         body: pluginServiceUnitBody({
           plugin: plugin.name,
@@ -359,8 +352,8 @@ export function pluginUnitPlan({
           port: service.port,
           pluginRoot: plugin.root,
           pluginData: plugin.data,
-          dataDir,
-          nodeBinDir,
+          dataDir: options.dataDir,
+          nodeBinDir: options.nodeBinDir,
         }),
       });
     }
@@ -389,10 +382,7 @@ export function pluginUnitPlan({
   });
   return {
     scope,
-    units: kept.map((unit) => ({
-      ...unit,
-      body: markPluginUnit(unit.body, unit.identity),
-    })),
+    units: markPlannedUnits(kept),
     diagnostics,
   };
 }
@@ -403,6 +393,8 @@ export type PluginUnitReconcile = {
   readonly started: readonly string[];
   /** Units whose body changed, so the running process had to be replaced. */
   readonly restarted: readonly string[];
+  /** Restart calls attempted by this reconcile, including failed confirmation. */
+  readonly restartAttempted: readonly string[];
   readonly removed: readonly string[];
   readonly failures: readonly string[];
 };
@@ -435,6 +427,8 @@ type ReconcileOptions = {
   readonly log?: Say;
   readonly manager?: "systemd" | "launchd";
   readonly root?: string;
+  /** Only the current explicit plugin update's changed names may replace active legacy payloads. */
+  readonly moved?: readonly string[];
 };
 export type PluginUnitOwner = {
   readonly name: string;
@@ -801,9 +795,11 @@ function publish(file: string, body: string, prior: OpenUnit | null): void {
 function removeOwnedUnit(options: ReconcileOptions, unit: OwnedUnit): void {
   const { plan, unitDir, systemd, manager = "systemd" } = options;
   const file = unitPath(unit.unit, unitDir, manager);
+  const inspected = { ...options, scope: plan.scope };
   if (
     !sameUnit(file, unit) ||
-    !loadedMatches({ ...options, scope: plan.scope }, unit.unit, unit)
+    (state(inspected, unit.unit) === "loaded" &&
+      !loadedMatches(inspected, unit.unit, unit))
   )
     throw new Error("stale unit ownership changed");
   systemd.disableNow([unit.unit]);
@@ -832,7 +828,14 @@ function renderPluginUnit(
   unit: string,
   body: string,
   options: ReconcileOptions,
+  before: OwnedUnit | null,
 ): string {
+  if (
+    before?.active &&
+    before.identity.layout === "legacy" &&
+    !options.moved?.includes(before.identity.plugin)
+  )
+    return markPluginUnit(before.body, before.identity);
   if (options.manager !== "launchd") return body;
   return launchdPlan([{ unit, body }], { root: options.root ?? "" }).get(
     launchdLabel(unit),
@@ -846,7 +849,7 @@ function writePlannedUnit(
   const identity = before?.identity ?? planned.identity;
   const unit = before?.unit ?? planned.unit;
   const body = markPluginUnit(pluginUnitPayload(planned.body), identity);
-  const rendered = renderPluginUnit(unit, body, options);
+  const rendered = renderPluginUnit(unit, body, options, before);
   const file = unitPath(unit, options.unitDir, options.manager);
   if (Buffer.byteLength(basename(file)) > 255)
     throw new Error("plugin unit filename exceeds 255 bytes");
@@ -872,6 +875,7 @@ function applyPlannedUnit(
   options.systemd.activate([unit]);
   done.started.push(unit);
   if (changed) {
+    done.restartAttempted.push(unit);
     options.systemd.restart([unit]);
     done.restarted.push(unit);
   }
@@ -893,6 +897,7 @@ export function reconcilePluginUnits(
     written: [] as string[],
     started: [] as string[],
     restarted: [] as string[],
+    restartAttempted: [] as string[],
     removed: [] as string[],
     failures: [...inspected.failures],
   };

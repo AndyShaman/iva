@@ -39,6 +39,7 @@ import {
   marketplaceCachePath,
   marketplaceSlug,
 } from "../lib/marketplace.ts";
+import { pluginUnitPayload } from "../lib/plugin-unit-scope.ts";
 import { plantCliTree } from "../fixtures/cli-tree.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { pluginConnectionFile } from "../lib/plugin-build.ts";
@@ -287,6 +288,8 @@ function unitWorld() {
   const rawCalls: string[] = [];
   const enabled = new Set<string>();
   const active = new Set<string>();
+  let restartProbe: "inactive" | "error" | null = null;
+  let probeUnit: string | null = null;
   const control = createSystemdControl({
     run: (args) => {
       calls.push(logical(args.join(" ")));
@@ -326,7 +329,19 @@ function unitWorld() {
           return enabled.has(unit)
             ? { code: 0, out: "enabled" }
             : { code: 1, out: "disabled" };
+        case "restart":
+          active.add(unit);
+          if (restartProbe) probeUnit = unit;
+          return { code: 0, out: "" };
         case "is-active":
+          if (probeUnit === unit) {
+            const mode = restartProbe;
+            probeUnit = null;
+            restartProbe = null;
+            if (mode === "error")
+              throw new Error("restart confirmation query failed");
+            return { code: 3, out: "inactive" };
+          }
           return active.has(unit)
             ? { code: 0, out: "active" }
             : { code: 3, out: "inactive" };
@@ -344,6 +359,9 @@ function unitWorld() {
       ),
     calls,
     rawCalls,
+    failNextRestartProbe: (mode: "inactive" | "error") => {
+      restartProbe = mode;
+    },
     control,
     /** Юниты плагинов на диске, по именам. */
     units: () =>
@@ -2442,7 +2460,7 @@ test("sync finishes what trust does and puts the units back", async () => {
   await cmdPlugin(["add", processPlugin("trace"), "--trust"]);
 
   // Кто-то снёс юниты руками и потерял порты из состояния.
-  for (const unit of units.units()) rmSync(join(units.dir, unit));
+  for (const unit of units.units()) rmSync(units.path(unit));
   const state = await readPluginsState(data);
   await writePluginsState(data, {
     ...state,
@@ -3324,3 +3342,197 @@ if(verb==="is-enabled") {process.stdout.write(s.enabled[unit]?"enabled":"disable
         );
     });
   }
+
+test("sync retains legacy drift; explicit update rewrites only moved once", async () => {
+  const source = processPlugin("trace");
+  const units = unitWorld();
+  const { cmdPlugin } = commands(
+    home(),
+    undefined,
+    undefined,
+    {},
+    buildStub(),
+    { units },
+  );
+  await cmdPlugin(["add", source, "--trust"]);
+  const unmovedSource = processPlugin("unmoved", { servicePort: 8727 });
+  rmSync(join(unmovedSource, "skills"), { recursive: true, force: true });
+  rmSync(join(unmovedSource, "mcp.json"));
+  await cmdPlugin(["add", unmovedSource, "--trust"]);
+  for (const actual of readdirSync(units.dir)) {
+    const legacy = actual.replace(/[0-9a-f]{64}-/u, "");
+    const file = join(units.dir, actual);
+    const body = pluginUnitPayload(readFileSync(file, "utf8"));
+    units.control.disableNow([actual]);
+    rmSync(file);
+    writeFileSync(join(units.dir, legacy), body);
+    units.control.activate([legacy]);
+  }
+  const legacy = "iva-plugin-trace-web.service";
+  const unmoved = "iva-plugin-unmoved-web.service";
+  const drift = (unit: string) => {
+    const file = join(units.dir, unit);
+    const body = `${readFileSync(file, "utf8").replace(/^(ExecStart=.+)$/mu, "$1 --retained-argument")}# retained comment\n`;
+    writeFileSync(file, body);
+    return body;
+  };
+  const legacyPayload = drift(legacy),
+    unmovedPayload = drift(unmoved);
+  const other = commands(home(), undefined, undefined, {}, buildStub(), {
+    units,
+  });
+  await other.cmdPlugin(["add", source, "--trust"]);
+  const neighbours = readdirSync(units.dir).filter((name) =>
+    readFileSync(join(units.dir, name), "utf8").includes(other.data),
+  );
+  const beforeB = neighbours.map((name) =>
+    readFileSync(join(units.dir, name), "utf8"),
+  );
+  units.rawCalls.length = 0;
+  await cmdPlugin(["sync"]);
+  assert.equal(
+    pluginUnitPayload(readFileSync(join(units.dir, legacy), "utf8")),
+    legacyPayload,
+  );
+  assert.equal(
+    pluginUnitPayload(readFileSync(join(units.dir, unmoved), "utf8")),
+    unmovedPayload,
+  );
+  assert.deepEqual(
+    units.rawCalls.filter((call) =>
+      /^(daemon-reload|reset-failed|enable|disable|restart|start|stop)( |$)/u.test(
+        call,
+      ),
+    ),
+    [],
+  );
+  assert.match(readFileSync(join(units.dir, legacy), "utf8"), /server\.mjs/u);
+  write(
+    source,
+    "sh.iva/services/web/service.json",
+    JSON.stringify({
+      command: "node",
+      args: ["updated-server.mjs"],
+      port: 8726,
+    }),
+  );
+  units.rawCalls.length = 0;
+  await cmdPlugin(["update", "trace"]);
+  assert.match(
+    readFileSync(join(units.dir, legacy), "utf8"),
+    /updated-server\.mjs/u,
+  );
+  assert.equal(
+    units.rawCalls.filter((call) => call === `restart ${legacy}`).length,
+    1,
+  );
+  assert.equal(
+    pluginUnitPayload(readFileSync(join(units.dir, unmoved), "utf8")),
+    unmovedPayload,
+  );
+  assert.deepEqual(
+    neighbours.map((name) => readFileSync(join(units.dir, name), "utf8")),
+    beforeB,
+  );
+  assert.ok(
+    !units.rawCalls.some(
+      (call) =>
+        /^(enable|disable|restart|start|stop|reset-failed)( |$)/u.test(call) &&
+        (call.includes(unmoved) ||
+          neighbours.some((name) => call.includes(name))),
+    ),
+    units.rawCalls.join("\n"),
+  );
+  const updatedBody = readFileSync(join(units.dir, legacy), "utf8");
+  units.rawCalls.length = 0;
+  await cmdPlugin(["update", "trace"]);
+  assert.equal(readFileSync(join(units.dir, legacy), "utf8"), updatedBody);
+  assert.deepEqual(
+    units.rawCalls.filter((call) =>
+      /^(restart|enable|disable|daemon-reload|reset-failed|start|stop)( |$)/u.test(
+        call,
+      ),
+    ),
+    [],
+  );
+});
+
+for (const mode of ["inactive", "error"] as const)
+  test(`update sends one accepted restart when confirmation is ${mode}`, async () => {
+    const source = processPlugin("trace");
+    rmSync(join(source, "mcp.json"));
+    const otherSource = processPlugin("other", { servicePort: 8727 });
+    rmSync(join(otherSource, "mcp.json"));
+    rmSync(join(otherSource, "skills"), { recursive: true, force: true });
+    const units = unitWorld();
+    const { cmdPlugin, events } = commands(
+      home(),
+      undefined,
+      undefined,
+      {},
+      buildStub(),
+      { units },
+    );
+    await cmdPlugin(["add", source, "--trust"]);
+    await cmdPlugin(["add", otherSource, "--trust"]);
+    const scoped = units.path("iva-plugin-trace-web.service");
+    const legacy = "iva-plugin-trace-web.service";
+    const body = pluginUnitPayload(readFileSync(scoped, "utf8"));
+    units.control.disableNow([scoped.split("/").at(-1)!]);
+    rmSync(scoped);
+    writeFileSync(join(units.dir, legacy), body);
+    units.control.activate([legacy]);
+    const neighbour = units
+      .path("iva-plugin-other-web.service")
+      .split("/")
+      .at(-1)!;
+    units.control.disableNow([neighbour]);
+    write(
+      source,
+      "sh.iva/services/web/service.json",
+      JSON.stringify({ command: "node", args: ["v2.mjs"], port: 8726 }),
+    );
+    units.rawCalls.length = 0;
+    events.length = 0;
+    units.failNextRestartProbe(mode);
+    await cmdPlugin(["update", "trace"]);
+    assert.equal(
+      units.rawCalls.filter((call) => call === `restart ${legacy}`).length,
+      1,
+      units.rawCalls.join("\n"),
+    );
+    assert.doesNotMatch(
+      messages(events, "ok"),
+      /^restarted:.*iva-plugin-trace-web\.service/mu,
+    );
+    assert.match(
+      messages(events, "bad"),
+      /did not become active after restart|restart confirmation query failed/u,
+    );
+    assert.ok(
+      units.rawCalls.includes(`enable --now ${neighbour}`),
+      "independent key was processed after failed confirmation",
+    );
+    assert.equal(
+      units.control.isActive(legacy),
+      true,
+      "next selector observes accepted restart as active",
+    );
+    write(
+      source,
+      "sh.iva/services/web/service.json",
+      JSON.stringify({ command: "node", args: ["v3.mjs"], port: 8726 }),
+    );
+    units.rawCalls.length = 0;
+    events.length = 0;
+    await cmdPlugin(["update", "trace"]);
+    assert.equal(
+      units.rawCalls.filter((call) => call === `restart ${legacy}`).length,
+      1,
+      "next command can attempt its own restart",
+    );
+    assert.match(
+      messages(events, "ok"),
+      /^restarted:.*iva-plugin-trace-web\.service/mu,
+    );
+  });

@@ -30,6 +30,12 @@ import {
   scopedPluginUnitName,
   readPluginUnitMarker,
 } from "./plugin-unit-scope.ts";
+import { runLaunchd, unitPath } from "./launchd.ts";
+import {
+  launchdPlan,
+  launchdLabel,
+  pluginPlistFields,
+} from "./launchd-plist.ts";
 import { SAFE_PLUGIN_PART } from "#lib/plugin-store.ts";
 import { createSystemdControl } from "./systemd-control.ts";
 import {
@@ -688,86 +694,104 @@ test("the units of one plugin resolve to owned running representations", () => {
 });
 
 for (const kind of ["service", "mcp"] as const)
-  test(`scope retains active legacy ${kind} with metadata only`, () => {
-    const unitDir = join(world(), "units");
-    mkdirSync(unitDir);
-    const fake = fakeSystemctl({ unitDir });
-    const planned = plan([
-      source0(
-        kind === "service"
-          ? {
-              services: [
-                { service: "web", command: "node", args: [], port: 8726 },
-              ],
-            }
-          : {
-              mcp: [
-                {
-                  server: "viewer",
-                  port: 8730,
-                  tokenFile: `${DATA}/plugin-data/trace/mcp-viewer.token`,
+  for (const drift of ["comment", "arguments"] as const)
+    for (const marked of [false, true])
+      test(`scope retains active legacy ${kind} ${drift} drift ${marked ? "marked" : "unmarked"} with metadata only`, () => {
+        const unitDir = join(world(), "units");
+        mkdirSync(unitDir);
+        const fake = fakeSystemctl({ unitDir });
+        const planned = plan([
+          source0(
+            kind === "service"
+              ? {
+                  services: [
+                    { service: "web", command: "node", args: [], port: 8726 },
+                  ],
+                }
+              : {
+                  mcp: [
+                    {
+                      server: "viewer",
+                      port: 8730,
+                      tokenFile: `${DATA}/plugin-data/trace/mcp-viewer.token`,
+                    },
+                  ],
                 },
-              ],
-            },
-      ),
-    ]);
-    const unit = planned.units[0],
-      legacy = unit.unit.replace(`${scope.id}-`, "");
-    const payload = pluginUnitPayload(unit.body);
-    writeFileSync(join(unitDir, legacy), payload);
-    fake.active.add(legacy);
-    fake.enabled.add(legacy);
-    const migrated = reconcilePluginUnits({
-      plan: planned,
-      unitDir,
-      systemd: fake.control,
-    });
-    assert.deepEqual(migrated.failures, []);
-    assert.equal(
-      pluginUnitPayload(readFileSync(join(unitDir, legacy), "utf8")),
-      payload,
-    );
-    assert.equal(
-      readPluginUnitMarker(readFileSync(join(unitDir, legacy), "utf8"), legacy)
-        ?.layout,
-      "legacy",
-    );
-    assert.equal(existsSync(join(unitDir, unit.unit)), false);
-    assert.equal(fake.active.has(legacy), true);
-    assert.deepEqual(
-      fake.calls.filter((call) =>
-        /^(restart|stop|enable|disable|reset-failed|daemon-reload) /u.test(
-          call,
-        ),
-      ),
-      [],
-    );
-    fake.calls.length = 0;
-    assert.deepEqual(
-      reconcilePluginUnits({ plan: planned, unitDir, systemd: fake.control })
-        .written,
-      [],
-    );
-    const inventory = inspectPluginUnits({
-      scope,
-      unitDir,
-      units: planned.units,
-      systemd: fake.control,
-    });
-    assert.equal(
-      inventory.actual.get(pluginUnitKey(unit.identity))?.unit,
-      legacy,
-    );
-    assert.deepEqual(
-      runningPluginUnits({
-        scope,
-        unitDir,
-        units: planned.units,
-        systemd: fake.control,
-      }),
-      [legacy],
-    );
-  });
+          ),
+        ]);
+        const unit = planned.units[0],
+          legacy = unit.unit.replace(`${scope.id}-`, "");
+        const payload =
+          drift === "comment"
+            ? `${pluginUnitPayload(unit.body)}# pre-existing legacy comment\n`
+            : pluginUnitPayload(unit.body).replace(
+                /^(ExecStart=.+)$/mu,
+                "$1 --legacy-option",
+              );
+        writeFileSync(
+          join(unitDir, legacy),
+          marked
+            ? markPluginUnit(payload, { ...unit.identity, layout: "legacy" })
+            : payload,
+        );
+        fake.active.add(legacy);
+        fake.enabled.add(legacy);
+        const migrated = reconcilePluginUnits({
+          plan: planned,
+          unitDir,
+          systemd: fake.control,
+        });
+        assert.deepEqual(migrated.failures, []);
+        assert.equal(
+          pluginUnitPayload(readFileSync(join(unitDir, legacy), "utf8")),
+          payload,
+        );
+        assert.equal(
+          readPluginUnitMarker(
+            readFileSync(join(unitDir, legacy), "utf8"),
+            legacy,
+          )?.layout,
+          "legacy",
+        );
+        assert.equal(existsSync(join(unitDir, unit.unit)), false);
+        assert.equal(fake.active.has(legacy), true);
+        assert.deepEqual(
+          fake.calls.filter((call) =>
+            /^(restart|stop|enable|disable|reset-failed|daemon-reload)( |$)/u.test(
+              call,
+            ),
+          ),
+          [],
+        );
+        fake.calls.length = 0;
+        assert.deepEqual(
+          reconcilePluginUnits({
+            plan: planned,
+            unitDir,
+            systemd: fake.control,
+          }).written,
+          [],
+        );
+        const inventory = inspectPluginUnits({
+          scope,
+          unitDir,
+          units: planned.units,
+          systemd: fake.control,
+        });
+        assert.equal(
+          inventory.actual.get(pluginUnitKey(unit.identity))?.unit,
+          legacy,
+        );
+        assert.deepEqual(
+          runningPluginUnits({
+            scope,
+            unitDir,
+            units: planned.units,
+            systemd: fake.control,
+          }),
+          [legacy],
+        );
+      });
 for (const kind of ["service", "mcp"] as const)
   for (const layout of ["scoped", "legacy"] as const)
     test(`scope rejects loaded B behind an owned ${layout} ${kind} file in restart and removal`, () => {
@@ -913,4 +937,300 @@ test("scope failed stop retains the file and blocks a replacement listener", () 
   assert.deepEqual(result.removed, []);
   assert.equal(fake.active.has(unit), true);
   assert.equal(readFileSync(join(unitDir, unit), "utf8"), before);
+});
+
+function removalFixture(
+  kind: "service" | "mcp",
+  manager: "systemd" | "launchd",
+  interrupted: boolean,
+  layout: "scoped" | "legacy" = "scoped",
+) {
+  const unitDir = join(world(), "units");
+  mkdirSync(unitDir);
+  const planned = plan([
+    source0(
+      kind === "service"
+        ? {
+            services: [
+              { service: "web", command: "node", args: [], port: 8726 },
+            ],
+          }
+        : {
+            mcp: [
+              {
+                server: "viewer",
+                port: 8730,
+                tokenFile: `${DATA}/plugin-data/trace/mcp-viewer.token`,
+              },
+            ],
+          },
+    ),
+  ]);
+  const original = planned.units[0];
+  const identity = { ...original.identity, layout };
+  const unit = {
+    ...original,
+    identity,
+    unit: scopedPluginUnitName(identity),
+    body: markPluginUnit(pluginUnitPayload(original.body), identity),
+  };
+  const body =
+    manager === "systemd"
+      ? unit.body
+      : launchdPlan([unit], { root: ROOT }).get(launchdLabel(unit.unit))!;
+  const file = unitPath(unit.unit, unitDir, manager);
+  writeFileSync(file, body);
+  const loaded = new Map([[unit.unit, interrupted ? unit.body : ""]]);
+  const fake = fakeSystemctl({ unitDir, loaded });
+  if (interrupted) fake.active.add(unit.unit);
+  let jobLoaded = interrupted,
+    disabled = false,
+    crash = interrupted;
+  const calls: string[][] = [];
+  const control =
+    manager === "systemd"
+      ? fake.control
+      : createSystemdControl({
+          manager: "launchd",
+          run: (args) =>
+            runLaunchd(args, {
+              unitDir,
+              uid: 501,
+              waitMs: 5,
+              run: (argv) => {
+                calls.push([...argv]);
+                const [action, target] = argv;
+                if (action === "print" && target === "gui/501")
+                  return { code: 0, out: "" };
+                if (action === "print") {
+                  if (
+                    !jobLoaded ||
+                    target !== `gui/501/${launchdLabel(unit.unit)}`
+                  )
+                    return { code: 113, out: "" };
+                  const fields = pluginPlistFields(body);
+                  const env = Object.entries(fields.environment)
+                    .map(([key, value]) => `\t\t${key} => ${value}`)
+                    .join("\n");
+                  return {
+                    code: 0,
+                    out: `gui/501/${launchdLabel(unit.unit)} = {\n\tstate = running\n\tpid = 123\n\tworking directory = ${fields.workingDirectory}\n\targuments = {\n${fields.exec.map((word) => `\t\t${word}`).join("\n")}\n\t}\n\tenvironment = {\n${env}\n\t}\n}\n`,
+                  };
+                }
+                if (action === "print-disabled")
+                  return {
+                    code: 0,
+                    out: `disabled services = {\n${disabled ? `\t"${launchdLabel(unit.unit)}" => disabled\n` : ""}}`,
+                  };
+                if (action === "disable") disabled = true;
+                if (action === "bootout") jobLoaded = false;
+                return { code: 0, out: "" };
+              },
+            }),
+        });
+  const effects: string[] = [];
+  const systemd = {
+    ...control,
+    daemonReload: () => {
+      effects.push("reload");
+      return control.daemonReload();
+    },
+    resetFailed: (names?: readonly string[]) => {
+      effects.push("reset");
+      return control.resetFailed(names);
+    },
+    activate: (names: readonly string[]) => {
+      effects.push("activate");
+      return control.activate(names);
+    },
+    restart: (names: readonly string[]) => {
+      effects.push("restart");
+      return control.restart(names);
+    },
+    disableNow: (names: readonly string[]) => {
+      effects.push("disable");
+      control.disableNow(names);
+      loaded.set(unit.unit, "");
+      if (crash) {
+        crash = false;
+        throw new Error("interrupted after manager stop, before unlink");
+      }
+    },
+  };
+  return { unitDir, planned, unit, file, body, systemd, calls, effects };
+}
+for (const manager of ["systemd", "launchd"] as const)
+  for (const kind of ["service", "mcp"] as const)
+    for (const interrupted of [false, true])
+      test(`owned scoped ${manager} ${kind} removal ${interrupted ? "retries interrupted stop" : "accepts not-found with existing file"}`, () => {
+        const fixture = removalFixture(kind, manager, interrupted);
+        const { unitDir, file, body, unit, systemd } = fixture;
+        if (interrupted) {
+          const first = reconcilePluginUnits({
+            plan: plan([]),
+            unitDir,
+            systemd,
+            manager,
+            root: ROOT,
+          });
+          assert.deepEqual(first.removed, []);
+          assert.match(
+            first.failures.join("\n"),
+            /interrupted after manager stop/u,
+          );
+          assert.equal(readFileSync(file, "utf8"), body);
+        }
+        const result = reconcilePluginUnits({
+          plan: plan([]),
+          unitDir,
+          systemd,
+          manager,
+          root: ROOT,
+        });
+        assert.deepEqual(result.failures, []);
+        assert.deepEqual(result.removed, [unit.unit]);
+        assert.equal(existsSync(file), false);
+        if (manager === "launchd")
+          assert.ok(
+            fixture.calls.some(
+              (args) =>
+                args[0] === "print" &&
+                args[1].includes(launchdLabel(unit.unit)),
+            ),
+            "real backend received print 113 from fake",
+          );
+      });
+for (const kind of ["service", "mcp"] as const)
+  test(`unloaded legacy ${kind} is never adopted`, () => {
+    const fixture = removalFixture(kind, "systemd", false);
+    const { unitDir, unit, file, systemd } = fixture;
+    const legacy = unit.unit.replace(`${scope.id}-`, "");
+    writeFileSync(join(unitDir, legacy), pluginUnitPayload(unit.body));
+    rmSync(file);
+    const control = {
+      ...systemd,
+      query: (...args: string[]) =>
+        args.includes("--property=LoadState")
+          ? { code: 0, out: "not-found" }
+          : systemd.query(...args),
+    };
+    const result = reconcilePluginUnits({
+      plan: fixture.planned,
+      unitDir,
+      systemd: control,
+    });
+    assert.ok(result.failures.length);
+    assert.equal(existsSync(file), false);
+    assert.equal(
+      readFileSync(join(unitDir, legacy), "utf8"),
+      pluginUnitPayload(unit.body),
+    );
+  });
+
+for (const kind of ["service", "mcp"] as const)
+  test(`unknown loaded state preserves scoped ${kind}`, () => {
+    const { unitDir, unit, file, body, systemd } = removalFixture(
+      kind,
+      "systemd",
+      false,
+    );
+    const control = {
+      ...systemd,
+      query: (...args: string[]) =>
+        args.includes("--property=LoadState")
+          ? { code: 0, out: "error" }
+          : systemd.query(...args),
+      disableNow: () => {
+        throw new Error("unknown ownership must not reach stop");
+      },
+    };
+    const result = reconcilePluginUnits({
+      plan: plan([]),
+      unitDir,
+      systemd: control,
+    });
+    assert.deepEqual(result.removed, []);
+    assert.match(result.failures.join("\n"), /unknown loaded state/u);
+    assert.equal(readFileSync(file, "utf8"), body);
+    assert.equal(result.removed.includes(unit.unit), false);
+  });
+
+for (const kind of ["service", "mcp"] as const)
+  for (const marked of [false, true])
+    test(`launchd retained legacy ${kind} preserves plist args/comment ${marked ? "marked" : "unmarked"}`, () => {
+      const fixture = removalFixture(kind, "launchd", true, "legacy");
+      const { unitDir, unit, file, systemd, calls } = fixture;
+      const payload =
+        pluginUnitPayload(fixture.body).replace(
+          "</array>",
+          "<string>--retained-option</string></array>",
+        ) + "<!-- retained legacy comment -->\n";
+      writeFileSync(
+        file,
+        marked ? markPluginUnit(payload, unit.identity) : payload,
+      );
+      for (let repeat = 0; repeat < 2; repeat++) {
+        calls.length = 0;
+        fixture.effects.length = 0;
+        const result = reconcilePluginUnits({
+          plan: fixture.planned,
+          unitDir,
+          systemd,
+          manager: "launchd",
+          root: ROOT,
+        });
+        assert.deepEqual(result.failures, []);
+        assert.deepEqual(result.started, []);
+        assert.deepEqual(result.restarted, []);
+        assert.deepEqual(result.restartAttempted, []);
+        assert.deepEqual(fixture.effects, []);
+        assert.equal(pluginUnitPayload(readFileSync(file, "utf8")), payload);
+        assert.deepEqual(
+          readPluginUnitMarker(readFileSync(file, "utf8"), unit.unit),
+          unit.identity,
+        );
+        assert.ok(
+          calls.every((args) => args[0] === "print"),
+          JSON.stringify(calls),
+        );
+        assert.equal(
+          existsSync(
+            unitPath(fixture.planned.units[0].unit, unitDir, "launchd"),
+          ),
+          false,
+        );
+      }
+    });
+
+test("restart result separates attempted calls from confirmed success and continues its neighbour", () => {
+  const unitDir = join(world(), "units"),
+    fake = fakeSystemctl({ unitDir });
+  const first = plan([
+    source0({
+      services: [{ service: "web", command: "node", args: ["v1"], port: 8726 }],
+    }),
+  ]);
+  reconcilePluginUnits({ plan: first, unitDir, systemd: fake.control });
+  const next = plan([
+    source0({
+      services: [
+        { service: "web", command: "node", args: ["v2"], port: 8726 },
+        { service: "extra", command: "node", args: [], port: 8727 },
+      ],
+    }),
+  ]);
+  const unit = first.units[0].unit;
+  const systemd = {
+    ...fake.control,
+    restart: (units: readonly string[]) => {
+      fake.control.restart(units);
+      throw new Error("confirmation lost after accepted restart");
+    },
+  };
+  const result = reconcilePluginUnits({ plan: next, unitDir, systemd });
+  assert.deepEqual(result.restartAttempted, [unit]);
+  assert.deepEqual(result.restarted, []);
+  assert.match(result.failures.join("\n"), /confirmation lost/u);
+  assert.ok(fake.active.has(next.units[1].unit));
+  assert.ok(result.started.includes(next.units[1].unit));
 });

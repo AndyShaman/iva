@@ -1428,18 +1428,9 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
     : [];
   // Юниты плагинов, которые сейчас на диске: их читаем до раннего выхода, иначе
   // юнит, оставшийся от снятого плагина, на пустой установке никто бы не назвал.
-  if (!existsSync(ctx.dataDirectory)) return;
-  const scope = canonicalPluginScope(ctx.dataDirectory);
-  const inventory: PluginUnitInventory = ctx.hasSystemd()
-    ? inspectPluginUnits({
-        scope,
-        entries: state.plugins,
-        unitDir: ctx.unitDir,
-        manager: ctx.systemd.manager,
-        systemd: ctx.systemd,
-      })
-    : { actual: new Map(), conflicts: new Set<string>(), failures: [] };
-  for (const failure of inventory.failures) ctx.warn(failure);
+  const inspection = pluginInventory(ctx, state);
+  if (!inspection) return;
+  const { inventory } = inspection;
   const onDisk = [...inventory.actual.values()].map((unit) => unit.unit);
   // Плагинов нет вообще — доктору сказать нечего, и молчание здесь честнее
   // строки «0 плагинов» в отчёте установки, которая их никогда не видела.
@@ -1450,10 +1441,7 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
     onDisk.length === 0
   )
     return;
-  const expected = await checkPluginEntries(ctx, core, state, {
-    scope,
-    inventory,
-  });
+  const expected = await checkPluginEntries(ctx, core, state, inspection);
   await checkPluginUnits(ctx, expected, onDisk);
   reportPluginFolders(ctx, state, folders, leftovers);
 }
@@ -1465,6 +1453,24 @@ async function checkPlugins(ctx: DoctorContext): Promise<void> {
  * connection-файле), поэтому список только по нему обещал бы юнит серверу, которого в
  * `mcp.json` больше нет, — и `sync` не смог бы этого починить.
  */
+function pluginInventory(
+  ctx: DoctorContext,
+  state: PluginsState,
+): PluginInspection | null {
+  if (!existsSync(ctx.dataDirectory)) return null;
+  const scope = canonicalPluginScope(ctx.dataDirectory);
+  const inventory: PluginUnitInventory = ctx.hasSystemd()
+    ? inspectPluginUnits({
+        scope,
+        entries: state.plugins,
+        unitDir: ctx.unitDir,
+        manager: ctx.systemd.manager,
+        systemd: ctx.systemd,
+      })
+    : { actual: new Map(), conflicts: new Set<string>(), failures: [] };
+  for (const failure of inventory.failures) ctx.warn(failure);
+  return { scope, inventory };
+}
 type PluginInspection = {
   scope: PluginUnitScope;
   inventory: PluginUnitInventory;

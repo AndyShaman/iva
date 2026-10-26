@@ -200,6 +200,7 @@ export function createPluginTrustCommands(context: PluginCliContext) {
   async function reconcileUnits(
     data: string,
     state: PluginsState,
+    moved: readonly string[] = [],
   ): Promise<readonly string[]> {
     const scope = canonicalPluginScope(data);
     const plan = pluginUnitPlan({
@@ -230,6 +231,7 @@ export function createPluginTrustCommands(context: PluginCliContext) {
     try {
       done = reconcilePluginUnits({
         plan,
+        moved,
         manager: systemd.manager,
         root: ROOT,
         unitDir: UNIT_DIR,
@@ -247,7 +249,7 @@ export function createPluginTrustCommands(context: PluginCliContext) {
     if (done.started.length) ok(`running: ${done.started.join(", ")}`);
     if (done.restarted.length) ok(`restarted: ${done.restarted.join(", ")}`);
     for (const failure of done.failures) bad(failure);
-    return done.restarted;
+    return done.restartAttempted;
   }
 
   /**
