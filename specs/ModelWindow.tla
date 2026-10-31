@@ -2,7 +2,7 @@
 EXTENDS Integers
 \* Verifies the implemented resolver and atomic wizard update, not a new protocol.
 \* Default/RuntimeWindow: packages/context-window/index.ts:providerContextWindow.
-\* Select: scripts/poller/wizards.ts:wizardUpdates, upsertEnv writes atomically.
+\* Select: scripts/poller/wizards.ts:validateAndSaveWizard, upsertEnv writes atomically.
 \* SummaryWindow: scripts/lib/model-summary.ts:modelSummary.
 \* HelperWindow: agent/agent.ts:stepModelChoice (cap at the helper model window).
 \* Parser validation, filesystem errors and Telegram rendering are tested in code.
