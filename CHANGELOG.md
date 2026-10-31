@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Окно модели в Telegram**: `/new` и статус показывают то же окно контекста, что использует Ива. Выбор Claude в меню сохраняет окно модели; окно помощника учитывает его собственную модель.
+
 ## [0.5.7] - 2026-10-25
 
 - 🔧 **Цитаты при отказе rich-сообщений**: запасная HTML-отправка сохраняет текст цитат и подписи кнопок с символами разметки. HTML fallback preserves quoted text and button labels containing markup characters when rich messages are rejected.
