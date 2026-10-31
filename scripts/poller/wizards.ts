@@ -1189,6 +1189,15 @@ function wizardSelection(st: WizardState, env: Record<string, string>) {
     ...(base ? { base } : {}),
   };
 }
+function wizardModelUpdates(st: WizardState): Record<string, string> {
+  return {
+    [CATALOG[st.provider].modelVar]: st.model,
+    ...(st.provider === "claude"
+      ? { CLAUDE_CONTEXT_WINDOW: claudeContextWindow(st.model) }
+      : {}),
+  };
+}
+
 function wizardUpdates(
   st: WizardState,
   env: Record<string, string>,
@@ -1199,7 +1208,7 @@ function wizardUpdates(
   updates.MODEL_PROVIDER = st.provider;
   if (st.provider !== (env.MODEL_PROVIDER ?? "ollama"))
     updates.HELPER_MODEL = null;
-  updates[cat.modelVar] = st.model;
+  Object.assign(updates, wizardModelUpdates(st));
   if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
   if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
   else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;
@@ -1234,12 +1243,9 @@ export async function validateAndSaveWizard(
   }
   assertHelperModelWindow(st, env);
   await validate(wizardSelection(st, env));
-  const updates = st.helperModel
-    ? { HELPER_MODEL: st.model }
-    : wizardUpdates(st, env);
-  if (st.flow === "model" && !st.helperModel && st.provider === "claude")
-    updates.CLAUDE_CONTEXT_WINDOW = claudeContextWindow(st.model);
-  await write(updates);
+  await write(
+    st.helperModel ? { HELPER_MODEL: st.model } : wizardUpdates(st, env),
+  );
 }
 
 const saveWizard = (st: WizardState) => validateAndSaveWizard(st);
