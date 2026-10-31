@@ -17,6 +17,7 @@ import {
 } from "../lib/model-validation.ts";
 import { getAccessToken } from "#lib/codex-auth.ts";
 import {
+  claudeContextWindow,
   claudeModelLabel,
   claudeReasoningLevels,
   claudeStatus,
@@ -1199,6 +1200,8 @@ function wizardUpdates(
   if (st.provider !== (env.MODEL_PROVIDER ?? "ollama"))
     updates.HELPER_MODEL = null;
   updates[cat.modelVar] = st.model;
+  if (st.provider === "claude")
+    updates.CLAUDE_CONTEXT_WINDOW = claudeContextWindow(st.model);
   if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
   if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
   else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;

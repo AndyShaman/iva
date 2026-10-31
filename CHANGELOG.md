@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 🔧 **Окно модели в Telegram**: `/new` и статус показывают то же окно контекста, что использует Ива. Выбор Claude в меню сохраняет окно модели; окно помощника учитывает его собственную модель.
+
 - 🔧 **Дни рождения Google Контактов**: Brief сохраняет полный список, а Brief и Watch отмечают упоминание после подтверждённой доставки соответствующей части. Failed or partial birthday delivery remains eligible within the existing Watch bounds; birthday lists retain every valid contact.
 - 🔧 **Плагины разных установок сохраняют свои службы**: имена служб привязаны к каталогу данных; удаление, синхронизация и обновление одной установки сохраняют службы соседней. Подтверждённые старые службы получают метку владельца без перезапуска. Plugin service names are scoped to the canonical data directory; operations preserve other installations, and proven legacy services receive ownership metadata without restarting.
 - 🔧 **Короткие цитаты кнопок в дневном журнале**: нажатие сохраняет текст кнопки и первую строку цитаты до 200 символов; модель получает прежний полный контекст. Button taps keep their data and only the first quoted line, up to 200 characters, in the daily journal; the model keeps its full context.

@@ -20,13 +20,13 @@ import {
   MAX_IMAGE_BYTES,
 } from "./lib/attachment-ref.ts";
 import { resolveAttachmentPath } from "./lib/telegram-media-cache.ts";
-import { claudeContextWindow, makeClaudeCliModel } from "./lib/claude-cli.ts";
+import { makeClaudeCliModel } from "./lib/claude-cli.ts";
 import {
   CODEX_BASE_URL,
   codexAuthHeaders,
   forceRefreshAccessToken,
 } from "./lib/codex-auth.ts";
-import { resolveContextWindow } from "./lib/context-window.ts";
+import { providerContextWindow } from "./lib/context-window.ts";
 import {
   MODEL_PROVIDERS,
   resolveModelProvider,
@@ -60,7 +60,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // custom — тот же OpenAI-совместимый провод, но адрес задаёт владелец
 // (CUSTOM_BASE_URL): чужой прокси, vLLM, LiteLLM, вендорская подписка. Имена моделей и их
 // дефолты живут в agent/lib/model-provider.ts (там же и переменные *_VISION_MODEL); здесь
-// остаётся то, что из .env не задаётся ни у кого: адрес, ключ и окно контекста.
+// остаётся то, что из .env не задаётся ни у кого: адрес и ключ. Окно задаёт общий packages/context-window.
 const selected = resolveModelProvider();
 const PROVIDER = selected.name;
 
@@ -72,23 +72,19 @@ const PROVIDERS = {
     // подставляет сюда локальный mock-провайдер (scripts/lib/mock-openai-server.ts).
     baseURL: process.env.OLLAMA_BASE_URL ?? "https://ollama.com/v1",
     apiKey: process.env.OLLAMA_API_KEY,
-    contextWindow: 131072,
   },
   opencode: {
     // Продукт переименован Zen → Go, но API живёт на легаси-пути /zen/ (у /go/v1 — 404).
     baseURL: "https://opencode.ai/zen/go/v1",
     apiKey: process.env.OPENCODE_API_KEY,
-    contextWindow: 131072,
   },
   openrouter: {
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: process.env.OPENROUTER_API_KEY,
-    contextWindow: 131072,
   },
   codex: {
     baseURL: CODEX_BASE_URL,
     apiKey: undefined, // авторизация — OAuth-токен подписки, не статичный ключ (см. codexFetch)
-    contextWindow: 272000,
   },
   claude: {
     // Адрес никто не открывает: модель — процесс `claude`, и строка называет вендора в
@@ -97,7 +93,6 @@ const PROVIDERS = {
     // .env отвергает, а не молча берёт его.
     baseURL: "process://claude",
     apiKey: undefined,
-    contextWindow: claudeContextWindow(selected.model),
   },
   custom: {
     // Адрес целиком задаёт владелец, вместе с суффиксом вида /v1 — как у ollama
@@ -108,27 +103,19 @@ const PROVIDERS = {
     // Ключ необязателен: локальный или self-hosted эндпоинт живёт без авторизации, и тогда
     // openai-compatible не ставит заголовок Authorization вовсе.
     apiKey: process.env.CUSTOM_API_KEY,
-    contextWindow: 131072,
   },
 } as const satisfies Record<
   ModelProviderName,
   {
     baseURL: string;
     apiKey: string | undefined;
-    contextWindow: number;
   }
 >;
 
 export const providerName = PROVIDER;
-const contextWindowVariable =
-  `${PROVIDER.toUpperCase()}_CONTEXT_WINDOW` as const;
 export const providerConfig = {
   ...PROVIDERS[PROVIDER],
-  contextWindow: resolveContextWindow(
-    contextWindowVariable,
-    process.env[contextWindowVariable],
-    PROVIDERS[PROVIDER].contextWindow,
-  ),
+  contextWindow: providerContextWindow(PROVIDER, selected.model),
   textModel: selected.model,
   opencodeProtocol:
     selected.name === "opencode"

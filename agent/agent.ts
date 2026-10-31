@@ -1,5 +1,7 @@
-import { resolveContextWindow } from "./lib/context-window.ts";
-import { claudeContextWindow } from "./lib/claude-cli.ts";
+import {
+  claudeContextWindow,
+  providerContextWindow,
+} from "./lib/context-window.ts";
 import { usesHelperModel } from "./lib/eve-auth.ts";
 import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
 import { defineAgent, defineDynamic } from "eve";
@@ -28,9 +30,8 @@ export function stepModelChoice(
     : cfg.textModel;
   const contextWindow =
     helperModel && providerName === "claude"
-      ? resolveContextWindow(
-          "CLAUDE_CONTEXT_WINDOW",
-          process.env.CLAUDE_CONTEXT_WINDOW,
+      ? Math.min(
+          providerContextWindow(providerName, model),
           claudeContextWindow(model),
         )
       : cfg.contextWindow;
