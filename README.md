@@ -198,7 +198,13 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.7 · 25.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.8 · 31.10.2026 — expand the latest releases</b></summary>
+
+### 31.10.2026
+
+#### v0.5.8
+
+- 🔧 **Telegram shows the model context window**: `/new` and status use the same window as Iva. Claude model selection saves its window, and helpers respect their own model window.
 
 ### 25.10.2026
 
@@ -221,15 +227,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 - 🧠 **Iva learns from repeated work**: Insight reviews two weeks of turns and offers to save a repeated procedure as a skill. Iva also offers to follow up when you are waiting on someone or a deadline.
 - 🔧 **An interrupted answer offers a Try again button**: after a restart, Iva quotes your question and offers to send it again. Resend attachments yourself.
 - 🧹 **Automatic compaction starts at 110,000 tokens**: `/compact` is temporarily hidden from the command menu and `/help`.
-
-### 19.10.2026
-
-#### v0.5.5
-
-- ✨ **Install with an AI agent**: tell Claude Code, Codex or Claude Desktop: "Install Iva using https://iva-agent.com/install.txt". The agent checks your computer and server, guides setup and helps verify a bot reply.
-- 🔧 **Installation continues after an SSH disconnect**: if the connection drops during setup, repeat the installer command. Completed steps are reused, the wizard offers your saved values, and a hint helps you stop an installer still running. Thanks to Maksim Tigulev for reporting this.
-- 🔧 **Deferred setup completes with autostart**: if setup was postponed, run the installer command again. It completes autostart and sends a confirmation in Telegram. Iva keeps running after you leave the server.
-- 🔧 **Memory changes are saved on a fresh server**: Iva starts tracking changes to your memory right after installation, even when Git has not been configured on the server. Git settings for other projects are preserved.
 
 </details>
 
