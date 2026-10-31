@@ -1200,8 +1200,6 @@ function wizardUpdates(
   if (st.provider !== (env.MODEL_PROVIDER ?? "ollama"))
     updates.HELPER_MODEL = null;
   updates[cat.modelVar] = st.model;
-  if (st.provider === "claude")
-    updates.CLAUDE_CONTEXT_WINDOW = claudeContextWindow(st.model);
   if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
   if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
   else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;
@@ -1236,9 +1234,12 @@ export async function validateAndSaveWizard(
   }
   assertHelperModelWindow(st, env);
   await validate(wizardSelection(st, env));
-  await write(
-    st.helperModel ? { HELPER_MODEL: st.model } : wizardUpdates(st, env),
-  );
+  const updates = st.helperModel
+    ? { HELPER_MODEL: st.model }
+    : wizardUpdates(st, env);
+  if (st.flow === "model" && !st.helperModel && st.provider === "claude")
+    updates.CLAUDE_CONTEXT_WINDOW = claudeContextWindow(st.model);
+  await write(updates);
 }
 
 const saveWizard = (st: WizardState) => validateAndSaveWizard(st);
